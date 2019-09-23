@@ -1,0 +1,4 @@
+To allow non-root user access to KV SDD device, you need to copy 99-kv-nvme-dev.rules into /etc/udev/rules.d directory before loading nvme.ko.
+It changes permission of /dev/nvmeXnX devices to 0666 whenever it sees a new nvme device.
+
+IOShed KV driver is under GPL 2.0

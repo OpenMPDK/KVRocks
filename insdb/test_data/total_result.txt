@@ -1,0 +1,925 @@
+[skiplist test result]
+start nolock+malloc skiplist test ----
+1 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(394637)
+SInser_And_MRead total read execution time(686714)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(159188)
+MInsert_And_MRead total read execution time(1079828)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(369048)
+MInsert_And_MRead_With_MSkipList total read execution time(1084101)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1117417)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1180151)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(394670)
+SInsert_And_SRead_And_SRemove total read execution time(755989)
+SInsert_And_SRead_And_SRemove total remove execution time(402375)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(115254)
+MInsert_And_MRead_And_MRemove total read execution time(360329)
+MInsert_And_MRead_And_MRemove total remove execution time(323020)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(302266)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1083778)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(750259)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(103236)
+MInsert_And_MRead_MRemove total read/remove execution time(1040548)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(301583)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1083639)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(593276)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1210333)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+2 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(400053)
+SInser_And_MRead total read execution time(685449)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(156065)
+MInsert_And_MRead total read execution time(1069057)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(375018)
+MInsert_And_MRead_With_MSkipList total read execution time(1064009)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1078438)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1128101)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(373917)
+SInsert_And_SRead_And_SRemove total read execution time(684897)
+SInsert_And_SRead_And_SRemove total remove execution time(333966)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(120590)
+MInsert_And_MRead_And_MRemove total read execution time(367362)
+MInsert_And_MRead_And_MRemove total remove execution time(371436)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(309101)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1063762)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(686672)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(124787)
+MInsert_And_MRead_MRemove total read/remove execution time(1037426)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(310650)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1059114)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(759587)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1182850)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+3 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(392900)
+SInser_And_MRead total read execution time(685208)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(227126)
+MInsert_And_MRead total read execution time(1081941)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(355087)
+MInsert_And_MRead_With_MSkipList total read execution time(1085539)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1071301)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1089736)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(327375)
+SInsert_And_SRead_And_SRemove total read execution time(755928)
+SInsert_And_SRead_And_SRemove total remove execution time(401613)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(119486)
+MInsert_And_MRead_And_MRemove total read execution time(362342)
+MInsert_And_MRead_And_MRemove total remove execution time(359422)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(299765)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1080332)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(749360)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(125309)
+MInsert_And_MRead_MRemove total read/remove execution time(1042130)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(309228)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1075614)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(742655)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1302687)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+4 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(398023)
+SInser_And_MRead total read execution time(755883)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(184347)
+MInsert_And_MRead total read execution time(1066128)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(366790)
+MInsert_And_MRead_With_MSkipList total read execution time(1074527)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1103793)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1181058)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(373199)
+SInsert_And_SRead_And_SRemove total read execution time(755565)
+SInsert_And_SRead_And_SRemove total remove execution time(403205)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(124283)
+MInsert_And_MRead_And_MRemove total read execution time(356752)
+MInsert_And_MRead_And_MRemove total remove execution time(313421)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(309737)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1065966)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(733829)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(105260)
+MInsert_And_MRead_MRemove total read/remove execution time(1009955)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(304776)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1063167)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(741275)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1206699)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+5 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(399626)
+SInser_And_MRead total read execution time(686618)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(153752)
+MInsert_And_MRead total read execution time(1067229)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(366362)
+MInsert_And_MRead_With_MSkipList total read execution time(1075178)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1119891)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1146128)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(397459)
+SInsert_And_SRead_And_SRemove total read execution time(754153)
+SInsert_And_SRead_And_SRemove total remove execution time(403130)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(115536)
+MInsert_And_MRead_And_MRemove total read execution time(361262)
+MInsert_And_MRead_And_MRemove total remove execution time(337686)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(305151)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1075055)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(801848)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(110536)
+MInsert_And_MRead_MRemove total read/remove execution time(1039622)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(299869)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1071055)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(663646)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1170262)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+start nolock+shared arena skiplist test ----
+1 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(386429)
+SInser_And_MRead total read execution time(722878)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(172470)
+MInsert_And_MRead total read execution time(1037540)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(970458)
+MInsert_And_MRead_With_MSkipList total read execution time(1048716)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1045791)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1243091)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(329525)
+SInsert_And_SRead_And_SRemove total read execution time(651827)
+SInsert_And_SRead_And_SRemove total remove execution time(311338)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(181053)
+MInsert_And_MRead_And_MRemove total read execution time(350762)
+MInsert_And_MRead_And_MRemove total remove execution time(226316)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(1082318)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1043934)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(1336188)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(176288)
+MInsert_And_MRead_MRemove total read/remove execution time(1014689)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(1025777)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1057002)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(548565)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1307303)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+2 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(400640)
+SInser_And_MRead total read execution time(744014)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(169317)
+MInsert_And_MRead total read execution time(1061869)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(1140805)
+MInsert_And_MRead_With_MSkipList total read execution time(1069747)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(492331)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1330728)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(330206)
+SInsert_And_SRead_And_SRemove total read execution time(745114)
+SInsert_And_SRead_And_SRemove total remove execution time(378918)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(160530)
+MInsert_And_MRead_And_MRemove total read execution time(363832)
+MInsert_And_MRead_And_MRemove total remove execution time(227337)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(1042843)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1070505)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(1166786)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(164065)
+MInsert_And_MRead_MRemove total read/remove execution time(1026132)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(1145551)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1055172)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(397253)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1620315)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+3 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(397566)
+SInser_And_MRead total read execution time(743582)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(173331)
+MInsert_And_MRead total read execution time(1084676)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(1054521)
+MInsert_And_MRead_With_MSkipList total read execution time(1085146)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1029979)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1293727)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(329505)
+SInsert_And_SRead_And_SRemove total read execution time(743285)
+SInsert_And_SRead_And_SRemove total remove execution time(381616)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(163924)
+MInsert_And_MRead_And_MRemove total read execution time(364342)
+MInsert_And_MRead_And_MRemove total remove execution time(232169)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(869026)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1087169)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(1421791)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(176127)
+MInsert_And_MRead_MRemove total read/remove execution time(1045117)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(932648)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1099529)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(610693)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1380353)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+4 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(399487)
+SInser_And_MRead total read execution time(744692)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(194999)
+MInsert_And_MRead total read execution time(1072229)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(1092504)
+MInsert_And_MRead_With_MSkipList total read execution time(1076968)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(870447)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1394240)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(329737)
+SInsert_And_SRead_And_SRemove total read execution time(743787)
+SInsert_And_SRead_And_SRemove total remove execution time(379884)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(210139)
+MInsert_And_MRead_And_MRemove total read execution time(361489)
+MInsert_And_MRead_And_MRemove total remove execution time(238995)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(1120747)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1071632)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(1305981)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(179817)
+MInsert_And_MRead_MRemove total read/remove execution time(1033280)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(1221114)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1137879)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(672284)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1444690)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+5 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(397959)
+SInser_And_MRead total read execution time(725200)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(170324)
+MInsert_And_MRead total read execution time(1063673)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(1075866)
+MInsert_And_MRead_With_MSkipList total read execution time(1061950)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1107341)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1201477)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(329987)
+SInsert_And_SRead_And_SRemove total read execution time(724438)
+SInsert_And_SRead_And_SRemove total remove execution time(311211)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(254908)
+MInsert_And_MRead_And_MRemove total read execution time(356792)
+MInsert_And_MRead_And_MRemove total remove execution time(230613)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(972546)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1066319)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(1271900)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(154515)
+MInsert_And_MRead_MRemove total read/remove execution time(1027760)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(1132225)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1072082)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(762669)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1686030)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+start nolock+arena skiplist test ----
+1 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(388986)
+SInser_And_MRead total read execution time(746136)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(258713)
+MInsert_And_MRead total read execution time(1084933)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(2805506)
+MInsert_And_MRead_With_MSkipList total read execution time(1083506)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(737503)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(893473)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(329677)
+SInsert_And_SRead_And_SRemove total read execution time(743202)
+SInsert_And_SRead_And_SRemove total remove execution time(375512)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(244543)
+MInsert_And_MRead_And_MRemove total read execution time(363296)
+MInsert_And_MRead_And_MRemove total remove execution time(275034)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(478823)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1084985)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(506835)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(198660)
+MInsert_And_MRead_MRemove total read/remove execution time(1045465)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(445150)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1085769)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(598470)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1340015)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+2 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(399443)
+SInser_And_MRead total read execution time(651479)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(191831)
+MInsert_And_MRead total read execution time(1051621)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(2391684)
+MInsert_And_MRead_With_MSkipList total read execution time(1052370)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1063275)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1150113)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(396809)
+SInsert_And_SRead_And_SRemove total read execution time(718487)
+SInsert_And_SRead_And_SRemove total remove execution time(376294)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(168476)
+MInsert_And_MRead_And_MRemove total read execution time(363843)
+MInsert_And_MRead_And_MRemove total remove execution time(245467)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(541184)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1055377)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(600993)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(177213)
+MInsert_And_MRead_MRemove total read/remove execution time(1020703)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(494682)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1059630)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(643715)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1337601)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+3 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(397037)
+SInser_And_MRead total read execution time(675008)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(185308)
+MInsert_And_MRead total read execution time(1088888)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(2553043)
+MInsert_And_MRead_With_MSkipList total read execution time(1081192)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(976632)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1143911)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(330291)
+SInsert_And_SRead_And_SRemove total read execution time(746482)
+SInsert_And_SRead_And_SRemove total remove execution time(306317)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(227534)
+MInsert_And_MRead_And_MRemove total read execution time(366188)
+MInsert_And_MRead_And_MRemove total remove execution time(216529)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(484560)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1082766)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(543427)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(195091)
+MInsert_And_MRead_MRemove total read/remove execution time(1046877)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(583237)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1063497)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(513539)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1284693)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+4 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(399544)
+SInser_And_MRead total read execution time(745422)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(167358)
+MInsert_And_MRead total read execution time(1079419)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(2640560)
+MInsert_And_MRead_With_MSkipList total read execution time(1081319)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(771365)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1067436)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(397312)
+SInsert_And_SRead_And_SRemove total read execution time(675637)
+SInsert_And_SRead_And_SRemove total remove execution time(375846)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(188116)
+MInsert_And_MRead_And_MRemove total read execution time(366084)
+MInsert_And_MRead_And_MRemove total remove execution time(242449)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(487685)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1079878)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(554989)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(175212)
+MInsert_And_MRead_MRemove total read/remove execution time(1042509)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(429022)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1082083)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(583784)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1130993)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+5 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(399011)
+SInser_And_MRead total read execution time(674549)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(191059)
+MInsert_And_MRead total read execution time(1055982)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(2293396)
+MInsert_And_MRead_With_MSkipList total read execution time(1061625)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1004287)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1070523)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(328893)
+SInsert_And_SRead_And_SRemove total read execution time(744672)
+SInsert_And_SRead_And_SRemove total remove execution time(375933)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(176078)
+MInsert_And_MRead_And_MRemove total read execution time(355565)
+MInsert_And_MRead_And_MRemove total remove execution time(217091)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(467556)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1059866)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(494519)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(195663)
+MInsert_And_MRead_MRemove total read/remove execution time(1023155)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(478793)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1070821)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(806998)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1069120)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+start nolock+malloc+gc test ----
+1 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(391094)
+SInser_And_MRead total read execution time(753073)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(175131)
+MInsert_And_MRead total read execution time(1061403)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(436375)
+MInsert_And_MRead_With_MSkipList total read execution time(1065593)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(971133)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1202342)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(400975)
+SInsert_And_SRead_And_SRemove total read execution time(752046)
+SInsert_And_SRead_And_SRemove total remove execution time(385119)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(126609)
+MInsert_And_MRead_And_MRemove total read execution time(358267)
+MInsert_And_MRead_And_MRemove total remove execution time(156122)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(318525)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1059698)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(378465)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(119993)
+MInsert_And_MRead_MRemove total read/remove execution time(1028510)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(314174)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1073244)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(665452)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1197868)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+2 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(403996)
+SInser_And_MRead total read execution time(670314)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(173301)
+MInsert_And_MRead total read execution time(1069370)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(436467)
+MInsert_And_MRead_With_MSkipList total read execution time(1065030)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1055409)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1163179)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(334071)
+SInsert_And_SRead_And_SRemove total read execution time(676253)
+SInsert_And_SRead_And_SRemove total remove execution time(317526)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(122740)
+MInsert_And_MRead_And_MRemove total read execution time(360323)
+MInsert_And_MRead_And_MRemove total remove execution time(162370)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(326467)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1065317)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(407063)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(118760)
+MInsert_And_MRead_MRemove total read/remove execution time(1021249)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(317237)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1064246)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(618004)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(956683)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+3 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(405031)
+SInser_And_MRead total read execution time(683568)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(233599)
+MInsert_And_MRead total read execution time(1087533)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(487011)
+MInsert_And_MRead_With_MSkipList total read execution time(1082899)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1077974)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1196187)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(354663)
+SInsert_And_SRead_And_SRemove total read execution time(754014)
+SInsert_And_SRead_And_SRemove total remove execution time(386760)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(191538)
+MInsert_And_MRead_And_MRemove total read execution time(368160)
+MInsert_And_MRead_And_MRemove total remove execution time(143610)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(312709)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1087609)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(428281)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(118062)
+MInsert_And_MRead_MRemove total read/remove execution time(1035420)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(323625)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1094882)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(759097)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(885376)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+4 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(404363)
+SInser_And_MRead total read execution time(661431)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(168312)
+MInsert_And_MRead total read execution time(1062467)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(449944)
+MInsert_And_MRead_With_MSkipList total read execution time(1066640)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1119912)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1187381)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(385840)
+SInsert_And_SRead_And_SRemove total read execution time(735984)
+SInsert_And_SRead_And_SRemove total remove execution time(386137)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(184904)
+MInsert_And_MRead_And_MRemove total read execution time(359552)
+MInsert_And_MRead_And_MRemove total remove execution time(159823)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(315624)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1065500)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(379305)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(122688)
+MInsert_And_MRead_MRemove total read/remove execution time(1037673)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(317640)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1041427)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(746931)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1202425)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5
+5 round report---
+==== Test Skiptest.SInser_And_SRead
+SInser_And_MRead total write execution time(401054)
+SInser_And_MRead total read execution time(754310)
+==== Test Skiptest.MInsert_And_MRead
+MInsert_And_MRead total write execution time(171496)
+MInsert_And_MRead total read execution time(1087626)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+MInsert_And_MRead_With_MSkipList total write execution time(429019)
+MInsert_And_MRead_With_MSkipList total read execution time(1083259)
+==== Test Skiptest.C_MInsert_MRead
+C_MInsert_MRead total read/write execution time(1031633)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+C_MInsert_MRead_With_MSkipList total read/write execution time(1140962)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+SInsert_And_SRead_And_SRemove total write execution time(404967)
+SInsert_And_SRead_And_SRemove total read execution time(752356)
+SInsert_And_SRead_And_SRemove total remove execution time(385894)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+MInsert_And_MRead_And_MRemove total write execution time(121238)
+MInsert_And_MRead_And_MRemove total read execution time(370722)
+MInsert_And_MRead_And_MRemove total remove execution time(154826)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(327980)
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1080501)
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(380215)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+MInsert_And_MRead_MRemove total write execution time(115641)
+MInsert_And_MRead_MRemove total read/remove execution time(1035723)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(322113)
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1066134)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+C_MInsert_MRead_MRemove total read/write/remove execution time(761778)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1159214)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+==== Test Skiptest.Concurrent2
+==== Test Skiptest.Concurrent3
+==== Test Skiptest.Concurrent4
+==== Test Skiptest.Concurrent5

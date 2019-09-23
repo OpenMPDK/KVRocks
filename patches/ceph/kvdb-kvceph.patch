@@ -1,0 +1,128 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0d362d8..5f8d72f 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -439,6 +439,18 @@ endif(WITH_REENTRANT_STRSIGNAL)
+ 
+ set(HAVE_LIBROCKSDB 1)
+ 
++# INSDB path
++if(NOT ("${INSDB_ROOT_DIR}" STREQUAL ""))
++get_filename_component(INSDB_ROOT_DIR "${INSDB_ROOT_DIR}" ABSOLUTE)
++endif()
++
++# KVDB path
++if(NOT ("${KVDB_ROOT_DIR}" STREQUAL ""))
++set(HAVE_INSDB_KVDB 1)
++get_filename_component(KVDB_ROOT_DIR "${KVDB_ROOT_DIR}" ABSOLUTE)
++endif()
++
++
+ # -lz link into kv
+ find_package(ZLIB REQUIRED)
+ 
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index b86d7d0..0d42ed0 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -829,6 +829,19 @@ if (NOT WITH_SYSTEM_ROCKSDB)
+     list(APPEND ROCKSDB_CMAKE_ARGS -DFAIL_ON_WARNINGS=OFF)
+   endif()
+ 
++  if((NOT ("${KVDB_ROOT_DIR}" STREQUAL "")) AND (NOT ("${INSDB_ROOT_DIR}" STREQUAL "")))
++    # import kvdb instead of rocksdb
++    message("-- Overrides rocksdb with insdb ${INSDB_ROOT_DIR} kvdb ${KVDB_ROOT_DIR}")
++    set(ROCKSDB_INCLUDE_DIR ${KVDB_ROOT_DIR}/include)
++    add_library(rocksdb STATIC IMPORTED)
++    set_property(TARGET rocksdb PROPERTY IMPORTED_LOCATION "${KVDB_ROOT_DIR}/build/libkvdb_static.a")
++    add_library(insdb STATIC IMPORTED)
++    set_property(TARGET insdb PROPERTY IMPORTED_LOCATION "${INSDB_ROOT_DIR}/insdb/insdb-master/out-static/libinsdb.a")
++    add_library(insdb_snappy STATIC IMPORTED)
++    set_property(TARGET insdb_snappy PROPERTY IMPORTED_LOCATION "${INSDB_ROOT_DIR}/snappy/google-snappy-b02bfa7/build/libsnappy.a")
++
++    set(ROCKSDB_LIBRARIES rocksdb insdb insdb_snappy)
++  else()
+   # we use an external project and copy the sources to bin directory to ensure
+   # that object files are built outside of the source tree.
+   include(ExternalProject)
+@@ -853,6 +866,8 @@ if (NOT WITH_SYSTEM_ROCKSDB)
+   set_property(TARGET rocksdb PROPERTY IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/rocksdb/librocksdb.a")
+   set(ROCKSDB_LIBRARIES rocksdb)
+ 
++  endif()
++
+ endif(NOT WITH_SYSTEM_ROCKSDB)
+ 
+ include(TestBigEndian)
+diff --git a/src/include/config-h.in.cmake b/src/include/config-h.in.cmake
+index 2847cee..f041932 100644
+--- a/src/include/config-h.in.cmake
++++ b/src/include/config-h.in.cmake
+@@ -211,6 +211,9 @@
+ /* Defined if you have librocksdb enabled */
+ #cmakedefine HAVE_LIBROCKSDB
+ 
++/* Defined if you have libinsdb and libkvdb enabled */
++#cmakedefine HAVE_INSDB_KVDB
++
+ /* Define to 1 if you have the <valgrind/helgrind.h> header file. */
+ #cmakedefine HAVE_VALGRIND_HELGRIND_H 1
+ 
+diff --git a/src/kv/RocksDBStore.cc b/src/kv/RocksDBStore.cc
+index a13c472..2343291 100644
+--- a/src/kv/RocksDBStore.cc
++++ b/src/kv/RocksDBStore.cc
+@@ -229,7 +229,18 @@ int RocksDBStore::init(string _options_str)
+ 
+ int RocksDBStore::create_and_open(ostream &out)
+ {
+-  if (env) {
++#ifdef HAVE_INSDB_KVDB
++    // ceph_test_objectstore ( store_test.cc ) deletes the DB directory via filesystem,
++    // and expects rocksdb is destroyed.
++    // However, because insdb stores key-values in KV SSD, hack this call to clean up the existing DB.
++    {
++        rocksdb::Options options;
++        rocksdb::Status status = rocksdb::DestroyDB(path, options);
++        dout(40) << __func__ << ": delete the DB in kvdb" << path << "returned " << status.ToString() << dendl;
++    }
++#endif
++
++    if (env) {
+     unique_ptr<rocksdb::Directory> dir;
+     env->NewDirectory(path, &dir);
+   } else {
+diff --git a/src/kv/RocksDBStore.h b/src/kv/RocksDBStore.h
+index 44c99e1..1be211d 100644
+--- a/src/kv/RocksDBStore.h
++++ b/src/kv/RocksDBStore.h
+@@ -378,6 +378,13 @@ public:
+   string assoc_name; ///< Name of associative operator
+ 
+   uint64_t get_estimated_size(map<string,uint64_t> &extra) override {
++#ifdef HAVE_INSDB_KVDB
++      extra["sst"] = 1;
++      extra["log"] = 1;
++      extra["misc"] = 1;
++      extra["total"] = 3;
++      return 3;
++#else
+     DIR *store_dir = opendir(path.c_str());
+     if (!store_dir) {
+       lderr(cct) << __func__ << " something happened opening the store: "
+@@ -390,6 +397,7 @@ public:
+     uint64_t log_size = 0;
+     uint64_t misc_size = 0;
+ 
++
+     struct dirent *entry = NULL;
+     while ((entry = readdir(store_dir)) != NULL) {
+       string n(entry->d_name);
+@@ -441,6 +449,7 @@ public:
+ err:
+     closedir(store_dir);
+     return total_size;
++#endif
+   }
+ 
+   int set_cache_size(uint64_t s) override {

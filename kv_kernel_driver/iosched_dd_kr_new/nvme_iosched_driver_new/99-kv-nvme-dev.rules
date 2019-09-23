@@ -1,0 +1,2 @@
+SUBSYSTEM=="block", KERNEL=="nvme*", ACTION=="add", MODE="0666"
+

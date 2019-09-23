@@ -1,0 +1,237 @@
+#!/bin/bash
+
+tcount="1 2 3 4 5"
+SIMR="SInser_And_MRead"
+MIMR="MInsert_And_MRead"
+MIMRWMS="MInsert_And_MRead_With_MSkipList"
+CMIMR="C_MInsert_MRead"
+CMIMRWMS="C_MInsert_MRead_With_MSkipList"
+MIMRMD="MInsert_And_MRead_MRemove"
+MIMRMDWMS="MInsert_And_MRead_MRemove_With_MSkipList"
+CMIMRMD="C_MInsert_MRead_MRemove"
+CMIMRMDWMS="C_MInsert_MRead_MRemove_With_MSkipList"
+
+TEST1="original arena"
+TEST2="original arena insert lock"
+TEST3="lockfree malloc free lock"
+TEST4="lockfree shared arena insert/free lcok"
+TEST5="lockfree arena insert/free lcok"
+
+
+LogToAll() {
+    echo "${1}" >> total_${SIMR}.txt
+    echo "${1}" >> total_${MIMR}.txt
+    echo "${1}" >> total_${MIMRWMS}.txt
+    echo "${1}" >> total_${CMIMR}.txt
+    echo "${1}" >> total_${CMIMRWMS}.txt
+    echo "${1}" >> total_${MIMRMD}.txt
+    echo "${1}" >> total_${MIMRMDWMS}.txt
+    echo "${1}" >> total_${CMIMRMD}.txt
+    echo "${1}" >> total_${CMIMRMDWMS}.txt
+}
+
+LogToSIMR() {
+    echo "${1}" >> total_${SIMR}.txt
+}
+
+LogToMIMR() {
+    echo "${1}" >> total_${MIMR}.txt
+}
+
+LogToMIMRWMS() {
+    echo "${1}" >> total_${MIMRWMS}.txt
+}
+
+LogToCMIMR() {
+    echo "${1}" >> total_${CMIMR}.txt
+}
+
+LogToCMIMRWMS() {
+    echo "${1}" >> total_${CMIMRWMS}.txt
+}
+
+LogToMIMRMD() {
+    echo "${1}" >> total_${MIMRMD}.txt
+}
+
+LogToMIMRMDWMS() {
+    echo "${1}" >> total_${MIMRMDWMS}.txt
+}
+
+LogToCMIMRMD() {
+    echo "${1}" >> total_${CMIMRMD}.txt
+}
+
+LogToCMIMRMDWMS() {
+    echo "${1}" >> total_${CMIMRMDWMS}.txt
+}
+
+echo $TEST1 
+LogToAll ${TEST1}
+
+../out-static/skiplist0_test &> result0_1
+sleep 1
+../out-static/skiplist0_test &> result0_2
+sleep 1
+../out-static/skiplist0_test &> result0_3
+sleep 1
+../out-static/skiplist0_test &> result0_4
+sleep 1
+../out-static/skiplist0_test &> result0_5
+sleep 1
+
+for k in $tcount;
+do
+    LogToAll "${k} round report---"
+    a=`cat result0_${k} | grep ${SIMR}`
+    LogToSIMR ${a}
+done
+
+echo $TEST2
+LogToAll ${TEST2}
+
+../out-static/skiplist_test &> result_1
+sleep 1
+../out-static/skiplist_test &> result_2
+sleep 1
+../out-static/skiplist_test &> result_3
+sleep 1
+../out-static/skiplist_test &> result_4
+sleep 1
+../out-static/skiplist_test &> result_5
+sleep 1
+
+
+for k in $tcount;
+do
+    LogToAll "${k} round report---"
+    LogToSIMR "`cat` result_${k} | `grep` ${SIMR}"
+    LogToSIMR "`cat` result_${k} | `grep` ${SIMR}"
+    LogToMIMR "`cat` result_${k} | `grep` ${MIMR}"
+    LogToMIMRWMS "`cat result_${k} | `grep` ${MIMRWMS}`"
+    LogToCMIMR `cat result_${k} | grep ${CMIMR}`
+    LogToCMIMRWMS `cat result_${k} | grep ${CMIMRWMS}`
+    LogToMIMRMD `cat result_${k} | grep ${MIMRMD}`
+    LogToMIMRMDWMS `cat result_${k} | grep ${MIMRMDWMS}`
+    LogToCMIMRMD `cat result_${k} | grep ${CMIMRMD}`
+    LogToCMIMRMDWMS `cat result_${k} | grep ${CMIMRMDWMS}`
+done
+
+echo $TEST3
+LogToAll ${TEST3}
+
+../out-static/skiplist2_test &> result2_1
+sleep 1
+../out-static/skiplist2_test &> result2_2
+sleep 1
+../out-static/skiplist2_test &> result2_3
+sleep 1
+../out-static/skiplist2_test &> result2_4
+sleep 1
+../out-static/skiplist2_test &> result2_5
+sleep 1
+
+
+for k in $tcount;
+do
+    LogToAll "${k} round report---"
+    a=`cat result2_${k} | grep ${SIMR}`
+    LogToSIMR ${a}
+    b=`cat result2_${k} | grep ${SIMR}`
+    LogToSIMR ${b}
+    c=`cat result2_${k} | grep ${MIMR}`
+    LogToMIMR ${c}
+    d=`cat result2_${k} | grep ${MIMRWMS}`
+    LogToMIMRWMS ${d}
+    e=`cat result2_${k} | grep ${CMIMR}`
+    LogToCMIMR ${e}
+    f=`cat result2_${k} | grep ${CMIMRWMS}`
+    LogToCMIMRWMS ${f}
+    g=`cat result2_${k} | grep ${MIMRMD}`
+    LogToMIMRMD ${g}
+    h=`cat result2_${k} | grep ${MIMRMDWMS}`
+    LogToMIMRMDWMS ${h}
+    i=`cat result2_${k} | grep ${CMIMRMD}`
+    LogToCMIMRMD ${i}
+    j=`cat result2_${k} | grep ${CMIMRMDWMS}`
+    LogToCMIMRMDWMS ${j}
+done
+
+echo $TEST4
+LogToAll ${TEST4}
+
+../out-static/skiplist3_test &> result3_1
+sleep 1
+../out-static/skiplist3_test &> result3_2
+sleep 1
+../out-static/skiplist3_test &> result3_3
+sleep 1
+../out-static/skiplist3_test &> result3_4
+sleep 1
+../out-static/skiplist3_test &> result3_5
+sleep 1
+
+
+for k in $tcount;
+do
+    LogToAll "${k} round report---"
+    a=`cat result3_${k} | grep ${SIMR}`
+    LogToSIMR ${a}
+    b=`cat result3_${k} | grep ${SIMR}`
+    LogToSIMR ${b}
+    c=`cat result3_${k} | grep ${MIMR}`
+    LogToMIMR ${c}
+    d=`cat result3_${k} | grep ${MIMRWMS}`
+    LogToMIMRWMS ${d}
+    e=`cat result3_${k} | grep ${CMIMR}`
+    LogToCMIMR ${e}
+    f=`cat result3_${k} | grep ${CMIMRWMS}`
+    LogToCMIMRWMS ${f}
+    g=`cat result3_${k} | grep ${MIMRMD}`
+    LogToMIMRMD ${g}
+    h=`cat result3_${k} | grep ${MIMRMDWMS}`
+    LogToMIMRMDWMS ${h}
+    i=`cat result3_${k} | grep ${CMIMRMD}`
+    LogToCMIMRMD ${i}
+    j=`cat result3_${k} | grep ${CMIMRMDWMS}`
+    LogToCMIMRMDWMS ${j}
+done
+
+echo $TEST5
+LogToAll ${TEST5}
+../out-static/skiplist4_test &> result4_1
+sleep 1
+../out-static/skiplist4_test &> result4_2
+sleep 1
+../out-static/skiplist4_test &> result4_3
+sleep 1
+../out-static/skiplist4_test &> result4_4
+sleep 1
+../out-static/skiplist4_test &> result4_5
+sleep 1
+
+
+for k in $tcount;
+do
+    LogToAll "${k} round report---"
+    a=`cat result4_${k} | grep ${SIMR}`
+    LogToSIMR ${a}
+    b=`cat result4_${k} | grep ${SIMR}`
+    LogToSIMR ${b}
+    c=`cat result4_${k} | grep ${MIMR}`
+    LogToMIMR ${c}
+    d=`cat result4_${k} | grep ${MIMRWMS}`
+    LogToMIMRWMS ${d}
+    e=`cat result4_${k} | grep ${CMIMR}`
+    LogToCMIMR ${e}
+    f=`cat result4_${k} | grep ${CMIMRWMS}`
+    LogToCMIMRWMS ${f}
+    g=`cat result4_${k} | grep ${MIMRMD}`
+    LogToMIMRMD ${g}
+    h=`cat result4_${k} | grep ${MIMRMDWMS}`
+    LogToMIMRMDWMS ${h}
+    i=`cat result4_${k} | grep ${CMIMRMD}`
+    LogToCMIMRMD ${i}
+    j=`cat result4_${k} | grep ${CMIMRMDWMS}`
+    LogToCMIMRMDWMS ${j}
+done

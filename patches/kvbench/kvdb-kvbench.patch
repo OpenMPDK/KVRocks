@@ -1,0 +1,19 @@
+diff --git a/README b/README
+index 9e49f37..cca6ee8 100644
+--- a/README
++++ b/README
+@@ -37,7 +37,13 @@ BUILD ==========================================================================
+     cmake -DCMAKE_INCLUDE_PATH=<YOUR KV API HEADER FILE DIR> -DCMAKE_LIBRARY_PATH=<YOUR KV API LIB FILE DIR> ../
+     make kv_bench
+ 
+-4. Aerospike
++4. KVDB
++    cd kvbench
++    mkdir build_kvdb && cd build_kvdb
++    cmake -DCMAKE_INCLUDE_PATH=<YOUR KVDB API HEADER FILE DIR> -DCMAKE_LIBRARY_PATH="-L<YOUR KVDB API LIB FILE DIR> -L<YOUR INSDB API LIB FILE DIR>" ../
++    make kv_bench
++
++5. Aerospike
+   4.1 Download & install aerospike server
+     https://www.aerospike.com/docs/operations/install/linux/ubuntu
+   4.2 build as_bench

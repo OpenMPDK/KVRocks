@@ -1,0 +1,1 @@
+sed -n '$=' ./key.list

@@ -1,0 +1,484 @@
+==== Test Skiptest.SInser_And_SRead
+
+SInser_And_MRead total write execution time(399544)
+write result [0] :list(0x7ffdc27f9330)  s(1519685841232072) f(1519685841631364) micros(399292) hit(0) miss(0) insert(600000) insert_fail(0)
+
+SInser_And_MRead total read execution time(745422)
+read result [0] :list(0x7ffdc27f9330)  s(1519685841631579) f(1519685842376834) micros(745255) hit(600000) miss(0) insert(0)
+==== Test Skiptest.MInsert_And_MRead
+
+MInsert_And_MRead total write execution time(167358)
+write result [0] :list(0x7ffdc27f9330)  s(1519685842380630) f(1519685842489970) micros(109340) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [1] :list(0x7ffdc27f9330)  s(1519685842380642) f(1519685842534180) micros(153538) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [2] :list(0x7ffdc27f9330)  s(1519685842380679) f(1519685842495773) micros(115094) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [3] :list(0x7ffdc27f9330)  s(1519685842380680) f(1519685842538129) micros(157449) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [4] :list(0x7ffdc27f9330)  s(1519685842391532) f(1519685842541160) micros(149628) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [5] :list(0x7ffdc27f9330)  s(1519685842399531) f(1519685842547327) micros(147796) hit(0) miss(0) insert(100000) insert_fail(0)
+
+MInsert_And_MRead total read execution time(1079419)
+read result [0] :list(0x7ffdc27f9330)  s(1519685842548282) f(1519685843608470) micros(1060188) hit(100000) miss(0) insert(0)
+read result [1] :list(0x7ffdc27f9330)  s(1519685842548282) f(1519685843517149) micros(968867) hit(100000) miss(0) insert(0)
+read result [2] :list(0x7ffdc27f9330)  s(1519685842555532) f(1519685843558907) micros(1003375) hit(100000) miss(0) insert(0)
+read result [3] :list(0x7ffdc27f9330)  s(1519685842548285) f(1519685843554222) micros(1005937) hit(100000) miss(0) insert(0)
+read result [4] :list(0x7ffdc27f9330)  s(1519685842548309) f(1519685843519147) micros(970838) hit(100000) miss(0) insert(0)
+read result [5] :list(0x7ffdc27f9330)  s(1519685842559532) f(1519685843533943) micros(974411) hit(100000) miss(0) insert(0)
+read result [6] :list(0x7ffdc27f9330)  s(1519685842555538) f(1519685843604915) micros(1049377) hit(100000) miss(0) insert(0)
+read result [7] :list(0x7ffdc27f9330)  s(1519685842563531) f(1519685843619151) micros(1055620) hit(100000) miss(0) insert(0)
+read result [8] :list(0x7ffdc27f9330)  s(1519685842563534) f(1519685843552717) micros(989183) hit(100000) miss(0) insert(0)
+read result [9] :list(0x7ffdc27f9330)  s(1519685842595527) f(1519685843556719) micros(961192) hit(100000) miss(0) insert(0)
+read result [10] :list(0x7ffdc27f9330)  s(1519685842567529) f(1519685843528755) micros(961226) hit(100000) miss(0) insert(0)
+read result [11] :list(0x7ffdc27f9330)  s(1519685842567531) f(1519685843554945) micros(987414) hit(100000) miss(0) insert(0)
+read result [12] :list(0x7ffdc27f9330)  s(1519685842575530) f(1519685843509311) micros(933781) hit(100000) miss(0) insert(0)
+read result [13] :list(0x7ffdc27f9330)  s(1519685842579530) f(1519685843581594) micros(1002064) hit(100000) miss(0) insert(0)
+read result [14] :list(0x7ffdc27f9330)  s(1519685842579533) f(1519685843626793) micros(1047260) hit(100000) miss(0) insert(0)
+read result [15] :list(0x7ffdc27f9330)  s(1519685842579537) f(1519685843556068) micros(976531) hit(100000) miss(0) insert(0)
+read result [16] :list(0x7ffdc27f9330)  s(1519685842583529) f(1519685843625385) micros(1041856) hit(100000) miss(0) insert(0)
+read result [17] :list(0x7ffdc27f9330)  s(1519685842548254) f(1519685843569879) micros(1021625) hit(100000) miss(0) insert(0)
+==== Test Skiptest.MInsert_And_MRead_With_MSkipList
+
+MInsert_And_MRead_With_MSkipList total write execution time(2640560)
+write result [0] :list(0x7ffdc27f9260)  s(1519685843639531) f(1519685846059374) micros(2419843) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [1] :list(0x7ffdc27f9260)  s(1519685843628892) f(1519685846146136) micros(2517244) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [2] :list(0x7ffdc27f9260)  s(1519685843631546) f(1519685845860109) micros(2228563) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [3] :list(0x7ffdc27f9260)  s(1519685843628836) f(1519685845999676) micros(2370840) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [4] :list(0x7ffdc27f9260)  s(1519685843631541) f(1519685846167194) micros(2535653) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [5] :list(0x7ffdc27f9260)  s(1519685843639533) f(1519685845119955) micros(1480422) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [6] :list(0x7ffdc27f9290)  s(1519685843646653) f(1519685845974871) micros(2328218) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [7] :list(0x7ffdc27f9290)  s(1519685843639537) f(1519685846257754) micros(2618217) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [8] :list(0x7ffdc27f9290)  s(1519685843646726) f(1519685846254948) micros(2608222) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [9] :list(0x7ffdc27f9290)  s(1519685843651533) f(1519685846242085) micros(2590552) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [10] :list(0x7ffdc27f9290)  s(1519685843651540) f(1519685846256305) micros(2604765) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [11] :list(0x7ffdc27f9290)  s(1519685843643531) f(1519685845778638) micros(2135107) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [12] :list(0x7ffdc27f92c0)  s(1519685843655529) f(1519685846268914) micros(2613385) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [13] :list(0x7ffdc27f92c0)  s(1519685843651537) f(1519685846259308) micros(2607771) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [14] :list(0x7ffdc27f92c0)  s(1519685843628864) f(1519685846243055) micros(2614191) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [15] :list(0x7ffdc27f92c0)  s(1519685843655530) f(1519685845776706) micros(2121176) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [16] :list(0x7ffdc27f92c0)  s(1519685843655532) f(1519685846102221) micros(2446689) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [17] :list(0x7ffdc27f92c0)  s(1519685843628838) f(1519685846101552) micros(2472714) hit(0) miss(0) insert(100000) insert_fail(0)
+
+MInsert_And_MRead_With_MSkipList total read execution time(1081319)
+read result [0] :list(0x7ffdc27f9260)  s(1519685846269563) f(1519685847269206) micros(999643) hit(100000) miss(0) insert(0)
+read result [1] :list(0x7ffdc27f9260)  s(1519685846269591) f(1519685846907691) micros(638100) hit(100000) miss(0) insert(0)
+read result [2] :list(0x7ffdc27f9260)  s(1519685846279530) f(1519685847281017) micros(1001487) hit(100000) miss(0) insert(0)
+read result [3] :list(0x7ffdc27f9260)  s(1519685846279531) f(1519685846961029) micros(681498) hit(100000) miss(0) insert(0)
+read result [4] :list(0x7ffdc27f9260)  s(1519685846319527) f(1519685847350334) micros(1030807) hit(100000) miss(0) insert(0)
+read result [5] :list(0x7ffdc27f9260)  s(1519685846269619) f(1519685847341141) micros(1071522) hit(100000) miss(0) insert(0)
+read result [6] :list(0x7ffdc27f9290)  s(1519685846287532) f(1519685847276019) micros(988487) hit(100000) miss(0) insert(0)
+read result [7] :list(0x7ffdc27f9290)  s(1519685846283533) f(1519685847238034) micros(954501) hit(100000) miss(0) insert(0)
+read result [8] :list(0x7ffdc27f9290)  s(1519685846291529) f(1519685847340399) micros(1048870) hit(100000) miss(0) insert(0)
+read result [9] :list(0x7ffdc27f9290)  s(1519685846295529) f(1519685847289254) micros(993725) hit(100000) miss(0) insert(0)
+read result [10] :list(0x7ffdc27f9290)  s(1519685846295530) f(1519685847348867) micros(1053337) hit(100000) miss(0) insert(0)
+read result [11] :list(0x7ffdc27f9290)  s(1519685846299529) f(1519685847241171) micros(941642) hit(100000) miss(0) insert(0)
+read result [12] :list(0x7ffdc27f92c0)  s(1519685846295532) f(1519685847347703) micros(1052171) hit(100000) miss(0) insert(0)
+read result [13] :list(0x7ffdc27f92c0)  s(1519685846299531) f(1519685847347704) micros(1048173) hit(100000) miss(0) insert(0)
+read result [14] :list(0x7ffdc27f92c0)  s(1519685846311528) f(1519685847341223) micros(1029695) hit(100000) miss(0) insert(0)
+read result [15] :list(0x7ffdc27f92c0)  s(1519685846303533) f(1519685847291514) micros(987981) hit(100000) miss(0) insert(0)
+read result [16] :list(0x7ffdc27f92c0)  s(1519685846307528) f(1519685847209719) micros(902191) hit(100000) miss(0) insert(0)
+read result [17] :list(0x7ffdc27f92c0)  s(1519685846269562) f(1519685847315153) micros(1045591) hit(100000) miss(0) insert(0)
+==== Test Skiptest.C_MInsert_MRead
+
+C_MInsert_MRead total read/write execution time(771365)
+read/write result [0] :list(0x7ffdc27f9330)  s(1519685847355132) f(1519685847582211) micros(227079) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [1] :list(0x7ffdc27f9330)  s(1519685847359551) f(1519685847916294) micros(556743) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [2] :list(0x7ffdc27f9330)  s(1519685847455529) f(1519685847984527) micros(528998) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [3] :list(0x7ffdc27f9330)  s(1519685847359550) f(1519685847861974) micros(502424) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [4] :list(0x7ffdc27f9330)  s(1519685847359584) f(1519685847963476) micros(603892) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [5] :list(0x7ffdc27f9330)  s(1519685847367535) f(1519685847943380) micros(575845) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [6] :list(0x7ffdc27f9330)  s(1519685847375537) f(1519685848068086) micros(692549) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [7] :list(0x7ffdc27f9330)  s(1519685847379529) f(1519685847977154) micros(597625) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [8] :list(0x7ffdc27f9330)  s(1519685847383530) f(1519685847717678) micros(334148) hit(0) miss(100000) insert(0) insert_fail(0)
+read/write result [9] :list(0x7ffdc27f9330)  s(1519685847387529) f(1519685847796735) micros(409206) hit(47987) miss(52013) insert(0) insert_fail(0)
+read/write result [10] :list(0x7ffdc27f9330)  s(1519685847391529) f(1519685847638790) micros(247261) hit(9258) miss(90742) insert(0) insert_fail(0)
+read/write result [11] :list(0x7ffdc27f9330)  s(1519685847395531) f(1519685847753730) micros(358199) hit(9956) miss(90044) insert(0) insert_fail(0)
+read/write result [12] :list(0x7ffdc27f9330)  s(1519685847395535) f(1519685848074372) micros(678837) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [13] :list(0x7ffdc27f9330)  s(1519685847403529) f(1519685848095226) micros(691697) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [14] :list(0x7ffdc27f9330)  s(1519685847407530) f(1519685847736315) micros(328785) hit(0) miss(100000) insert(0) insert_fail(0)
+read/write result [15] :list(0x7ffdc27f9330)  s(1519685847411528) f(1519685848061502) micros(649974) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [16] :list(0x7ffdc27f9330)  s(1519685847415530) f(1519685847745349) micros(329819) hit(9258) miss(90742) insert(0) insert_fail(0)
+read/write result [17] :list(0x7ffdc27f9330)  s(1519685847419530) f(1519685847837959) micros(418429) hit(9956) miss(90044) insert(0) insert_fail(0)
+read/write result [18] :list(0x7ffdc27f9330)  s(1519685847423530) f(1519685848106948) micros(683418) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [19] :list(0x7ffdc27f9330)  s(1519685847427529) f(1519685848112201) micros(684672) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [20] :list(0x7ffdc27f9330)  s(1519685847431529) f(1519685847767918) micros(336389) hit(0) miss(100000) insert(0) insert_fail(0)
+read/write result [21] :list(0x7ffdc27f9330)  s(1519685847435528) f(1519685848126120) micros(690592) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [22] :list(0x7ffdc27f9330)  s(1519685847439529) f(1519685848088937) micros(649408) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [23] :list(0x7ffdc27f9330)  s(1519685847371532) f(1519685847763548) micros(392016) hit(9956) miss(90044) insert(0) insert_fail(0)
+==== Test Skiptest.C_MInsert_MRead_With_MSkipList
+
+C_MInsert_MRead_With_MSkipList total read/write execution time(1067436)
+read/write result [0] :list(0x7ffdc27f9260)  s(1519685848128250) f(1519685848231685) micros(103435) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [1] :list(0x7ffdc27f9290)  s(1519685848227529) f(1519685849098022) micros(870493) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [2] :list(0x7ffdc27f92c0)  s(1519685848223530) f(1519685849098539) micros(875009) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [3] :list(0x7ffdc27f9260)  s(1519685848128227) f(1519685848921741) micros(793514) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [4] :list(0x7ffdc27f9290)  s(1519685848128280) f(1519685848971106) micros(842826) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [5] :list(0x7ffdc27f92c0)  s(1519685848131553) f(1519685849094161) micros(962608) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [6] :list(0x7ffdc27f9260)  s(1519685848135536) f(1519685849093430) micros(957894) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [7] :list(0x7ffdc27f9290)  s(1519685848143533) f(1519685849105320) micros(961787) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [8] :list(0x7ffdc27f92c0)  s(1519685848139533) f(1519685849052152) micros(912619) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [9] :list(0x7ffdc27f9260)  s(1519685848143531) f(1519685849034841) micros(891310) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [10] :list(0x7ffdc27f9290)  s(1519685848147532) f(1519685848947177) micros(799645) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [11] :list(0x7ffdc27f92c0)  s(1519685848167528) f(1519685849041227) micros(873699) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [12] :list(0x7ffdc27f9260)  s(1519685848147535) f(1519685849052550) micros(905015) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [13] :list(0x7ffdc27f9290)  s(1519685848151529) f(1519685849019519) micros(867990) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [14] :list(0x7ffdc27f92c0)  s(1519685848151532) f(1519685849050836) micros(899304) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [15] :list(0x7ffdc27f9260)  s(1519685848155529) f(1519685848950981) micros(795452) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [16] :list(0x7ffdc27f9290)  s(1519685848155533) f(1519685849085113) micros(929580) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [17] :list(0x7ffdc27f92c0)  s(1519685848159532) f(1519685849042436) micros(882904) hit(0) miss(0) insert(100000) insert_fail(0)
+read/write result [18] :list(0x7ffdc27f9260)  s(1519685848159528) f(1519685849178053) micros(1018525) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [19] :list(0x7ffdc27f9290)  s(1519685848163531) f(1519685848421112) micros(257581) hit(0) miss(100000) insert(0) insert_fail(0)
+read/write result [20] :list(0x7ffdc27f92c0)  s(1519685848163532) f(1519685848424256) micros(260724) hit(0) miss(100000) insert(0) insert_fail(0)
+read/write result [21] :list(0x7ffdc27f9260)  s(1519685848163536) f(1519685849125880) micros(962344) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [22] :list(0x7ffdc27f9290)  s(1519685848167543) f(1519685849140772) micros(973229) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [23] :list(0x7ffdc27f92c0)  s(1519685848171529) f(1519685848712819) micros(541290) hit(25148) miss(74852) insert(0) insert_fail(0)
+read/write result [24] :list(0x7ffdc27f9260)  s(1519685848175530) f(1519685848759776) micros(584246) hit(35258) miss(64742) insert(0) insert_fail(0)
+read/write result [25] :list(0x7ffdc27f9290)  s(1519685848179530) f(1519685848761121) micros(581591) hit(22969) miss(77031) insert(0) insert_fail(0)
+read/write result [26] :list(0x7ffdc27f92c0)  s(1519685848183529) f(1519685849167690) micros(984161) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [27] :list(0x7ffdc27f9260)  s(1519685848187529) f(1519685849168964) micros(981435) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [28] :list(0x7ffdc27f9290)  s(1519685848191530) f(1519685848594639) micros(403109) hit(0) miss(100000) insert(0) insert_fail(0)
+read/write result [29] :list(0x7ffdc27f92c0)  s(1519685848195529) f(1519685849173830) micros(978301) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [30] :list(0x7ffdc27f9260)  s(1519685848199529) f(1519685849144242) micros(944713) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [31] :list(0x7ffdc27f9290)  s(1519685848203530) f(1519685849159291) micros(955761) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [32] :list(0x7ffdc27f92c0)  s(1519685848207529) f(1519685849162050) micros(954521) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [33] :list(0x7ffdc27f9260)  s(1519685848211528) f(1519685849173071) micros(961543) hit(100000) miss(0) insert(0) insert_fail(0)
+read/write result [34] :list(0x7ffdc27f9290)  s(1519685848215528) f(1519685848474776) micros(259248) hit(0) miss(100000) insert(0) insert_fail(0)
+read/write result [35] :list(0x7ffdc27f92c0)  s(1519685848239529) f(1519685849195100) micros(955571) hit(100000) miss(0) insert(0) insert_fail(0)
+==== Test Skiptest.SInsert_And_SRead_And_SRemove
+
+SInsert_And_SRead_And_SRemove total write execution time(397312)
+write result [0] :list(0x7ffdc27f9320)  s(1519685849199765) f(1519685849596855) micros(397090) hit(0) miss(0) insert(600000) insert_fail(0)
+
+SInsert_And_SRead_And_SRemove total read execution time(675637)
+read/remove result [0] :list(0x7ffdc27f9320)  s(1519685849597059) f(1519685850272536) micros(675477) hit(600000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+
+SInsert_And_SRead_And_SRemove total remove execution time(375846)
+read/remove result [0] :list(0x7ffdc27f9320)  s(1519685850272865) f(1519685850648432) micros(375567) hit(0) miss(0) insert(0) insert_fail(0) remove(600000) remove_already(0) remove_invalid(0)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove
+
+MInsert_And_MRead_And_MRemove total write execution time(188116)
+write result [0] :list(0x7ffdc27f9320)  s(1519685850651750) f(1519685850809629) micros(157879) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [1] :list(0x7ffdc27f9320)  s(1519685850651876) f(1519685850804129) micros(152253) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [2] :list(0x7ffdc27f9320)  s(1519685850663530) f(1519685850839546) micros(176016) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [3] :list(0x7ffdc27f9320)  s(1519685850651845) f(1519685850780161) micros(128316) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [4] :list(0x7ffdc27f9320)  s(1519685850663530) f(1519685850833312) micros(169782) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [5] :list(0x7ffdc27f9320)  s(1519685850651802) f(1519685850760918) micros(109116) hit(0) miss(0) insert(100000) insert_fail(0)
+
+MInsert_And_MRead_And_MRemove total read execution time(366084)
+read/remove result [0] :list(0x7ffdc27f9320)  s(1519685850839949) f(1519685851065374) micros(225425) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [1] :list(0x7ffdc27f9320)  s(1519685850839988) f(1519685851178180) micros(338192) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [2] :list(0x7ffdc27f9320)  s(1519685850840003) f(1519685851093333) micros(253330) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [3] :list(0x7ffdc27f9320)  s(1519685850839979) f(1519685851205670) micros(365691) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [4] :list(0x7ffdc27f9320)  s(1519685850851529) f(1519685851186349) micros(334820) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [5] :list(0x7ffdc27f9320)  s(1519685850851528) f(1519685851203658) micros(352130) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+
+MInsert_And_MRead_And_MRemove total remove execution time(242449)
+read/remove result [0] :list(0x7ffdc27f9320)  s(1519685851206209) f(1519685851358691) micros(152482) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [1] :list(0x7ffdc27f9320)  s(1519685851206210) f(1519685851420034) micros(213824) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [2] :list(0x7ffdc27f9320)  s(1519685851215530) f(1519685851435214) micros(219684) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [3] :list(0x7ffdc27f9320)  s(1519685851206208) f(1519685851369156) micros(162948) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [4] :list(0x7ffdc27f9320)  s(1519685851206177) f(1519685851419180) micros(213003) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [5] :list(0x7ffdc27f9320)  s(1519685851206175) f(1519685851448177) micros(242002) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+==== Test Skiptest.MInsert_And_MRead_And_MRemove_With_MSkipList
+
+MInsert_And_MRead_And_MRemove_With_MSkipList total write execution time(487685)
+write result [0] :list(0x7ffdc27f9260)  s(1519685851451935) f(1519685851860371) micros(408436) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [1] :list(0x7ffdc27f9290)  s(1519685851455542) f(1519685851851345) micros(395803) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [2] :list(0x7ffdc27f92c0)  s(1519685851451984) f(1519685851575204) micros(123220) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [3] :list(0x7ffdc27f9260)  s(1519685851451958) f(1519685851904392) micros(452434) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [4] :list(0x7ffdc27f9290)  s(1519685851451988) f(1519685851939173) micros(487185) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [5] :list(0x7ffdc27f92c0)  s(1519685851452837) f(1519685851889967) micros(437130) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [6] :list(0x7ffdc27f9260)  s(1519685851459535) f(1519685851837296) micros(377761) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [7] :list(0x7ffdc27f9290)  s(1519685851459531) f(1519685851933196) micros(473665) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [8] :list(0x7ffdc27f92c0)  s(1519685851467530) f(1519685851927459) micros(459929) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [9] :list(0x7ffdc27f9260)  s(1519685851495529) f(1519685851898046) micros(402517) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [10] :list(0x7ffdc27f9290)  s(1519685851471530) f(1519685851924381) micros(452851) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [11] :list(0x7ffdc27f92c0)  s(1519685851475531) f(1519685851904063) micros(428532) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [12] :list(0x7ffdc27f9260)  s(1519685851475535) f(1519685851933647) micros(458112) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [13] :list(0x7ffdc27f9290)  s(1519685851483530) f(1519685851930141) micros(446611) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [14] :list(0x7ffdc27f92c0)  s(1519685851487531) f(1519685851816163) micros(328632) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [15] :list(0x7ffdc27f9260)  s(1519685851491530) f(1519685851867471) micros(375941) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [16] :list(0x7ffdc27f9290)  s(1519685851495530) f(1519685851844970) micros(349440) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [17] :list(0x7ffdc27f92c0)  s(1519685851463529) f(1519685851915037) micros(451508) hit(0) miss(0) insert(100000) insert_fail(0)
+
+MInsert_And_MRead_And_MRemove_With_MSkipList total read execution time(1079878)
+read/remove result [0] :list(0x7ffdc27f9260)  s(1519685851939576) f(1519685852708706) micros(769130) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [1] :list(0x7ffdc27f9290)  s(1519685851939573) f(1519685852166230) micros(226657) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [2] :list(0x7ffdc27f92c0)  s(1519685851939574) f(1519685852170968) micros(231394) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [3] :list(0x7ffdc27f9260)  s(1519685851959529) f(1519685853017884) micros(1058355) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [4] :list(0x7ffdc27f9290)  s(1519685851943536) f(1519685852760078) micros(816542) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [5] :list(0x7ffdc27f92c0)  s(1519685851951531) f(1519685853019123) micros(1067592) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [6] :list(0x7ffdc27f9260)  s(1519685851951536) f(1519685853001280) micros(1049744) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [7] :list(0x7ffdc27f9290)  s(1519685851963530) f(1519685852917422) micros(953892) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [8] :list(0x7ffdc27f92c0)  s(1519685851959534) f(1519685853018022) micros(1058488) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [9] :list(0x7ffdc27f9260)  s(1519685851971529) f(1519685853014182) micros(1042653) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [10] :list(0x7ffdc27f9290)  s(1519685851967530) f(1519685853014019) micros(1046489) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [11] :list(0x7ffdc27f92c0)  s(1519685851967533) f(1519685852994647) micros(1027114) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [12] :list(0x7ffdc27f9260)  s(1519685851971530) f(1519685852996569) micros(1025039) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [13] :list(0x7ffdc27f9290)  s(1519685851975528) f(1519685852988231) micros(1012703) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [14] :list(0x7ffdc27f92c0)  s(1519685851975529) f(1519685852976874) micros(1001345) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [15] :list(0x7ffdc27f9260)  s(1519685851979528) f(1519685852949042) micros(969514) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [16] :list(0x7ffdc27f9290)  s(1519685851979528) f(1519685852914933) micros(935405) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [17] :list(0x7ffdc27f92c0)  s(1519685851939571) f(1519685853017484) micros(1077913) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+
+MInsert_And_MRead_And_MRemove_With_MSkipList total remove execution time(554989)
+read/remove result [0] :list(0x7ffdc27f9260)  s(1519685853019520) f(1519685853367483) micros(347963) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [1] :list(0x7ffdc27f9290)  s(1519685853019538) f(1519685853112482) micros(92944) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [2] :list(0x7ffdc27f92c0)  s(1519685853023535) f(1519685853365957) micros(342422) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [3] :list(0x7ffdc27f9260)  s(1519685853019543) f(1519685853522949) micros(503406) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [4] :list(0x7ffdc27f9290)  s(1519685853031530) f(1519685853503360) micros(471830) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [5] :list(0x7ffdc27f92c0)  s(1519685853023537) f(1519685853508835) micros(485298) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [6] :list(0x7ffdc27f9260)  s(1519685853031531) f(1519685853542969) micros(511438) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [7] :list(0x7ffdc27f9290)  s(1519685853039532) f(1519685853562943) micros(523411) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [8] :list(0x7ffdc27f92c0)  s(1519685853031534) f(1519685853473848) micros(442314) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [9] :list(0x7ffdc27f9260)  s(1519685853035534) f(1519685853572472) micros(536938) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [10] :list(0x7ffdc27f9290)  s(1519685853039531) f(1519685853530397) micros(490866) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [11] :list(0x7ffdc27f92c0)  s(1519685853039534) f(1519685853480559) micros(441025) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [12] :list(0x7ffdc27f9260)  s(1519685853047530) f(1519685853556591) micros(509061) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [13] :list(0x7ffdc27f9290)  s(1519685853043533) f(1519685853562312) micros(518779) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [14] :list(0x7ffdc27f92c0)  s(1519685853047534) f(1519685853500440) micros(452906) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [15] :list(0x7ffdc27f9260)  s(1519685853047539) f(1519685853574196) micros(526657) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [16] :list(0x7ffdc27f9290)  s(1519685853051529) f(1519685853443530) micros(392001) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+read/remove result [17] :list(0x7ffdc27f92c0)  s(1519685853019519) f(1519685853527911) micros(508392) hit(0) miss(0) insert(0) insert_fail(0) remove(100000) remove_already(0) remove_invalid(0)
+==== Test Skiptest.MInsert_And_MRead_MRemove
+
+MInsert_And_MRead_MRemove total write execution time(175212)
+write result [0] :list(0x7ffdc27f9320)  s(1519685853578974) f(1519685853693135) micros(114161) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [1] :list(0x7ffdc27f9320)  s(1519685853583567) f(1519685853752987) micros(169420) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [2] :list(0x7ffdc27f9320)  s(1519685853591533) f(1519685853749498) micros(157965) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [3] :list(0x7ffdc27f9320)  s(1519685853583558) f(1519685853706134) micros(122576) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [4] :list(0x7ffdc27f9320)  s(1519685853583568) f(1519685853748162) micros(164594) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [5] :list(0x7ffdc27f9320)  s(1519685853595534) f(1519685853753958) micros(158424) hit(0) miss(0) insert(100000) insert_fail(0)
+
+MInsert_And_MRead_MRemove total read/remove execution time(1042509)
+read/remove result [0] :list(0x7ffdc27f9320)  s(1519685853754469) f(1519685854423572) micros(669103) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [1] :list(0x7ffdc27f9320)  s(1519685853754482) f(1519685854768115) micros(1013633) hit(99970) miss(30) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [2] :list(0x7ffdc27f9320)  s(1519685853823527) f(1519685854788027) micros(964500) hit(92250) miss(7750) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [3] :list(0x7ffdc27f9320)  s(1519685853754499) f(1519685854788453) micros(1033954) hit(99104) miss(896) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [4] :list(0x7ffdc27f9320)  s(1519685853831527) f(1519685854778310) micros(946783) hit(91572) miss(8428) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [5] :list(0x7ffdc27f9320)  s(1519685853763537) f(1519685854710545) micros(947008) hit(90000) miss(10000) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [6] :list(0x7ffdc27f9320)  s(1519685853771531) f(1519685854694900) micros(923369) hit(95987) miss(4013) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [7] :list(0x7ffdc27f9320)  s(1519685853775531) f(1519685854793308) micros(1017777) hit(97420) miss(2580) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [8] :list(0x7ffdc27f9320)  s(1519685853771534) f(1519685854796515) micros(1024981) hit(98736) miss(1264) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [9] :list(0x7ffdc27f9320)  s(1519685853779529) f(1519685854790604) micros(1011075) hit(98307) miss(1693) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [10] :list(0x7ffdc27f9320)  s(1519685853783530) f(1519685854781036) micros(997506) hit(96777) miss(3223) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [11] :list(0x7ffdc27f9320)  s(1519685853783530) f(1519685854768844) micros(985314) hit(90000) miss(10000) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [12] :list(0x7ffdc27f9320)  s(1519685853787530) f(1519685854796299) micros(1008769) hit(97445) miss(2555) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [13] :list(0x7ffdc27f9320)  s(1519685853787528) f(1519685854785729) micros(998201) hit(98381) miss(1619) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [14] :list(0x7ffdc27f9320)  s(1519685853791530) f(1519685854773811) micros(982281) hit(99082) miss(918) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [15] :list(0x7ffdc27f9320)  s(1519685853791529) f(1519685854796146) micros(1004617) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [16] :list(0x7ffdc27f9320)  s(1519685853791533) f(1519685854716259) micros(924726) hit(93658) miss(6342) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [17] :list(0x7ffdc27f9320)  s(1519685853795530) f(1519685854712777) micros(917247) hit(90000) miss(10000) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [18] :list(0x7ffdc27f9320)  s(1519685853799528) f(1519685853845002) micros(45474) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [19] :list(0x7ffdc27f9320)  s(1519685853803529) f(1519685853854718) micros(51189) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [20] :list(0x7ffdc27f9320)  s(1519685853807529) f(1519685853873588) micros(66059) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [21] :list(0x7ffdc27f9320)  s(1519685853811528) f(1519685853862542) micros(51014) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [22] :list(0x7ffdc27f9320)  s(1519685853815529) f(1519685853859852) micros(44323) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [23] :list(0x7ffdc27f9320)  s(1519685853754445) f(1519685853770961) micros(16516) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+==== Test Skiptest.MInsert_And_MRead_MRemove_With_MSkipList
+
+MInsert_And_MRead_MRemove_With_MSkipList total write execution time(429022)
+write result [0] :list(0x7ffdc27f9260)  s(1519685854798445) f(1519685854880516) micros(82071) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [1] :list(0x7ffdc27f9290)  s(1519685854799549) f(1519685855181669) micros(382120) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [2] :list(0x7ffdc27f92c0)  s(1519685854855530) f(1519685855196134) micros(340604) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [3] :list(0x7ffdc27f9260)  s(1519685854798473) f(1519685855220695) micros(422222) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [4] :list(0x7ffdc27f9290)  s(1519685854807532) f(1519685855219125) micros(411593) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [5] :list(0x7ffdc27f92c0)  s(1519685854815531) f(1519685855212836) micros(397305) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [6] :list(0x7ffdc27f9260)  s(1519685854807537) f(1519685855183323) micros(375786) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [7] :list(0x7ffdc27f9290)  s(1519685854815533) f(1519685855146136) micros(330603) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [8] :list(0x7ffdc27f92c0)  s(1519685854823533) f(1519685855218786) micros(395253) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [9] :list(0x7ffdc27f9260)  s(1519685854819531) f(1519685855133143) micros(313612) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [10] :list(0x7ffdc27f9290)  s(1519685854823532) f(1519685855131733) micros(308201) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [11] :list(0x7ffdc27f92c0)  s(1519685854823537) f(1519685855218655) micros(395118) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [12] :list(0x7ffdc27f9260)  s(1519685854827532) f(1519685855195376) micros(367844) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [13] :list(0x7ffdc27f9290)  s(1519685854831531) f(1519685855208523) micros(376992) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [14] :list(0x7ffdc27f92c0)  s(1519685854827536) f(1519685855227090) micros(399554) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [15] :list(0x7ffdc27f9260)  s(1519685854835530) f(1519685855224408) micros(388878) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [16] :list(0x7ffdc27f9290)  s(1519685854839530) f(1519685855174265) micros(334735) hit(0) miss(0) insert(100000) insert_fail(0)
+write result [17] :list(0x7ffdc27f92c0)  s(1519685854798420) f(1519685855124147) micros(325727) hit(0) miss(0) insert(100000) insert_fail(0)
+
+MInsert_And_MRead_MRemove_With_MSkipList total read/remove execution time(1082083)
+read/remove result [0] :list(0x7ffdc27f9260)  s(1519685855227697) f(1519685855936255) micros(708558) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [1] :list(0x7ffdc27f9290)  s(1519685855227722) f(1519685856225146) micros(997424) hit(96502) miss(3498) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [2] :list(0x7ffdc27f92c0)  s(1519685855327528) f(1519685856306245) micros(978717) hit(90000) miss(10000) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [3] :list(0x7ffdc27f9260)  s(1519685855227750) f(1519685856082129) micros(854379) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [4] :list(0x7ffdc27f9290)  s(1519685855239530) f(1519685856096904) micros(857374) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [5] :list(0x7ffdc27f92c0)  s(1519685855247529) f(1519685856185859) micros(938330) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [6] :list(0x7ffdc27f9260)  s(1519685855239537) f(1519685856273867) micros(1034330) hit(99570) miss(430) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [7] :list(0x7ffdc27f9290)  s(1519685855247529) f(1519685856309217) micros(1061688) hit(98666) miss(1334) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [8] :list(0x7ffdc27f92c0)  s(1519685855248437) f(1519685856291135) micros(1042698) hit(99558) miss(442) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [9] :list(0x7ffdc27f9260)  s(1519685855251529) f(1519685856297118) micros(1045589) hit(99751) miss(249) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [10] :list(0x7ffdc27f9290)  s(1519685855251536) f(1519685856295815) micros(1044279) hit(97172) miss(2828) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [11] :list(0x7ffdc27f92c0)  s(1519685855255529) f(1519685856298368) micros(1042839) hit(98148) miss(1852) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [12] :list(0x7ffdc27f9260)  s(1519685855259531) f(1519685856293636) micros(1034105) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [13] :list(0x7ffdc27f9290)  s(1519685855259529) f(1519685856305625) micros(1046096) hit(99478) miss(522) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [14] :list(0x7ffdc27f92c0)  s(1519685855263529) f(1519685856143668) micros(880139) hit(99705) miss(295) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [15] :list(0x7ffdc27f9260)  s(1519685855263533) f(1519685856220925) micros(957392) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [16] :list(0x7ffdc27f9290)  s(1519685855267529) f(1519685856281696) micros(1014167) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [17] :list(0x7ffdc27f92c0)  s(1519685855267532) f(1519685856246954) micros(979422) hit(90000) miss(10000) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/remove result [18] :list(0x7ffdc27f9260)  s(1519685855271530) f(1519685855296779) micros(25249) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [19] :list(0x7ffdc27f9290)  s(1519685855271530) f(1519685855304755) micros(33225) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [20] :list(0x7ffdc27f92c0)  s(1519685855271534) f(1519685855276624) micros(5090) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [21] :list(0x7ffdc27f9260)  s(1519685855275531) f(1519685855343898) micros(68367) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [22] :list(0x7ffdc27f9290)  s(1519685855276645) f(1519685855361824) micros(85179) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [23] :list(0x7ffdc27f92c0)  s(1519685855279530) f(1519685855310485) micros(30955) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [24] :list(0x7ffdc27f9260)  s(1519685855279535) f(1519685855393147) micros(113612) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [25] :list(0x7ffdc27f9290)  s(1519685855283529) f(1519685855388335) micros(104806) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [26] :list(0x7ffdc27f92c0)  s(1519685855287531) f(1519685855390243) micros(102712) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [27] :list(0x7ffdc27f9260)  s(1519685855291532) f(1519685855378662) micros(87130) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [28] :list(0x7ffdc27f9290)  s(1519685855295532) f(1519685855357758) micros(62226) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [29] :list(0x7ffdc27f92c0)  s(1519685855299529) f(1519685855380340) micros(80811) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [30] :list(0x7ffdc27f9260)  s(1519685855303531) f(1519685855362089) micros(58558) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [31] :list(0x7ffdc27f9290)  s(1519685855307530) f(1519685855366517) micros(58987) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [32] :list(0x7ffdc27f92c0)  s(1519685855311532) f(1519685855393555) micros(82023) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [33] :list(0x7ffdc27f9260)  s(1519685855315529) f(1519685855394662) micros(79133) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [34] :list(0x7ffdc27f9290)  s(1519685855319531) f(1519685855396516) micros(76985) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/remove result [35] :list(0x7ffdc27f92c0)  s(1519685855235546) f(1519685855248411) micros(12865) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+==== Test Skiptest.C_MInsert_MRead_MRemove
+
+C_MInsert_MRead_MRemove total read/write/remove execution time(583784)
+read/write/remove result [0] :list(0x7ffdc27f9320)  s(1519685856314590) f(1519685856648218) micros(333628) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [1] :list(0x7ffdc27f9320)  s(1519685856314626) f(1519685856675192) micros(360566) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [2] :list(0x7ffdc27f9320)  s(1519685856331529) f(1519685856771574) micros(440045) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [3] :list(0x7ffdc27f9320)  s(1519685856319542) f(1519685856690127) micros(370585) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [4] :list(0x7ffdc27f9320)  s(1519685856314652) f(1519685856683450) micros(368798) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [5] :list(0x7ffdc27f9320)  s(1519685856319541) f(1519685856548480) micros(228939) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [6] :list(0x7ffdc27f9320)  s(1519685856319546) f(1519685856563143) micros(243597) hit(8172) miss(91828) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [7] :list(0x7ffdc27f9320)  s(1519685856327530) f(1519685856786270) micros(458740) hit(97099) miss(2901) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [8] :list(0x7ffdc27f9320)  s(1519685856327530) f(1519685856561367) micros(233837) hit(0) miss(100000) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [9] :list(0x7ffdc27f9320)  s(1519685856331538) f(1519685856897461) micros(565923) hit(94917) miss(5083) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [10] :list(0x7ffdc27f9320)  s(1519685856331533) f(1519685856895528) micros(563995) hit(96659) miss(3341) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [11] :list(0x7ffdc27f9320)  s(1519685856335528) f(1519685856759785) micros(424257) hit(98959) miss(1041) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [12] :list(0x7ffdc27f9320)  s(1519685856339530) f(1519685856882890) micros(543360) hit(94095) miss(5905) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [13] :list(0x7ffdc27f9320)  s(1519685856339530) f(1519685856592710) micros(253180) hit(6952) miss(93048) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [14] :list(0x7ffdc27f9320)  s(1519685856347529) f(1519685856551668) micros(204139) hit(0) miss(100000) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [15] :list(0x7ffdc27f9320)  s(1519685856343531) f(1519685856861736) micros(518205) hit(92599) miss(7401) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [16] :list(0x7ffdc27f9320)  s(1519685856343534) f(1519685856893656) micros(550122) hit(93690) miss(6310) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [17] :list(0x7ffdc27f9320)  s(1519685856343538) f(1519685856860660) micros(517122) hit(93591) miss(6409) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [18] :list(0x7ffdc27f9320)  s(1519685856351530) f(1519685856377289) micros(25759) hit(0) miss(0) insert(0) insert_fail(0) remove(6488) remove_already(3512) remove_invalid(0)
+read/write/remove result [19] :list(0x7ffdc27f9320)  s(1519685856351528) f(1519685856380488) micros(28960) hit(0) miss(0) insert(0) insert_fail(0) remove(4206) remove_already(5794) remove_invalid(0)
+read/write/remove result [20] :list(0x7ffdc27f9320)  s(1519685856355530) f(1519685856372290) micros(16760) hit(0) miss(0) insert(0) insert_fail(0) remove(0) remove_already(10000) remove_invalid(0)
+read/write/remove result [21] :list(0x7ffdc27f9320)  s(1519685856351533) f(1519685856381250) micros(29717) hit(0) miss(0) insert(0) insert_fail(0) remove(8204) remove_already(1796) remove_invalid(0)
+read/write/remove result [22] :list(0x7ffdc27f9320)  s(1519685856355530) f(1519685856375865) micros(20335) hit(0) miss(0) insert(0) insert_fail(0) remove(8140) remove_already(1860) remove_invalid(0)
+read/write/remove result [23] :list(0x7ffdc27f9320)  s(1519685856359529) f(1519685856383492) micros(23963) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [24] :list(0x7ffdc27f9320)  s(1519685856359530) f(1519685856373382) micros(13852) hit(0) miss(0) insert(0) insert_fail(0) remove(3512) remove_already(6488) remove_invalid(0)
+read/write/remove result [25] :list(0x7ffdc27f9320)  s(1519685856363530) f(1519685856378308) micros(14778) hit(0) miss(0) insert(0) insert_fail(0) remove(5794) remove_already(4206) remove_invalid(0)
+read/write/remove result [26] :list(0x7ffdc27f9320)  s(1519685856363530) f(1519685856373340) micros(9810) hit(0) miss(0) insert(0) insert_fail(0) remove(0) remove_already(10000) remove_invalid(0)
+read/write/remove result [27] :list(0x7ffdc27f9320)  s(1519685856363532) f(1519685856370675) micros(7143) hit(0) miss(0) insert(0) insert_fail(0) remove(1796) remove_already(8204) remove_invalid(0)
+read/write/remove result [28] :list(0x7ffdc27f9320)  s(1519685856367527) f(1519685856376569) micros(9042) hit(0) miss(0) insert(0) insert_fail(0) remove(1860) remove_already(8140) remove_invalid(0)
+read/write/remove result [29] :list(0x7ffdc27f9320)  s(1519685856314586) f(1519685856318079) micros(3493) hit(0) miss(0) insert(0) insert_fail(0) remove(0) remove_already(10000) remove_invalid(0)
+==== Test Skiptest.C_MInsert_MREad_MRemove_With_MSkipList
+
+C_MInsert_MREad_MRemove_With_MSkipList total read/write/remove execution time(1130993)
+read/write/remove result [0] :list(0x7ffdc27f9260)  s(1519685856901494) f(1519685857814681) micros(913187) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [1] :list(0x7ffdc27f9290)  s(1519685856901522) f(1519685857696439) micros(794917) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [2] :list(0x7ffdc27f92c0)  s(1519685856901808) f(1519685857439177) micros(537369) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [3] :list(0x7ffdc27f9260)  s(1519685856907541) f(1519685857839387) micros(931846) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [4] :list(0x7ffdc27f9290)  s(1519685856901525) f(1519685857512574) micros(611049) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [5] :list(0x7ffdc27f92c0)  s(1519685856903537) f(1519685857404996) micros(501459) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [6] :list(0x7ffdc27f9260)  s(1519685856903540) f(1519685857840568) micros(937028) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [7] :list(0x7ffdc27f9290)  s(1519685856915536) f(1519685857757184) micros(841648) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [8] :list(0x7ffdc27f92c0)  s(1519685856915532) f(1519685857820623) micros(905091) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [9] :list(0x7ffdc27f9260)  s(1519685856915534) f(1519685857757582) micros(842048) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [10] :list(0x7ffdc27f9290)  s(1519685856923533) f(1519685857824024) micros(900491) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [11] :list(0x7ffdc27f92c0)  s(1519685856931532) f(1519685857688631) micros(757099) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [12] :list(0x7ffdc27f9260)  s(1519685856923530) f(1519685857792681) micros(869151) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [13] :list(0x7ffdc27f9290)  s(1519685856927532) f(1519685857741678) micros(814146) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [14] :list(0x7ffdc27f92c0)  s(1519685856931532) f(1519685857788667) micros(857135) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [15] :list(0x7ffdc27f9260)  s(1519685856935530) f(1519685857805059) micros(869529) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [16] :list(0x7ffdc27f9290)  s(1519685856935530) f(1519685857727317) micros(791787) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [17] :list(0x7ffdc27f92c0)  s(1519685856939530) f(1519685857638424) micros(698894) hit(0) miss(0) insert(100000) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [18] :list(0x7ffdc27f9260)  s(1519685856939531) f(1519685857541606) micros(602075) hit(9837) miss(90163) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [19] :list(0x7ffdc27f9290)  s(1519685856943529) f(1519685857877579) micros(934050) hit(96257) miss(3743) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [20] :list(0x7ffdc27f92c0)  s(1519685856943532) f(1519685857996913) micros(1053381) hit(99751) miss(249) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [21] :list(0x7ffdc27f9260)  s(1519685856947530) f(1519685857920748) micros(973218) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [22] :list(0x7ffdc27f9290)  s(1519685856947530) f(1519685858014698) micros(1067168) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [23] :list(0x7ffdc27f92c0)  s(1519685856951530) f(1519685858008172) micros(1056642) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [24] :list(0x7ffdc27f9260)  s(1519685856951531) f(1519685857910962) micros(959431) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [25] :list(0x7ffdc27f9290)  s(1519685856955530) f(1519685857967311) micros(1011781) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [26] :list(0x7ffdc27f92c0)  s(1519685856955531) f(1519685857628760) micros(673229) hit(33433) miss(66567) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [27] :list(0x7ffdc27f9260)  s(1519685856963530) f(1519685857939666) micros(976136) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [28] :list(0x7ffdc27f9290)  s(1519685856959530) f(1519685857407648) micros(448118) hit(6914) miss(93086) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [29] :list(0x7ffdc27f92c0)  s(1519685856967531) f(1519685857322577) micros(355046) hit(0) miss(100000) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [30] :list(0x7ffdc27f9260)  s(1519685856971530) f(1519685858020228) micros(1048698) hit(100000) miss(0) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [31] :list(0x7ffdc27f9290)  s(1519685856967535) f(1519685858031673) micros(1064138) hit(97558) miss(2442) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [32] :list(0x7ffdc27f92c0)  s(1519685856975528) f(1519685858022933) micros(1047405) hit(88984) miss(11016) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [33] :list(0x7ffdc27f9260)  s(1519685856971533) f(1519685857493200) micros(521667) hit(3451) miss(96549) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [34] :list(0x7ffdc27f9290)  s(1519685856979530) f(1519685858004707) micros(1025177) hit(92065) miss(7935) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [35] :list(0x7ffdc27f92c0)  s(1519685856983529) f(1519685857948033) micros(964504) hit(86958) miss(13042) insert(0) insert_fail(0) remove(0) remove_already(0) remove_invalid(0)
+read/write/remove result [36] :list(0x7ffdc27f9260)  s(1519685856987529) f(1519685857191698) micros(204169) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [37] :list(0x7ffdc27f9290)  s(1519685856991530) f(1519685857073491) micros(81961) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [38] :list(0x7ffdc27f92c0)  s(1519685856995530) f(1519685857126001) micros(130471) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [39] :list(0x7ffdc27f9260)  s(1519685856999530) f(1519685857280733) micros(281203) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [40] :list(0x7ffdc27f9290)  s(1519685857003529) f(1519685857257724) micros(254195) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [41] :list(0x7ffdc27f92c0)  s(1519685857007530) f(1519685857170437) micros(162907) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [42] :list(0x7ffdc27f9260)  s(1519685857011530) f(1519685857201850) micros(190320) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [43] :list(0x7ffdc27f9290)  s(1519685857015529) f(1519685857250453) micros(234924) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [44] :list(0x7ffdc27f92c0)  s(1519685857019530) f(1519685857190816) micros(171286) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [45] :list(0x7ffdc27f9260)  s(1519685857023530) f(1519685857192535) micros(169005) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [46] :list(0x7ffdc27f9290)  s(1519685857027529) f(1519685857346399) micros(318870) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [47] :list(0x7ffdc27f92c0)  s(1519685857031529) f(1519685857194404) micros(162875) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [48] :list(0x7ffdc27f9260)  s(1519685857035530) f(1519685857167138) micros(131608) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [49] :list(0x7ffdc27f9290)  s(1519685857039529) f(1519685857287616) micros(248087) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [50] :list(0x7ffdc27f92c0)  s(1519685857043530) f(1519685857158560) micros(115030) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [51] :list(0x7ffdc27f9260)  s(1519685857047529) f(1519685857170422) micros(122893) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [52] :list(0x7ffdc27f9290)  s(1519685857051529) f(1519685857360735) micros(309206) hit(0) miss(0) insert(0) insert_fail(0) remove(10000) remove_already(0) remove_invalid(0)
+read/write/remove result [53] :list(0x7ffdc27f92c0)  s(1519685856901495) f(1519685856901800) micros(305) hit(0) miss(0) insert(0) insert_fail(0) remove(0) remove_already(10000) remove_invalid(0)
+==== Test Skiptest.Empty
+==== Test Skiptest.InsertAndLookupData
+==== Test Skiptest.InsertAndRemove
+==== Test Skiptest.InsertAndLookup
+==== Test Skiptest.ConcurrentWithoutThreads
+==== Test Skiptest.Concurrent1
+Run 0 of 1000
+Run 100 of 1000
+Run 200 of 1000
+Run 300 of 1000
+Run 400 of 1000
+Run 500 of 1000
+Run 600 of 1000
+Run 700 of 1000
+Run 800 of 1000
+Run 900 of 1000
+==== Test Skiptest.Concurrent2
+Run 0 of 1000
+Run 100 of 1000
+Run 200 of 1000
+Run 300 of 1000
+Run 400 of 1000
+Run 500 of 1000
+Run 600 of 1000
+Run 700 of 1000
+Run 800 of 1000
+Run 900 of 1000
+==== Test Skiptest.Concurrent3
+Run 0 of 1000
+Run 100 of 1000
+Run 200 of 1000
+Run 300 of 1000
+Run 400 of 1000
+Run 500 of 1000
+Run 600 of 1000
+Run 700 of 1000
+Run 800 of 1000
+Run 900 of 1000
+==== Test Skiptest.Concurrent4
+Run 0 of 1000
+Run 100 of 1000
+Run 200 of 1000
+Run 300 of 1000
+Run 400 of 1000
+Run 500 of 1000
+Run 600 of 1000
+Run 700 of 1000
+Run 800 of 1000
+Run 900 of 1000
+==== Test Skiptest.Concurrent5
+Run 0 of 1000
+Run 100 of 1000
+Run 200 of 1000
+Run 300 of 1000
+Run 400 of 1000
+Run 500 of 1000
+Run 600 of 1000
+Run 700 of 1000
+Run 800 of 1000
+Run 900 of 1000
+==== PASSED 22 tests

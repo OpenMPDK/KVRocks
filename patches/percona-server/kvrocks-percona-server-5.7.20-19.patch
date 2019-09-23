@@ -1,0 +1,414 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a8728a1..9257ead 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -613,6 +613,14 @@ IF(WITH_UNIT_TESTS)
+  ENABLE_TESTING()
+ ENDIF()
+ 
++# KVRocks path
++if(NOT ("${KVROCKS_ROOT_DIR}" STREQUAL ""))
++  get_filename_component(KVROCKS_ROOT_DIR "${KVROCKS_ROOT_DIR}" ABSOLUTE)
++  set(HAVE_KVROCKS 1)
++  MESSAGE(STATUS "KVROCKS_ROOT_DIR = ${KVROCKS_ROOT_DIR}")
++  MESSAGE(STATUS "HAVE_KVROCKS = ${HAVE_KVROCKS}")
++endif()
++
+ IF(NOT WITHOUT_SERVER)
+   SET (MYSQLD_STATIC_PLUGIN_LIBS "" CACHE INTERNAL "")
+   SET (MYSQLD_STATIC_EMBEDDED_PLUGIN_LIBS "" CACHE INTERNAL "")
+diff --git a/config.h.cmake b/config.h.cmake
+index 07773d9..9015720 100644
+--- a/config.h.cmake
++++ b/config.h.cmake
+@@ -64,6 +64,7 @@
+ #cmakedefine HAVE_SASL_SASL_H 1
+ 
+ /* Libevent */
++#cmakedefine HAVE_ROCKSDB 1
+ #cmakedefine HAVE_DEVPOLL 1
+ #cmakedefine HAVE_SYS_DEVPOLL_H 1
+ #cmakedefine HAVE_SYS_EPOLL_H 1
+diff --git a/storage/rocksdb/CMakeLists.txt b/storage/rocksdb/CMakeLists.txt
+index c281c57..e939fed 100644
+--- a/storage/rocksdb/CMakeLists.txt
++++ b/storage/rocksdb/CMakeLists.txt
+@@ -50,9 +50,11 @@ IF (!HAVE_STDCXX11)
+   RETURN ()
+ ENDIF ()
+ 
++IF (!HAVE_KVROCKS)
+ IF (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/rocksdb/Makefile")
+   MESSAGE(SEND_ERROR "Missing Makefile in rocksdb directory. Try \"git submodule update\".")
+ ENDIF ()
++ENDIF ()
+ 
+ CHECK_FUNCTION_EXISTS(sched_getcpu  HAVE_SCHED_GETCPU)
+ IF(HAVE_SCHED_GETCPU)
+@@ -90,13 +92,22 @@ ENDIF()
+ 
+ # get a list of rocksdb library source files
+ # run with env -i to avoid passing variables
++IF (HAVE_KVROCKS)
++EXECUTE_PROCESS(
++  COMMAND env -i ${CMAKE_CURRENT_SOURCE_DIR}/get_kvdb_files.sh
++  OUTPUT_VARIABLE SCRIPT_OUTPUT
++  WORKING_DIRECTORY ${KVROCKS_ROOT_DIR}/kvdb
++)
++ELSE()
+ EXECUTE_PROCESS(
+   COMMAND env -i ${CMAKE_CURRENT_SOURCE_DIR}/get_rocksdb_files.sh
+   OUTPUT_VARIABLE SCRIPT_OUTPUT
+   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+ )
++ENDIF()
++
+ # split the list into lines
+-STRING(REGEX MATCHALL "[^\n]+" ROCKSDB_LIB_SOURCES ${SCRIPT_OUTPUT})
++STRING(REGEX MATCHALL "[^\n]+" ROCKSDB_LIB_SOURCES "${SCRIPT_OUTPUT}")
+ 
+ # add bundled compression code
+ SET(ROCKSDB_LIB_SOURCES
+@@ -119,6 +130,17 @@ SET(ROCKSDB_LIB_SOURCES
+   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/lib/decompress/zstd_decompress.c
+ )
+ 
++IF (HAVE_KVROCKS)
++INCLUDE_DIRECTORIES(
++  ${KVROCKS_ROOT_DIR}/kvdb
++  ${KVROCKS_ROOT_DIR}/kvdb/include
++  ${KVROCKS_ROOT_DIR}/insdb/include
++  ${CMAKE_SOURCE_DIR}/rocksdb/third-party/gtest-1.7.0/fused-src
++  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib
++  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/lib
++  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/lib/common
++)
++ELSE()
+ INCLUDE_DIRECTORIES(
+   ${CMAKE_CURRENT_SOURCE_DIR}/rocksdb
+   ${CMAKE_CURRENT_SOURCE_DIR}/rocksdb/include
+@@ -128,6 +150,7 @@ INCLUDE_DIRECTORIES(
+   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/lib
+   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/lib/common
+ )
++ENDIF()
+ 
+ ADD_DEFINITIONS(-DROCKSDB_PLATFORM_POSIX -DROCKSDB_LIB_IO_POSIX -DZLIB -DLZ4
+   -DZSTD -DROCKSDB_SUPPORT_THREAD_LOCAL)
+@@ -159,9 +182,23 @@ SET(ROCKSDB_SOURCES
+ )
+ 
+ SET(rocksdb_static_libs ${rocksdb_static_libs} ${ZLIB_LIBRARY} "-lrt")
++IF (HAVE_KVROCKS)
++  # InSDB
++  SET(rocksdb_static_libs ${rocksdb_static_libs}
++  ${KVROCKS_ROOT_DIR}/insdb/out-static/libinsdb.a)
++  # Snappy library for InSDB
++  SET(rocksdb_static_libs ${rocksdb_static_libs}
++  ${KVROCKS_ROOT_DIR}/snappy/google-snappy-b02bfa7/build/libsnappy.a)
++  # Folly library for InSDB
++  SET(rocksdb_static_libs ${rocksdb_static_libs}
++  /usr/local/lib/libfolly.a)
++  # iberty library for InSDB
++  SET(rocksdb_static_libs ${rocksdb_static_libs}
++  -liberty)
++ENDIF()
+ 
+ MYSQL_ADD_PLUGIN(rocksdb ${ROCKSDB_SOURCES} STORAGE_ENGINE DEFAULT MODULE_ONLY
+-  LINK_LIBRARIES ${rocksdb_static_libs}
++  LINK_LIBRARIES ${rocksdb_static_libs} -ldl -lglog -ldouble-conversion
+ )
+ 
+ IF(WITH_EMBEDDED_SERVER)
+@@ -169,6 +206,22 @@ IF(WITH_EMBEDDED_SERVER)
+ ENDIF()
+ 
+ # TODO: read this file list from src.mk:TOOL_SOURCES
++IF (HAVE_KVROCKS)
++SET(ROCKSDB_TOOL_SOURCES
++  ${KVROCKS_ROOT_DIR}/kvdb/tools/ldb_tool.cc
++  ${KVROCKS_ROOT_DIR}/kvdb/tools/ldb_cmd.cc
++  ${KVROCKS_ROOT_DIR}/kvdb/tools/sst_dump_tool.cc
++  ${ROCKSDB_LIB_SOURCES}
++)
++#MYSQL_ADD_EXECUTABLE(sst_dump ${KVROCKS_ROOT_DIR}/kvdb/tools/sst_dump.cc ${ROCKSDB_TOOL_SOURCES})
++#TARGET_LINK_LIBRARIES(sst_dump ${rocksdb_static_libs})
++
++#MYSQL_ADD_EXECUTABLE(ldb ${KVROCKS_ROOT_DIR}/kvdb/tools/ldb.cc ${ROCKSDB_TOOL_SOURCES})
++#TARGET_LINK_LIBRARIES(ldb ${rocksdb_static_libs})
++
++#MYSQL_ADD_EXECUTABLE(mysql_ldb ${CMAKE_CURRENT_SOURCE_DIR}/tools/mysql_ldb.cc ${ROCKSDB_TOOL_SOURCES})
++#TARGET_LINK_LIBRARIES(mysql_ldb ${rocksdb_static_libs})
++ELSE()
+ SET(ROCKSDB_TOOL_SOURCES
+   ${CMAKE_CURRENT_SOURCE_DIR}/rocksdb/tools/ldb_tool.cc
+   ${CMAKE_CURRENT_SOURCE_DIR}/rocksdb/tools/ldb_cmd.cc
+@@ -183,3 +236,4 @@ TARGET_LINK_LIBRARIES(ldb ${rocksdb_static_libs})
+ 
+ MYSQL_ADD_EXECUTABLE(mysql_ldb ${CMAKE_CURRENT_SOURCE_DIR}/tools/mysql_ldb.cc ${ROCKSDB_TOOL_SOURCES})
+ TARGET_LINK_LIBRARIES(mysql_ldb ${rocksdb_static_libs})
++ENDIF()
+diff --git a/storage/rocksdb/get_kvdb_files.sh b/storage/rocksdb/get_kvdb_files.sh
+new file mode 100644
+index 0000000..7a05da2
+--- /dev/null
++++ b/storage/rocksdb/get_kvdb_files.sh
+@@ -0,0 +1,28 @@
++#!/bin/bash
++MKFILE=`mktemp`
++CURDIR=`pwd`
++# create and run a simple makefile
++# include rocksdb make file relative to the path of this script
++echo "include ./src.mk
++all:
++	@echo \$(LIB_SOURCES)" > $MKFILE
++for f in `make --makefile $MKFILE`
++do
++  echo $CURDIR/$f
++done
++rm $MKFILE
++
++# create build_version.cc file. Only create one if it doesn't exists or if it is different
++# this is so that we don't rebuild mysqld every time
++bv=util/build_version.cc
++date=$(date +%F)
++git_sha=$(git rev-parse  HEAD 2>/dev/null)
++if [ ! -f $bv ] || [ -z $git_sha ] || [ ! `grep $git_sha $bv` ]
++then
++echo "#include \"build_version.h\"
++const char* rocksdb_build_git_sha =
++\"rocksdb_build_git_sha:$git_sha\";
++const char* rocksdb_build_git_date =
++\"rocksdb_build_git_date:$date\";
++const char* rocksdb_build_compile_date = __DATE__;" > $bv
++fi
+diff --git a/storage/rocksdb/ha_rocksdb.cc b/storage/rocksdb/ha_rocksdb.cc
+index 39d39cd..e8eeabe 100644
+--- a/storage/rocksdb/ha_rocksdb.cc
++++ b/storage/rocksdb/ha_rocksdb.cc
+@@ -492,6 +492,28 @@ static long long rocksdb_compaction_sequential_deletes_window = 0l;
+ static long long rocksdb_compaction_sequential_deletes_file_size = 0l;
+ static uint32_t rocksdb_validate_tables = 1;
+ static char *rocksdb_datadir= nullptr;
++static char *rocksdb_kv_ssd= nullptr;
++static int rocksdb_num_write_worker = 20;
++static int rocksdb_max_request_size = 4096;
++static int rocksdb_max_table_size = 24*1024;
++static size_t rocksdb_sktable_low_key_count = 1*1024*1024;
++static size_t rocksdb_sktable_high_key_count = 2*1024*1024;
++static unsigned long long rocksdb_tablecache_low_size = 3ULL*1024*1024*1024;
++static unsigned long long rocksdb_tablecache_high_size = 4ULL*1024*1024*1024;
++static size_t rocksdb_flush_threshold = 1024*1024;
++static uint32_t rocksdb_min_update_cnt_table_flush = 1024;
++static uint32_t rocksdb_slowdown_trigger = 64*1024;
++static uint32_t rocksdb_align_size = 4096;
++static size_t rocksdb_max_uval_prefetched_size = 8*1024;
++static size_t rocksdb_max_uval_iter_buffered_size = 24*100*1024;
++static uint32_t rocksdb_approx_key_size = 16;
++static uint32_t rocksdb_approx_val_size = 100;
++static uint32_t rocksdb_iter_prefetch_hint = 1;
++static uint32_t rocksdb_random_prefetch_hint = 0;
++static size_t rocksdb_max_table_deviceformat = 1024*1024;
++static my_bool rocksdb_prefix_detection = true;
++static int rocksdb_split_prefix_bits = 48;
++
+ static uint32_t rocksdb_table_stats_sampling_pct = RDB_DEFAULT_TBL_STATS_SAMPLE_PCT;
+ static my_bool rocksdb_enable_bulk_load_api = TRUE;
+ static my_bool rpl_skip_tx_api_var = FALSE;
+@@ -1412,6 +1434,132 @@ static MYSQL_SYSVAR_STR(datadir, rocksdb_datadir,
+                         "RocksDB data directory", nullptr, nullptr,
+                         "./.rocksdb");
+ 
++static MYSQL_SYSVAR_STR(kv_ssd, rocksdb_kv_ssd,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB KV SSD path", nullptr, nullptr,
++                        "/dev/nvme0n1");
++
++static MYSQL_SYSVAR_INT(num_write_worker, rocksdb_num_write_worker,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB KV worker", nullptr, nullptr,
++                        rocksdb_num_write_worker,
++                        /* min */ 2, /* max */ 48, 1);
++
++static MYSQL_SYSVAR_INT(max_request_size, rocksdb_max_request_size,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB dev max request size", nullptr, nullptr,
++                        rocksdb_max_request_size,
++                        /* min */ 512, /* max */ 2*1024*1024, 1);
++
++static MYSQL_SYSVAR_INT(max_table_size, rocksdb_max_table_size,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB max table size", nullptr, nullptr,
++                        rocksdb_max_table_size,
++                        /* min */ 512, /* max */ 2*1024*1024, 1);
++
++static MYSQL_SYSVAR_ULONG(sktable_low_key_count, rocksdb_sktable_low_key_count,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB eviction table key count", nullptr, nullptr,
++                        rocksdb_sktable_low_key_count,
++                        /* min */ 1024UL, /* max */ 10*1024*1024*1024UL, 64);
++
++static MYSQL_SYSVAR_ULONG(sktable_high_key_count, rocksdb_sktable_high_key_count,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB eviction table key count", nullptr, nullptr,
++                        rocksdb_sktable_high_key_count,
++                        /* min */ 1024UL, /* max */ 10*1024*1024*1024UL, 64);
++
++static MYSQL_SYSVAR_ULONGLONG(tablecache_low_size, rocksdb_tablecache_low_size,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB eviction table size", nullptr, nullptr,
++                        rocksdb_tablecache_low_size,
++                        /* min */ 1024UL, /* max */ 4ULL*1024*1024*1024*1024, 1024);
++
++static MYSQL_SYSVAR_ULONGLONG(tablecache_high_size, rocksdb_tablecache_high_size,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB eviction table size", nullptr, nullptr,
++                        rocksdb_tablecache_high_size,
++                        /* min */ 1024UL, /* max */ 4ULL*1024*1024*1024*1024, 1024);
++
++static MYSQL_SYSVAR_ULONG(flush_threshold, rocksdb_flush_threshold,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB flush thresh hold", nullptr, nullptr,
++                        rocksdb_flush_threshold,
++                        /* min */ 1024UL, /* max */ 10*1024*1024*1024UL, 64);
++
++static MYSQL_SYSVAR_UINT(min_update_cnt_table_flush, rocksdb_min_update_cnt_table_flush,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB min flush update count", nullptr, nullptr,
++                        rocksdb_min_update_cnt_table_flush,
++                        /* min */ 64, /* max */ 1024*1024*1024, 64);
++
++static MYSQL_SYSVAR_UINT(slowdown_trigger, rocksdb_slowdown_trigger,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB write slowdown trigger", nullptr, nullptr,
++                        rocksdb_slowdown_trigger,
++                        /* min */ 64, /* max */ 1024*1024*1024, 64);
++
++static MYSQL_SYSVAR_UINT(align_size, rocksdb_align_size,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB dev request align size", nullptr, nullptr,
++                        rocksdb_align_size,
++                        /* min */ 4, /* max */ 4096, 4);
++
++static MYSQL_SYSVAR_ULONG(max_uval_prefetched_size, rocksdb_max_uval_prefetched_size,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB prefetch cache size", nullptr, nullptr,
++                        rocksdb_max_uval_prefetched_size,
++                        /* min */ 0, /* max */ ULONG_MAX, 64);
++
++static MYSQL_SYSVAR_ULONG(max_uval_iter_buffered_size, rocksdb_max_uval_iter_buffered_size,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB iterator cache size", nullptr, nullptr,
++                        rocksdb_max_uval_iter_buffered_size,
++                        /* min */ 0, /* max */ ULONG_MAX, 64);
++
++static MYSQL_SYSVAR_UINT(approx_key_size, rocksdb_approx_key_size,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB approximate key size", nullptr, nullptr,
++                        rocksdb_approx_key_size,
++                        /* min */ 1, /* max */ 65535, 1);
++
++static MYSQL_SYSVAR_UINT(approx_val_size, rocksdb_approx_val_size,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB approxmiate value size", nullptr, nullptr,
++                        rocksdb_approx_val_size,
++                        /* min */ 0, /* max */ 16777216, 1);
++
++static MYSQL_SYSVAR_UINT(iter_prefetch_hint, rocksdb_iter_prefetch_hint,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB iterator prefetch hint", nullptr, nullptr,
++                        rocksdb_iter_prefetch_hint,
++                        /* min */ 0, /* max */ UINT_MAX, 1);
++
++static MYSQL_SYSVAR_UINT(random_prefetch_hint, rocksdb_random_prefetch_hint,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB random prefetch hint", nullptr, nullptr,
++                        rocksdb_random_prefetch_hint,
++                        /* min */ 0, /* max */ UINT_MAX, 1);
++
++
++static MYSQL_SYSVAR_ULONG(max_table_deviceformat, rocksdb_max_table_deviceformat,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB max tables in device format", nullptr, nullptr,
++                        rocksdb_max_uval_iter_buffered_size,
++                        /* min */ 0, /* max */ ULONG_MAX, 1);
++
++static MYSQL_SYSVAR_BOOL(prefix_detection, rocksdb_prefix_detection,
++                         PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
++                         "Enables prefix detection in KvRocks iterator",
++                         nullptr, nullptr, rocksdb_prefix_detection);
++
++static MYSQL_SYSVAR_INT(split_prefix_bits, rocksdb_split_prefix_bits,
++                        PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
++                        "RocksDB table split prefix in bits", nullptr, nullptr,
++                        rocksdb_split_prefix_bits,
++                        /* min */ INT_MIN, /* max */ INT_MAX, 1);
++
++
+ static MYSQL_SYSVAR_UINT(
+     table_stats_sampling_pct, rocksdb_table_stats_sampling_pct,
+     PLUGIN_VAR_RQCMDARG,
+@@ -1570,6 +1718,28 @@ static struct st_mysql_sys_var *rocksdb_system_variables[] = {
+     MYSQL_SYSVAR(print_snapshot_conflict_queries),
+ 
+     MYSQL_SYSVAR(datadir),
++    MYSQL_SYSVAR(kv_ssd),
++    MYSQL_SYSVAR(num_write_worker),
++    MYSQL_SYSVAR(max_request_size),
++    MYSQL_SYSVAR(max_table_size),
++    MYSQL_SYSVAR(sktable_low_key_count),
++    MYSQL_SYSVAR(sktable_high_key_count),
++    MYSQL_SYSVAR(tablecache_low_size),
++    MYSQL_SYSVAR(tablecache_high_size),
++    MYSQL_SYSVAR(flush_threshold),
++    MYSQL_SYSVAR(min_update_cnt_table_flush),
++    MYSQL_SYSVAR(slowdown_trigger),
++    MYSQL_SYSVAR(align_size),
++    MYSQL_SYSVAR(max_uval_prefetched_size),
++    MYSQL_SYSVAR(max_uval_iter_buffered_size),
++    MYSQL_SYSVAR(approx_key_size),
++    MYSQL_SYSVAR(approx_val_size),
++    MYSQL_SYSVAR(iter_prefetch_hint),
++    MYSQL_SYSVAR(random_prefetch_hint),
++    MYSQL_SYSVAR(max_table_deviceformat),
++    MYSQL_SYSVAR(prefix_detection),
++    MYSQL_SYSVAR(split_prefix_bits),
++
+     MYSQL_SYSVAR(create_checkpoint),
+ 
+     MYSQL_SYSVAR(checksums_pct),
+@@ -3619,6 +3789,27 @@ static int rocksdb_init_func(void *const p) {
+       static_cast<rocksdb::Options::AccessHint>(
+           rocksdb_access_hint_on_compaction_start);
+ 
++  // Set target KV SSD
++  rocksdb_db_options->kv_ssd.assign(rocksdb_kv_ssd);
++  rocksdb_db_options->num_write_worker = rocksdb_num_write_worker;
++  rocksdb_db_options->max_request_size = rocksdb_max_request_size;
++  rocksdb_db_options->max_table_size = rocksdb_max_table_size;
++  rocksdb_db_options->tablecache_low = rocksdb_sktable_low_key_count;
++  rocksdb_db_options->tablecache_high = rocksdb_sktable_high_key_count;
++  rocksdb_db_options->max_cache_size = rocksdb_tablecache_high_size;
++  rocksdb_db_options->flush_threshold = rocksdb_flush_threshold;
++  rocksdb_db_options->min_update_cnt_table_flush = rocksdb_min_update_cnt_table_flush;
++  rocksdb_db_options->slowdown_trigger = rocksdb_slowdown_trigger;
++  rocksdb_db_options->align_size = rocksdb_align_size;
++  rocksdb_db_options->max_uval_prefetched_size = rocksdb_max_uval_prefetched_size;
++  rocksdb_db_options->max_uval_iter_buffered_size = rocksdb_max_uval_iter_buffered_size;
++  rocksdb_db_options->approx_key_size = rocksdb_approx_key_size;
++  rocksdb_db_options->approx_val_size = rocksdb_approx_val_size;
++  rocksdb_db_options->iter_prefetch_hint = rocksdb_iter_prefetch_hint;
++  rocksdb_db_options->random_prefetch_hint = rocksdb_random_prefetch_hint;
++  rocksdb_db_options->prefix_detection = rocksdb_prefix_detection;
++  rocksdb_db_options->split_prefix_bits = rocksdb_split_prefix_bits;
++
+   if (rocksdb_db_options->allow_mmap_reads &&
+       rocksdb_db_options->use_direct_reads) {
+     // allow_mmap_reads implies !use_direct_reads and RocksDB will not open if
+diff --git a/storage/rocksdb/rocksdb b/storage/rocksdb/rocksdb
+deleted file mode 160000
+index ab0542f..0000000
+--- a/storage/rocksdb/rocksdb
++++ /dev/null
+@@ -1 +0,0 @@
+-Subproject commit ab0542f5ec6e7c7e405267eaa2e2a603a77d570b
