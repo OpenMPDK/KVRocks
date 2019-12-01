@@ -519,6 +519,14 @@ bool AreEqualOptions(
   const char* offset2 = opt2 + type_info.offset;
 
   switch (type_info.type) {
+    //Fix : ADD the “OptionType::kVectorString” check
+    case OptionType::kVectorString:
+      {
+          const auto* ve1 = reinterpret_cast<const std::vector<std::string>*>(offset1);
+          const auto* ve2 = reinterpret_cast<const std::vector<std::string>*>(offset2);
+          return (*ve1 == *ve2);
+      }
+    //Fix end
     case OptionType::kBoolean:
       return (*reinterpret_cast<const bool*>(offset1) ==
               *reinterpret_cast<const bool*>(offset2));

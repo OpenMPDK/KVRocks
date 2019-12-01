@@ -40,29 +40,33 @@ set -e
 mkdir -p $SRCTOP
 cd $SRCTOP
 git clone git@msl-dc-gitlab.ssi.samsung.com:kvssd/kv-percona-server.git
-git clone git@msl-dc-gitlab.ssi.samsung.com:kvssd/kvdb.git
+#git clone git@msl-dc-gitlab.ssi.samsung.com:kvssd/kvdb.git
 #git clone ssh://jim.li@105.128.40.38:29418/insdb
-git clone git@msl-dc-gitlab.ssi.samsung.com:kvssd/insdb.git
-cd insdb
+#git clone git@msl-dc-gitlab.ssi.samsung.com:kvssd/insdb.git
+git clone git@msl-dc-gitlab.ssi.samsung.com:kvssd/KVRocks.git
+cd KVRocks
 git checkout ${BRANCH}
 
 set -e
 # build folly first
-cd $SRCTOP/insdb/folly/build
+mkdir -p $SRCTOP/KVRocks/folly/build
+cd $SRCTOP/KVRocks/folly/build
 cmake ..
 make -j $(nproc)
 sudo make install
 
 set -e
 cd $SRCTOP/kv-percona-server
-git checkout Percona-Server-5.7.20-19-branch
+git checkout Percona-Server-5.7.20-19
 git submodule init
 git submodule update
+patch -p1 -i $SRCTOP/KVRocks/patches/percona-server/kvrocks-percona-server-5.7.20-19.patch
+chmod +x $SRCTOP/kv-percona-server/storage/rocksdb/get_kvdb_files.sh
 set +e
 mkdir build
 cd build
 make clean
-cmake ..  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DINSDB_ROOT_DIR=$SRCTOP/insdb -DKVDB_ROOT_DIR=$SRCTOP/kvdb  -DDOWNLOAD_BOOST=1 -DWITH_BOOST=../..  -DENABLE_DOWNLOADS=1 -DCMAKE_INSTALL_PREFIX=~/install/myrocks.kv
+cmake ..  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DKVROCKS_ROOT_DIR=$SRCTOP/KVRocks -DDOWNLOAD_BOOST=1 -DWITH_BOOST=../../..  -DENABLE_DOWNLOADS=1 -DCMAKE_INSTALL_PREFIX=~/install/myrocks.kv
 #make -j $(nproc)
 #
 

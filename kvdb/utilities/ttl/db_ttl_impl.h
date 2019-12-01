@@ -47,6 +47,10 @@ class DBWithTTLImpl : public DBWithTTL {
   Status SetTtl(int32_t ttl) { return SetTtl(DefaultColumnFamily(), ttl); }
 
   Status SetTtl(ColumnFamilyHandle *h, int32_t ttl) override;
+
+  static const int32_t kMinTimestamp = 1368146402;  // 05/09/2013:5:40PM GMT-8
+
+  static const int32_t kMaxTimestamp = 2147483647;  // 01/18/2038:7:14PM GMT-8
 };
 }  // namespace rocksdb
 #endif  // ROCKSDB_LITE

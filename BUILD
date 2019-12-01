@@ -1,3 +1,8 @@
+  * dependencies
+
+     o Latest jemalloc is recommended
+       https://github.com/jemalloc/jemalloc
+
   * build the kernel driver
 
       o Change directory into the kernel driver
@@ -101,7 +106,7 @@ make -j$(nproc)
 
   * build kvdb
 
-       o kvdb requires higher version of glags than Ubuntu 16.04 package.
+       o kvdb requires higher version of gflags than Ubuntu 16.04 package.
 
 -----------------------------------------------------------------------------     
 cd gflags-v2.2.1
@@ -151,9 +156,10 @@ git submodule init
 git submodule update
 -----------------------------------------------------------------------------     
 
-  * apply KVRocks patch
+  * apply KVRocks patch and add executable permission
 -----------------------------------------------------------------------------     
-patch -p1 < ../KVRocks/patches/percona-server/kvrocks-percona-server-5.7.20-19.patch   
+patch -p1 < ../KVRocks/patches/percona-server/kvrocks-percona-server-5.7.20-19.patch
+chmod +x ../KVRocks/patches/percona-server/kvrocks-percona-server-5.7.20-19.patch
 -----------------------------------------------------------------------------     
 
   * CMake with KVRocks path
@@ -203,6 +209,7 @@ aa-complain /usr/sbin/mysqld
 -----------------------------------------------------------------------------     
 
   * start Percona server
+    note that delay might be needed to allow the kernel driver detects all nvme devices
 
 -----------------------------------------------------------------------------     
 sudo service mysql start
@@ -216,9 +223,14 @@ sudo ps-admin --enable-rocksdb -u root
 
   * Install MyRocks configuration file
     Recommended KvRocks configuration is located in patches/percona-server/setup in KVRocks source code.
-    mysqld should be restarted.
+    mysqld should be restarted after config file is updated.
 
+  TPC-C
 -----------------------------------------------------------------------------     
-cp ./kvmysqld.cnf /etc/mysql/percona-server.conf.d/
+cp kvmysqld.cnf.mt24k.mr2048k /etc/mysql/percona-server.conf.d/
 -----------------------------------------------------------------------------     
 
+  TPC-H
+-----------------------------------------------------------------------------
+cp kvmysqld.cnf.mt512k.mr2048k /etc/mysql/percona-server.conf.d/
+-----------------------------------------------------------------------------

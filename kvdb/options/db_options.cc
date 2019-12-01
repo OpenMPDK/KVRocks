@@ -89,6 +89,11 @@ ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
       manual_wal_flush(options.manual_wal_flush),
       seq_per_batch(options.seq_per_batch),
       prefix_detection(options.prefix_detection),
+      disable_cache(options.disable_cache),
+      disable_io_size_check(options.disable_io_size_check),
+      iterpad_share(options.iterpad_share),
+      keep_written_keyblock(options.keep_written_keyblock),
+      table_eviction(options.table_eviction),
       kv_ssd(options.kv_ssd),
       num_write_worker(options.num_write_worker),
       max_request_size(options.max_request_size),
@@ -245,6 +250,8 @@ void ImmutableDBOptions::Dump(Logger* log) const {
                    manual_wal_flush);
   ROCKS_LOG_HEADER(log, "            Options.seq_per_batch: %d", seq_per_batch);
   ROCKS_LOG_HEADER(log, "            Options.prefix_detection: %d", prefix_detection);
+  ROCKS_LOG_HEADER(log, "            Options.disable_cache: %d", disable_cache);
+  ROCKS_LOG_HEADER(log, "            Options.disable_cache: %d", disable_io_size_check);
   ROCKS_LOG_HEADER(log, "            Options.kv_ssd: %s", kv_ssd.data());
   ROCKS_LOG_HEADER(log, "            Options.num_write_worker: %d", num_write_worker);
   ROCKS_LOG_HEADER(log, "            Options.max_request_size: %d", max_request_size);

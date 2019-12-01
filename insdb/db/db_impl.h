@@ -162,7 +162,7 @@ Note: Value string will be located in "value" if success.
               @param  out sequence lastest key-value sequence.
               @param  out found result of key
               */
-            virtual Status GetLatestSequenceForKey(const Slice& key, uint64_t* sequence, bool* found, uint16_t col_id=0);
+            virtual Status GetLatestSequenceForKey(const Slice& key, uint64_t* sequence, bool* found, uint8_t col_id=0);
 
             /**
               @brief The sequence number of the most recent transaction.
@@ -222,11 +222,10 @@ pointer for uint64_t[] array.
             virtual void GetApproximateSizes(const Range* range, int n, uint64_t* sizes, uint16_t col_id = 0);
 
             //   void PutColumnNodeToRequestQueue(RequestNode*);
-            void PutColumnNodeToRequestQueue(RequestNode *req_node, SKTableMem *skt);
+            void PutColumnNodeToRequestQueue(RequestNode *req_node/*, SKTableMem *skt*/);
 
-            void BuildKeyBlockMeta(int worker_id, std::list<RequestNode*> &submit_list, KeyBlockMetaLog* kbml, std::queue<SKTableMem*> *flush_skt);
-            uint32_t BuildKeyBlock(int , std::list<RequestNode*> &, KeyBlock*, KeyBlockMetaLog*, uint8_t, char *, uint32_t, std::queue<SKTableMem*> *);
-            void InsertSKTableMemCacheWrapper(SKTableMem* flush_candidate, uint32_t cur_update_cnt);
+            void BuildKeyBlockMeta(int worker_id, std::list<RequestNode*> &submit_list, KeyBlockPrimaryMeta* kbml, uint8_t total_req_count);
+            uint32_t BuildKeyBlock(int , std::list<RequestNode*> &, KeyBlock*, KeyBlockPrimaryMeta*, uint8_t, char *, uint32_t, uint8_t);
             void WorkerThread();
 
             static void WorkerWrapper(void* db)
@@ -308,9 +307,6 @@ pointer for uint64_t[] array.
              * for Worker and pending request queue
              */
             std::queue<RequestNode*> pending_req_;
-            bool congestion_control_;
-            port::Mutex congestion_control_mu_;
-            port::CondVar congestion_control_cv_;
 
             boost::lockfree::queue<CallbackReq *> pending_callbacks_;
             std::atomic<uint32_t> nr_pending_callbacks_;

@@ -121,6 +121,8 @@ size_t ParseSizeT(const std::string& value);
 
 std::vector<int> ParseVectorInt(const std::string& value);
 
+std::vector<std::string> ParseVectorString(const std::string& value);
+
 bool SerializeIntVector(const std::vector<int>& vec, std::string* value);
 
 extern const std::string kNullptrString;

@@ -189,7 +189,7 @@ namespace insdb {
 
             // Search given key and set sequencenumber.
             // if if found, it also set found value as true.
-            virtual Status GetLatestSequenceForKey(const Slice& key,uint64_t* sequence, bool* found, uint16_t col_id=0) = 0;
+            virtual Status GetLatestSequenceForKey(const Slice& key,uint64_t* sequence, bool* found, uint8_t col_id=0) = 0;
 
             // The sequence number of the most recent transaction.
             virtual uint64_t GetLatestSequenceNumber() const = 0;

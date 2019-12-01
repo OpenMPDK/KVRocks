@@ -131,6 +131,8 @@ DEFINE_string(
     " order. Available benchmarks:\n"
     "\tfillseq       -- write N values in sequential key"
     " order in async mode\n"
+    "\tfillsequnique -- write N/thread values in sequential key"
+    " order in async mode\n"
     "\tfillseqdeterministic       -- write N values in the specified"
     " key order and keep the shape of the LSM tree\n"
     "\tfillrandom    -- write N values in random key order in async"
@@ -146,6 +148,7 @@ DEFINE_string(
     "\tdeleteseq     -- delete N keys in sequential order\n"
     "\tdeleterandom  -- delete N keys in random order\n"
     "\treadseq       -- read N times sequentially\n"
+    "\treadsequnique -- read N/threads times sequentially in each thread\n"
     "\treadtocache   -- 1 thread reading database sequentially\n"
     "\treadreverse   -- read N times in reverse order\n"
     "\treadrandom    -- read N times in random order\n"
@@ -701,8 +704,18 @@ DEFINE_bool(use_stderr_info_logger, false,
 DEFINE_bool(prefix_detection, false,
             "Enable prefix detection in iterator.");
 
-DEFINE_string(kv_ssd, "/dev/nvme0n1",
-              "KV SSD device path");
+DEFINE_bool(disable_cache, false,
+            "Disable cache");
+
+DEFINE_bool(disable_io_size_check, false, "Disable IO size check");
+
+DEFINE_bool(iterpad_share, false, "Control iterator pad sharing");
+
+DEFINE_bool(keep_written_keyblock, false, "Control whehter written keyblock stay in memory after flush or not");
+
+DEFINE_bool(table_eviction, true, "Control whehter SKTable can be evicted or not");
+
+DEFINE_string(kv_ssd, "/dev/nvme0n1", "KV SSD device path. use comma for multidevice");
 
 DEFINE_int32(max_req_size, 65536, "Max request size");
 
@@ -1899,6 +1912,18 @@ class Duration {
   uint64_t start_at_;
 };
 
+std::vector<std::string> split(const std::string& s, char delimiter)
+{
+   std::vector<std::string> tokens;
+   std::string token;
+   std::istringstream tokenStream(s);
+   while (std::getline(tokenStream, token, delimiter))
+   {
+      tokens.push_back(token);
+   }
+   return tokens;
+}
+
 class Benchmark {
  private:
   std::shared_ptr<Cache> cache_;
@@ -2026,8 +2051,9 @@ class Benchmark {
         break;
     }
     fprintf(stdout, "Perf Level: %d\n", FLAGS_perf_level);
-    fprintf(stdout, "Cache size: %lu\n", FLAGS_cache_size);
     fprintf(stdout, "prefix_detection: %s\n", (FLAGS_prefix_detection?"true":"false"));
+    fprintf(stdout, "disable_io_size_check: %s\n", (FLAGS_disable_io_size_check?"true":"false"));
+    fprintf(stdout, "disable_cache: %s\n", (FLAGS_disable_cache?"true":"false"));
     fprintf(stdout, "KV SSD: %s\n", FLAGS_kv_ssd.data());
     fprintf(stdout, "tablecache_low: %lu\n", FLAGS_tablecache_low);
     fprintf(stdout, "tablecache_high: %lu\n", FLAGS_tablecache_high);
@@ -2245,7 +2271,12 @@ class Benchmark {
     if (!FLAGS_use_existing_db) {
       Options options;
       options.prefix_detection = FLAGS_prefix_detection;
-      options.kv_ssd = FLAGS_kv_ssd;
+      options.disable_cache = FLAGS_disable_cache;
+      options.disable_io_size_check = FLAGS_disable_io_size_check;
+      options.iterpad_share = FLAGS_iterpad_share;
+      options.keep_written_keyblock = FLAGS_keep_written_keyblock;
+      options.table_eviction = FLAGS_table_eviction;
+      options.kv_ssd = split(std::string(FLAGS_kv_ssd),',');
       options.tablecache_low = FLAGS_tablecache_low;
       options.tablecache_high = FLAGS_tablecache_high;
       options.max_key_size = FLAGS_key_size;
@@ -2490,6 +2521,9 @@ void VerifyDBFromDB(std::string& truth_db_name) {
       } else if (name == "fillseq") {
         fresh_db = true;
         method = &Benchmark::WriteSeq;
+      } else if (name == "fillsequnique") {
+        fresh_db = true;
+        method = &Benchmark::WriteSeqUnique;
       } else if (name == "fillbatch") {
         fresh_db = true;
         entries_per_batch_ = 1000;
@@ -2520,6 +2554,8 @@ void VerifyDBFromDB(std::string& truth_db_name) {
         method = &Benchmark::WriteRandom;
       } else if (name == "readseq") {
         method = &Benchmark::ReadSequential;
+      } else if (name == "readsequnique") {
+        method = &Benchmark::ReadSequentialUnique;
       } else if (name == "readtocache") {
         method = &Benchmark::ReadSequential;
         num_threads = 1;
@@ -3003,8 +3039,13 @@ void VerifyDBFromDB(std::string& truth_db_name) {
     assert(db_.db == nullptr);
 
     options.prefix_detection = FLAGS_prefix_detection;
+    options.disable_cache = FLAGS_disable_cache;
+    options.disable_io_size_check = FLAGS_disable_io_size_check;
+    options.iterpad_share = FLAGS_iterpad_share;
+    options.keep_written_keyblock = FLAGS_keep_written_keyblock;
+    options.table_eviction = FLAGS_table_eviction;
     // Set KV SSD path
-    options.kv_ssd = FLAGS_kv_ssd;
+    options.kv_ssd = split(std::string(FLAGS_kv_ssd),',');
     options.tablecache_low = FLAGS_tablecache_low;
     options.tablecache_high = FLAGS_tablecache_high;
     options.max_key_size = FLAGS_key_size;
@@ -3524,7 +3565,7 @@ void VerifyDBFromDB(std::string& truth_db_name) {
   }
 
   enum WriteMode {
-    RANDOM, SEQUENTIAL, UNIQUE_RANDOM
+    RANDOM, SEQUENTIAL, UNIQUE_RANDOM, UNIQUE_SEQUENTIAL
   };
 
   void WriteSeqDeterministic(ThreadState* thread) {
@@ -3540,6 +3581,10 @@ void VerifyDBFromDB(std::string& truth_db_name) {
     DoWrite(thread, SEQUENTIAL);
   }
 
+  void WriteSeqUnique(ThreadState* thread) {
+    DoWrite(thread, UNIQUE_SEQUENTIAL);
+  }
+
   void WriteRandom(ThreadState* thread) {
     DoWrite(thread, RANDOM);
   }
@@ -3551,11 +3596,11 @@ void VerifyDBFromDB(std::string& truth_db_name) {
   class KeyGenerator {
    public:
     KeyGenerator(Random64* rand, WriteMode mode,
-        uint64_t num, uint64_t num_per_set = 64 * 1024)
+        uint64_t num, uint64_t num_per_set = 64 * 1024, uint64_t start_key = 0)
       : rand_(rand),
         mode_(mode),
         num_(num),
-        next_(0) {
+        next_(start_key) {
       if (mode_ == UNIQUE_RANDOM) {
         // NOTE: if memory consumption of this approach becomes a concern,
         // we can either break it into pieces and only random shuffle a section
@@ -3574,6 +3619,7 @@ void VerifyDBFromDB(std::string& truth_db_name) {
     uint64_t Next() {
       switch (mode_) {
         case SEQUENTIAL:
+        case UNIQUE_SEQUENTIAL:
           return next_++;
         case RANDOM:
           return rand_->Next() % num_;
@@ -3611,7 +3657,11 @@ void VerifyDBFromDB(std::string& truth_db_name) {
 
   void DoWrite(ThreadState* thread, WriteMode write_mode) {
     const int test_duration = write_mode == RANDOM ? FLAGS_duration : 0;
-    const int64_t num_ops = writes_ == 0 ? num_ : writes_;
+    int64_t num_ops = writes_ == 0 ? num_ : writes_;
+
+    if (write_mode == UNIQUE_SEQUENTIAL) {
+        num_ops /= FLAGS_threads;
+    }
 
     size_t num_key_gens = 1;
     if (db_.db == nullptr) {
@@ -3629,7 +3679,7 @@ void VerifyDBFromDB(std::string& truth_db_name) {
     Duration duration(test_duration, max_ops, ops_per_stage);
     for (size_t i = 0; i < num_key_gens; i++) {
       key_gens[i].reset(new KeyGenerator(&(thread->rand), write_mode, num_,
-                                         ops_per_stage));
+                                         ops_per_stage, (write_mode == UNIQUE_SEQUENTIAL)?(num_/FLAGS_threads*thread->tid):0));
     }
 
     if (num_ != FLAGS_num) {
@@ -4083,7 +4133,17 @@ void VerifyDBFromDB(std::string& truth_db_name) {
     }
   }
 
-  void ReadSequential(ThreadState* thread, DB* db) {
+  void ReadSequentialUnique(ThreadState* thread) {
+    if (db_.db != nullptr) {
+      ReadSequential(thread, db_.db, true);
+    } else {
+      for (const auto& db_with_cfh : multi_dbs_) {
+        ReadSequential(thread, db_with_cfh.db, true);
+      }
+    }
+  }
+
+  void ReadSequential(ThreadState* thread, DB* db, bool unique = false) {
     ReadOptions options(FLAGS_verify_checksum, true);
     options.tailing = FLAGS_use_tailing_iterator;
 //    options.snapshot = db->GetSnapshot();
@@ -4091,7 +4151,17 @@ void VerifyDBFromDB(std::string& truth_db_name) {
     Iterator* iter = db->NewIterator(options);
     int64_t i = 0;
     int64_t bytes = 0;
-    for (iter->SeekToFirst(); i < reads_ && iter->Valid(); iter->Next()) {
+    if (!unique) {
+        iter->SeekToFirst();
+    } else {
+        std::unique_ptr<const char[]> key_guard;
+        Slice key = AllocateKey(&key_guard);
+
+        uint64_t start_key = num_ / FLAGS_threads * thread->tid;
+        GenerateKeyFromInt(start_key, FLAGS_num, &key);
+        iter->Seek(key);
+    }
+    for (; i < reads_ && iter->Valid(); iter->Next()) {
       bytes += iter->key().size() + iter->value().size();
       thread->stats.FinishedOps(nullptr, db, 1, kRead);
       ++i;
@@ -4102,6 +4172,11 @@ void VerifyDBFromDB(std::string& truth_db_name) {
                                                    nullptr /* stats */,
                                                    RateLimiter::OpType::kRead);
       }
+      if (unique) {
+          if (i >= num_ / FLAGS_threads)
+              break;
+      }
+
     }
 
     delete iter;

@@ -22,6 +22,9 @@
 #include <atomic>
 namespace insdb {
 
+//#define MEASURE_WAF
+
+
 #ifdef INSDB_GLOBAL_STATS
     extern std::atomic<uint64_t> g_new_ikey_cnt;
     extern std::atomic<uint64_t> g_del_ikey_cnt;
@@ -35,6 +38,10 @@ namespace insdb {
     extern std::atomic<uint64_t> g_del_col_cnt;
     extern std::atomic<uint64_t> g_new_skt_cnt;
     extern std::atomic<uint64_t> g_del_skt_cnt;
+    extern std::atomic<uint64_t> g_new_keymap_cnt;
+    extern std::atomic<uint64_t> g_del_keymap_cnt;
+    extern std::atomic<uint64_t> g_new_arena_cnt;
+    extern std::atomic<uint64_t> g_del_arena_cnt;
     extern std::atomic<uint64_t> g_new_snap_cnt;
     extern std::atomic<uint64_t> g_del_snap_cnt;
     extern std::atomic<uint64_t> g_new_itr_cnt;
@@ -69,6 +76,27 @@ namespace insdb {
     extern std::atomic<uint64_t> g_skiplist_searchlessthanequal_retry_cnt;
     extern std::atomic<uint64_t> g_skiplist_searchgreaterequal_retry_cnt;
     void printGlobalStats(const char *header);
+#endif
+
+#ifdef TRACE_READ_IO
+    extern std::atomic<uint64_t> g_sktable_sync;
+    extern std::atomic<uint64_t> g_sktable_sync_hit;
+    extern std::atomic<uint64_t> g_sktable_async;
+    extern std::atomic<uint64_t> g_kb_sync;
+    extern std::atomic<uint64_t> g_kb_sync_hit;
+    extern std::atomic<uint64_t> g_kb_async;
+    extern std::atomic<uint64_t> g_kbm_sync;
+    extern std::atomic<uint64_t> g_kbm_sync_hit;
+    extern std::atomic<uint64_t> g_kbm_async;
+    extern std::atomic<uint64_t> g_itr_kb;
+    extern std::atomic<uint64_t> g_itr_kb_prefetched;
+    extern std::atomic<uint64_t> g_loadvalue_column;
+    extern std::atomic<uint64_t> g_loadvalue_sktdf;
+#endif
+
+#ifdef MEASURE_WAF
+    extern std::atomic<uint64_t> g_acc_appwrite_keyvalue_size;
+    extern std::atomic<uint64_t> g_acc_devwrite_keyvalue_size;
 #endif
 
 #ifdef TRACE_MEM

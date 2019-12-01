@@ -46,6 +46,8 @@ namespace insdb {
         printf("Manifest %lu\n", sizeof(Manifest));
         printf("GCInfo %lu\n", sizeof(GCInfo));
         printf("SKTableMem %lu\n", sizeof(SKTableMem));
+        printf("KeyBlock %lu\n", sizeof(KeyBlock));
+        printf("KeyBlockPrimaryMeta %lu\n", sizeof(KeyBlockPrimaryMeta));
         printf("Spinlock %lu\n", sizeof(Spinlock));
         printf("port::Mutex %lu\n", sizeof(port::Mutex));
         printf("std::string %lu\n", sizeof(std::string));

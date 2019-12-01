@@ -82,27 +82,40 @@ class PosixEnv : public Env {
   }
 
 
-  virtual Status Open(const std::string& kv_ssd_name) { 
+  virtual Status Open(std::vector<std::string>& kv_ssd_name) {
     Status s;
-    if (kv_fd_ == -1) {
-        kv_fd_ = open(kv_ssd_name.c_str(), O_RDWR| O_CREAT, 0666);
-        if (kv_fd_ < 0) {
-            s = PosixError(kv_ssd_name, errno);
-            kv_fd_ = -1;
-        } else {
-            kv_ns_id_ = ioctl(kv_fd_, NVME_IOCTL_ID);
-            if (kv_ns_id_ < 0 ) {
-                s = PosixError("fail to get name space for " + kv_ssd_name, errno);
-                kv_fd_ = -1;
+    if (kv_fd_.size() == 0) {
+        for (auto kv_ssd : kv_ssd_name) {
+            int kv_fd = open(kv_ssd.c_str(), O_RDWR| O_CREAT, 0666);
+            if (kv_fd < 0) {
+                s = PosixError(kv_ssd, errno);
+                break;
+            } else {
+                // store FD
+                kv_fd_.push_back(kv_fd);
+
+                int kv_ns_id = ioctl(kv_fd, NVME_IOCTL_ID);
+                if (kv_ns_id < 0 ) {
+                    s = PosixError("fail to get name space for " + kv_ssd, errno);
+                    break;
+                }
+                // store NSID
+                kv_ns_id_.push_back(kv_ns_id);
             }
+        }
+        if (!s.ok()) {
+            for (auto kv_fd : kv_fd_)
+                close (kv_fd);
         }
     }
     return s;
   }
 
   virtual void Close() {
-    if (kv_fd_ >= 0) close(kv_fd_);
-    kv_fd_ = -1;
+      for (auto kv_fd : kv_fd_)
+          close (kv_fd);
+      kv_fd_.clear();
+      kv_ns_id_.clear();
   }
 
   virtual bool AcquireDBLock(const uint16_t db_name) {
@@ -138,13 +151,21 @@ class PosixEnv : public Env {
       async = false;
 #endif
 
+#ifdef MEASURE_WAF
+      g_acc_devwrite_keyvalue_size += value.size() + EMBED_KEYSIZE;
+#if 0
+          printf("app write %lu dev write %lu\n", g_acc_appwrite_keyvalue_size.load(std::memory_order_relaxed), g_acc_devwrite_keyvalue_size.load(std::memory_order_relaxed));
+#endif
+#endif
+
     Status s;
     int ret = 0;
+    int dev_idx = GetDevIdx(key);
     key = EncodeInSDBKey(key);
     struct nvme_passthru_kv_cmd cmd;
     memset(&cmd, 0, sizeof(struct nvme_passthru_kv_cmd));
     cmd.opcode = nvme_cmd_kv_store;
-    cmd.nsid = kv_ns_id_;
+    cmd.nsid = kv_ns_id_[dev_idx];
     cmd.cdw5 = 0;
     cmd.data_addr = (__u64)value.data();
     cmd.data_length = (__u32)value.size();
@@ -153,9 +174,9 @@ class PosixEnv : public Env {
     cmd.cdw11 = EMBED_KEYSIZE -1;
     cmd.cdw10 = ((__u32)value.size() >> 2);
     if(async)
-        ret = ioctl(kv_fd_, NVME_IOCTL_KV_ASYNC_CMD, &cmd);
+        ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_ASYNC_CMD, &cmd);
     else
-        ret = ioctl(kv_fd_, NVME_IOCTL_KV_SYNC_CMD, &cmd);
+        ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_SYNC_CMD, &cmd);
 #ifdef INSDB_IO_TRACE
       printf("PUT " INSDBKEY_STRING_FORMAT " async %u result %d status 0x%x ret %d\n", INSDBKEY_BYTE_ARG(key), async, cmd.result, cmd.status, ret);
 #endif
@@ -170,7 +191,7 @@ class PosixEnv : public Env {
    * Send Flush Single/All command
    * if key is valid, it is single flush
    */
-  virtual Status Flush(FlushType type, InSDBKey key) {
+  virtual Status Flush(FlushType type, int dev_idx, InSDBKey key) {
 #if 0
 //    usleep(1000);
     return Status::OK();
@@ -185,8 +206,17 @@ class PosixEnv : public Env {
         cmd.key_length = EMBED_KEYSIZE;
         memcpy(cmd.key, (char *)&key, EMBED_KEYSIZE);
         cmd.cdw11 = EMBED_KEYSIZE -1;
+        // TODO: find target key for each device
     }
-    ret = ioctl(kv_fd_, NVME_IOCTL_KV_FLUSH_CMD, &cmd);
+    if (dev_idx == -1) {
+        for(auto kv_fd : kv_fd_) {
+            ret = ioctl(kv_fd, NVME_IOCTL_KV_FLUSH_CMD, &cmd);
+            if (ret)
+                break;
+        }
+    } else {
+        ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_FLUSH_CMD, &cmd);
+    }
 #ifdef INSDB_IO_TRACE
       // note that FLUSH is not delivered to device. It flushes IO buffers in the driver.
       printf("FLUSH " INSDBKEY_STRING_FORMAT " type %u result %d status 0x%x ret %d\n", INSDBKEY_BYTE_ARG(key), type, cmd.result, cmd.status, ret);
@@ -200,7 +230,7 @@ class PosixEnv : public Env {
   /**
     Send Synchronous Get command.
     */
-  virtual Status Get(InSDBKey key, char* buf, int *size, GetType type, bool *from_readahead) {
+  virtual Status Get(InSDBKey key, char* buf, int *size, GetType type, uint8_t flags, bool *from_readahead) {
 #if 0
     if (readahead) {
         return Status::OK();
@@ -209,11 +239,12 @@ class PosixEnv : public Env {
 
     Status s;
     int ret = 0;
+    int dev_idx = GetDevIdx(key);
     key = EncodeInSDBKey(key);
     struct nvme_passthru_kv_cmd cmd;
     memset(&cmd, 0, sizeof(struct nvme_passthru_kv_cmd));
     cmd.opcode = nvme_cmd_kv_retrieve;
-    cmd.nsid = kv_ns_id_;
+    cmd.nsid = kv_ns_id_[dev_idx];
     cmd.cdw5 = 0;
     if(type != kReadahead)
         cmd.data_addr = (__u64)buf;
@@ -226,8 +257,11 @@ class PosixEnv : public Env {
     cmd.data_length = (__u32)*size;
     cmd.key_length = EMBED_KEYSIZE;
     memcpy(cmd.key, (char *)&key, EMBED_KEYSIZE);
-    cmd.cdw11 = EMBED_KEYSIZE -1;
     cmd.cdw10 = ((__u32)*size >> 2);
+    cmd.cdw11 = EMBED_KEYSIZE -1;
+    // Set flags
+    cmd.cdw11 |= (__u32)flags << 8;
+
     switch(type){
         case kSyncGet:
 #if 0
@@ -245,22 +279,22 @@ class PosixEnv : public Env {
                 assert(false);
             }
 
-            ret = ioctl(kv_fd_, NVME_IOCTL_KV_SYNC_CMD, &cmd);
+            ret = ioctl(kv_fd, NVME_IOCTL_KV_SYNC_CMD, &cmd);
             if (sched_setaffinity(0, sizeof(cpu_set_t), &org_mask) == -1) {
                 perror("sched_setaffinity");
                 assert(false);
             }
 #endif
-            ret = ioctl(kv_fd_, NVME_IOCTL_KV_SYNC_CMD, &cmd);
+            ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_SYNC_CMD, &cmd);
             break;
         case kReadahead:
-            ret = ioctl(kv_fd_, NVME_IOCTL_KV_ASYNC_CMD, &cmd);
+            ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_ASYNC_CMD, &cmd);
             break;
         case kNonblokcingRead:
-            ret = ioctl(kv_fd_, NVME_IOCTL_KV_NONBLOCKING_READ_CMD, &cmd);
+            ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_NONBLOCKING_READ_CMD, &cmd);
             break;
         default :
-            printf("Comnmand is not supported!!");
+            printf("Command is not supported!!");
                 abort();
     }
 
@@ -287,7 +321,15 @@ class PosixEnv : public Env {
 
 #define MAX_MULTICMDS_IN_BATCH  100
   
-  virtual Status MultiCmdOneOpcode(uint8_t opcode, std::vector<InSDBKey> &key, std::vector<char*> &buf, std::vector<int> &size, InSDBKey blocking_key, bool async, std::vector<DevStatus> &status) {
+
+struct dev_buffer {
+    __u8 *data;
+    struct nvme_passthru_kv_cmd *cmd;
+    uint32_t cmdcnt;
+    std::vector<int> cmd_idx;
+};
+
+  virtual Status MultiCmdOneOpcode(uint8_t opcode, std::vector<InSDBKey> &key, std::vector<char*> &buf, std::vector<int> &size, InSDBKey blocking_key, bool async, uint8_t flags, std::vector<DevStatus> &status) {
     Status s;
     int ret = 0;
 #ifdef CODE_TRACE
@@ -302,83 +344,124 @@ class PosixEnv : public Env {
      *  Blocking Key : If a blocking key exists, the cmds should be submitted after the blocking key has been submitted.
      */
     int max_cmds = MAX_MULTICMDS_IN_BATCH<=key.size()?MAX_MULTICMDS_IN_BATCH:key.size();
-    __u8 *data = (__u8 *)calloc(1, sizeof(uint32_t) + EMBED_KEYSIZE + (sizeof(struct nvme_passthru_kv_cmd) * max_cmds));
-    memcpy((data + 4), (char *)&blocking_key, EMBED_KEYSIZE);
-    struct nvme_passthru_kv_cmd *cmd = (struct nvme_passthru_kv_cmd *)(data + 4 + EMBED_KEYSIZE);
-    uint32_t cmdcnt=0;
-    uint32_t first_cmd_idx = 0;
-    for(int i = 0 ; i < key.size() ; i++){
-        key[cmdcnt] = EncodeInSDBKey(key[i]);
-        cmd[cmdcnt].opcode = opcode;
-        cmd[cmdcnt].nsid = kv_ns_id_;
-        cmd[cmdcnt].cdw5 = 0;
-        if(first_cmd_idx+cmdcnt < buf.size())
-            cmd[cmdcnt].data_addr = (__u64)buf[i];
-        if(first_cmd_idx+cmdcnt < size.size())
-        cmd[cmdcnt].data_length = (__u32)size[i];
-        cmd[cmdcnt].key_length = EMBED_KEYSIZE;
-        memcpy(cmd[cmdcnt].key, (char *)&key[i], EMBED_KEYSIZE);
-        cmd[cmdcnt].cdw11 = EMBED_KEYSIZE -1;
-        if(first_cmd_idx+cmdcnt < size.size())
-            cmd[cmdcnt].cdw10 = ((__u32)size[i] >> 2);
+    size_t dev_batch_size = sizeof(uint32_t) + EMBED_KEYSIZE + (sizeof(struct nvme_passthru_kv_cmd) * max_cmds);
+    __u8 *data_buf = (__u8 *)calloc(kv_fd_.size(), dev_batch_size);
+    dev_buffer dev_buf[kv_fd_.size()];
+    for (int i = 0 ; i < kv_fd_.size(); i++) {
+        dev_buf[i].data = data_buf + i * dev_batch_size;
+        memcpy((dev_buf[i].data + 4), (char *)&blocking_key, EMBED_KEYSIZE);
+        dev_buf[i].cmd = (struct nvme_passthru_kv_cmd *)(dev_buf[i].data + 4 + EMBED_KEYSIZE);
+        dev_buf[i].cmdcnt=0;
+    }
 
-        cmdcnt++;
-        if(i+1 == key.size() || cmdcnt == MAX_MULTICMDS_IN_BATCH) {
-            *((uint32_t *)data) = cmdcnt;
-            if(async)
-                ret = ioctl(kv_fd_, NVME_IOCTL_KV_MULTIASYNC_CMD, data);
-            else
-                ret = ioctl(kv_fd_, NVME_IOCTL_KV_MULTISYNC_CMD, data);
-            if (ret) {
-                s = PosixError("fail to MultiCmdOneOpcode", errno);
-            } else {
-        #ifdef INSDB_IO_TRACE
-                printf("MCMD%p Op 0x%x nr %lu blocking " INSDBKEY_STRING_FORMAT " ret %d\n", &key, opcode, key.size(), INSDBKEY_BYTE_ARG(blocking_key), ret);
-        #endif
-                for(int r = 0 ; r < cmdcnt ; r++) {
-        #ifdef INSDB_IO_TRACE
-              // note that FLUSH is not delivered to device. It flushes IO buffers in the driver.
-              printf("MCMD %p #%d " INSDBKEY_STRING_FORMAT " result %d status 0x%x\n", &key, i, INSDBKEY_BYTE_ARG(key[first_cmd_idx+r]), cmd[r].result, cmd[r].status);
-        #endif
-                    if(size.size()>first_cmd_idx+r)
-                        size[first_cmd_idx+r] = cmd[r].result;
-                    switch(cmd[r].status) {
-                    case 0:
-                        status.push_back(Success);
-                        break;
-                    case KVS_ERR_KEY_NOT_EXIST:
-                        status.push_back(KeyNotExist);
-                        break;
-                    case KVS_ERR_EXIST_IN_RA_HASH:
-                        status.push_back(ReadaheadHit);
-                        break;
-                    default:
-                        status.push_back(Unknown);
-                        break;
+    status.reserve(key.size());
+    for(int i = 0 ; i < key.size() ; i++){
+        int dev_idx = GetDevIdx(key[i]);
+        key[i] = EncodeInSDBKey(key[i]);
+        dev_buf[dev_idx].cmd_idx.push_back(i);
+        dev_buf[dev_idx].cmd->opcode = opcode;
+        dev_buf[dev_idx].cmd->nsid = kv_ns_id_[dev_idx];
+        dev_buf[dev_idx].cmd->cdw5 = 0;
+        if(i < buf.size())
+            dev_buf[dev_idx].cmd->data_addr = (__u64)buf[i];
+        else
+            dev_buf[dev_idx].cmd->data_addr = 0;
+        if(i < size.size())
+            dev_buf[dev_idx].cmd->data_length = (__u32)size[i];
+        else
+            dev_buf[dev_idx].cmd->data_length = 0;
+        dev_buf[dev_idx].cmd->key_length = EMBED_KEYSIZE;
+        memcpy(dev_buf[dev_idx].cmd->key, (char *)&key[i], EMBED_KEYSIZE);
+        dev_buf[dev_idx].cmd->cdw11 = EMBED_KEYSIZE -1;
+#ifdef MEASURE_WAF
+      if (opcode == nvme_cmd_kv_store) {
+          g_acc_devwrite_keyvalue_size += size[i] + EMBED_KEYSIZE;
+#if 0
+          printf("app write %lu dev write %lu\n", g_acc_appwrite_keyvalue_size.load(std::memory_order_relaxed), g_acc_devwrite_keyvalue_size.load(std::memory_order_relaxed));
+#endif
+      }
+#endif
+        // Set flags
+        if (opcode == nvme_cmd_kv_retrieve)
+            dev_buf[dev_idx].cmd->cdw11 |= ((__u32)flags<<8);
+        // Set size
+        if(i < size.size())
+            dev_buf[dev_idx].cmd->cdw10 = ((__u32)size[i] >> 2);
+        else
+            dev_buf[dev_idx].cmd->cdw10 = 0;
+
+        // increase command count
+        dev_buf[dev_idx].cmdcnt++;
+        dev_buf[dev_idx].cmd++;
+
+        // flush one batch if full or no more command
+        if(i + 1 == key.size() || dev_buf[dev_idx].cmdcnt == MAX_MULTICMDS_IN_BATCH) {
+            for (int flush_dev_idx = 0; flush_dev_idx < kv_fd_.size() ; flush_dev_idx++) {
+                if (dev_buf[flush_dev_idx].cmdcnt == 0) continue;
+                // reset command pointer
+                dev_buf[flush_dev_idx].cmd = (struct nvme_passthru_kv_cmd *)(dev_buf[flush_dev_idx].data + 4 + EMBED_KEYSIZE);
+                // nr commands
+                *((uint32_t *)dev_buf[flush_dev_idx].data) = dev_buf[flush_dev_idx].cmdcnt;
+                // send down the batch in sync or async
+                if(async)
+                    ret = ioctl(kv_fd_[flush_dev_idx], NVME_IOCTL_KV_MULTIASYNC_CMD, dev_buf[flush_dev_idx].data);
+                else
+                    ret = ioctl(kv_fd_[flush_dev_idx], NVME_IOCTL_KV_MULTISYNC_CMD, dev_buf[flush_dev_idx].data);
+                if (ret) {
+                    s = PosixError("fail to MultiCmdOneOpcode", errno);
+                    goto error_out;
+                } else {
+            #ifdef INSDB_IO_TRACE
+                    printf("MCMD%p Op 0x%x nr %lu blocking " INSDBKEY_STRING_FORMAT " ret %d\n", &key, opcode, key.size(), INSDBKEY_BYTE_ARG(blocking_key), ret);
+            #endif
+                    for(int r = 0; r < dev_buf[flush_dev_idx].cmdcnt; r++) {
+            #ifdef INSDB_IO_TRACE
+                  // note that FLUSH is not delivered to device. It flushes IO buffers in the driver.
+                  printf("MCMD %p #%d " INSDBKEY_STRING_FORMAT " result %d status 0x%x\n", &key, i, INSDBKEY_BYTE_ARG(key[first_cmd_idx+r]), cmd[r].result, cmd[r].status);
+            #endif
+                        int cmd_idx = dev_buf[flush_dev_idx].cmd_idx[r];
+                        if(cmd_idx < size.size())
+                            size[cmd_idx] = dev_buf[flush_dev_idx].cmd[r].result;
+                        switch(dev_buf[flush_dev_idx].cmd[r].status) {
+                        case 0:
+                            status[cmd_idx] = Success;
+                            break;
+                        case KVS_ERR_KEY_NOT_EXIST:
+                            status[cmd_idx] = KeyNotExist;
+                            break;
+                        case KVS_ERR_EXIST_IN_RA_HASH:
+                            status[cmd_idx] = ReadaheadHit;
+                            break;
+                        default:
+                            status[cmd_idx] = Unknown;
+                            break;
+                        }
                     }
                 }
+                // reset device buffer context
+                dev_buf[flush_dev_idx].cmdcnt = 0;
+                dev_buf[flush_dev_idx].cmd_idx.clear();
             }
-            cmdcnt = 0;
-            first_cmd_idx = i+1;
         }
     }
-    free(data);
+error_out:
+    free(data_buf);
     return s;
   }
 
   virtual Status MultiPut(std::vector<InSDBKey> &key, std::vector<char*> &buf, std::vector<int> &size, InSDBKey blocking_key, bool async) {
     std::vector<DevStatus> status;
-    return MultiCmdOneOpcode(nvme_cmd_kv_store, key, buf, size, blocking_key, async, status);
+    return MultiCmdOneOpcode(nvme_cmd_kv_store, key, buf, size, blocking_key, async, 0, status);
   }
 
-  virtual Status MultiGet(std::vector<InSDBKey> &key, std::vector<char*> &buf, std::vector<int> &size, InSDBKey blocking_key, bool readahead, std::vector<DevStatus> &status) {
-    return MultiCmdOneOpcode(nvme_cmd_kv_retrieve, key, buf, size, blocking_key, readahead, status);
+  virtual Status MultiGet(std::vector<InSDBKey> &key, std::vector<char*> &buf, std::vector<int> &size, InSDBKey blocking_key, bool readahead, uint8_t flags, std::vector<DevStatus> &status) {
+    return MultiCmdOneOpcode(nvme_cmd_kv_retrieve, key, buf, size, blocking_key, readahead, flags, status);
   }
 
   virtual Status MultiDel(std::vector<InSDBKey> &key, InSDBKey blocking_key, bool async, std::vector<DevStatus> &status) {
       std::vector<int> empty_size;
       std::vector<char*> empty_buf;
-    return MultiCmdOneOpcode(nvme_cmd_kv_delete, key, empty_buf, empty_size, blocking_key, async, status);
+    return MultiCmdOneOpcode(nvme_cmd_kv_delete, key, empty_buf, empty_size, blocking_key, async, 0, status);
   }
 
 
@@ -392,16 +475,26 @@ class PosixEnv : public Env {
     memset(&cmd, 0, sizeof(struct nvme_passthru_kv_cmd));
 
     if(key.first || key.second){
+        int dev_idx = GetDevIdx(key);
         key = EncodeInSDBKey(key);
         cmd.key_length = EMBED_KEYSIZE;
         memcpy(cmd.key, (char *)&key, EMBED_KEYSIZE);
         cmd.cdw11 = EMBED_KEYSIZE -1;
+        ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_DISCARD_RA_CMD, &cmd);
+        if (ret) {
+            s = PosixError("fail to Discard", errno);
+        }
+    } else {
+        // clear all readahead buffers
+        for (int dev_idx = 0; dev_idx < kv_fd_.size() ; dev_idx++) {
+            ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_DISCARD_RA_CMD, &cmd);
+            if (ret) {
+                s = PosixError("fail to Discard", errno);
+                break;
+            }
+        }
     }
 
-    ret = ioctl(kv_fd_, NVME_IOCTL_KV_DISCARD_RA_CMD, &cmd);
-    if (ret) {
-        s = PosixError("fail to Discard", errno);
-    }
     return s;
   }
 
@@ -414,20 +507,21 @@ class PosixEnv : public Env {
 #endif
     Status s;
     int ret = 0;
+    int dev_idx = GetDevIdx(key);
     key = EncodeInSDBKey(key);
     struct nvme_passthru_kv_cmd cmd;
     memset(&cmd, 0, sizeof(struct nvme_passthru_kv_cmd));
     cmd.opcode = nvme_cmd_kv_delete;
-    cmd.nsid = kv_ns_id_;
+    cmd.nsid = kv_ns_id_[dev_idx];
     cmd.cdw4 = 1;
     //cmd.cdw5 = 0;
     cmd.key_length = EMBED_KEYSIZE;
     memcpy(cmd.key, (char *)&key, EMBED_KEYSIZE);
     cmd.cdw11 = EMBED_KEYSIZE -1;
     if(async)
-        ret = ioctl(kv_fd_, NVME_IOCTL_KV_ASYNC_CMD, &cmd);
+        ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_ASYNC_CMD, &cmd);
     else
-        ret = ioctl(kv_fd_, NVME_IOCTL_KV_SYNC_CMD, &cmd);
+        ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_SYNC_CMD, &cmd);
 #ifdef INSDB_IO_TRACE
       printf("DEL " INSDBKEY_STRING_FORMAT " async %u result %d status 0x%x ret %d\n", INSDBKEY_BYTE_ARG(key), async, cmd.result, cmd.status, ret);
 #endif
@@ -450,18 +544,19 @@ class PosixEnv : public Env {
     */
   virtual bool KeyExist(InSDBKey key) {
     int ret = 0;
+    int dev_idx = GetDevIdx(key);
     key = EncodeInSDBKey(key);
     struct nvme_passthru_kv_cmd cmd;
     memset(&cmd, 0, sizeof(struct nvme_passthru_kv_cmd));
     cmd.opcode = nvme_cmd_kv_retrieve;
-    cmd.nsid = kv_ns_id_;
+    cmd.nsid = kv_ns_id_[dev_idx];
     cmd.cdw5 = 0;
     cmd.data_length = (__u32)0;
     cmd.key_length = EMBED_KEYSIZE;
     memcpy(cmd.key, (char *)&key, EMBED_KEYSIZE);
     cmd.cdw11 = EMBED_KEYSIZE -1;
     cmd.cdw10 = 0;
-    ret = ioctl(kv_fd_, NVME_IOCTL_KV_SYNC_CMD, &cmd);
+    ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_SYNC_CMD, &cmd);
     if (ret) {
         return false;
     }
@@ -469,13 +564,13 @@ class PosixEnv : public Env {
   }
 
 
-  virtual Status IterReq(uint32_t mask, uint32_t iter_val, unsigned char *iter_handle, bool open = false, bool rm = false) {
+  virtual Status IterReq(uint32_t mask, uint32_t iter_val, unsigned char *iter_handle, int dev_idx, bool open = false, bool rm = false) {
     Status s;
     int ret = 0;
     struct nvme_passthru_kv_cmd cmd;
     memset(&cmd, 0, sizeof(struct nvme_passthru_kv_cmd));
     cmd.opcode = nvme_cmd_kv_iter_req;
-    cmd.nsid = kv_ns_id_;
+    cmd.nsid = kv_ns_id_[dev_idx];
     if (rm) {
         cmd.cdw4 = 0x01 | 0x10;
     } else if (open) {
@@ -486,7 +581,7 @@ class PosixEnv : public Env {
     }
     cmd.cdw12 = iter_val;
     cmd.cdw13 = mask;
-    ret = ioctl(kv_fd_, NVME_IOCTL_KV_SYNC_CMD, &cmd);
+    ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_SYNC_CMD, &cmd);
 #ifdef INSDB_IO_TRACE
       printf("ITRREQ mask 0x%x itr_val 0x%x open %u rm %u result %d status 0x%x ret %d\n", mask, iter_val, open, rm, cmd.result, cmd.status, ret);
 #endif
@@ -499,18 +594,18 @@ class PosixEnv : public Env {
     return s;
   }
 
-  virtual Status IterRead(char* buf, int *size, unsigned char iter_handle) {
+  virtual Status IterRead(char* buf, int *size, unsigned char iter_handle, int dev_idx) {
     Status s;
     int ret = 0;
     struct nvme_passthru_kv_cmd cmd;
     memset(&cmd, 0, sizeof(struct nvme_passthru_kv_cmd));
     cmd.opcode = nvme_cmd_kv_iter_read;
-    cmd.nsid = kv_ns_id_;
+    cmd.nsid = kv_ns_id_[dev_idx];
     cmd.cdw5 = iter_handle;
     cmd.data_addr = (__u64)buf;
     cmd.data_length = (__u32)*size;
     cmd.cdw10 = ((__u32)*size >> 2);
-    ret = ioctl(kv_fd_, NVME_IOCTL_KV_SYNC_CMD, &cmd);
+    ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_SYNC_CMD, &cmd);
 #ifdef INSDB_IO_TRACE
       printf("ITRREAD 0x%x result %d status 0x%x ret %d\n", iter_handle, cmd.result, cmd.status, ret);
 #endif
@@ -524,7 +619,7 @@ class PosixEnv : public Env {
     return s;
   }
 
-  virtual Status GetLog(char pagecode, char* buf, int bufflen) {
+  virtual Status GetLog(char pagecode, char* buf, int bufflen, int dev_idx) {
     Status s;
     int ret = 0;
     struct nvme_passthru_cmd cmd;
@@ -534,7 +629,7 @@ class PosixEnv : public Env {
     cmd.cdw10 = (__u32)(((bufflen >> 2) -1) << 16) | ((__u32)pagecode & 0x000000ff);
     cmd.addr = (__u64)buf;
     cmd.data_len = (__u32)bufflen;
-    ret = ioctl(kv_fd_, NVME_IOCTL_ADMIN_CMD, &cmd);
+    ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_ADMIN_CMD, &cmd);
 #ifdef INSDB_IO_TRACE
       printf("GETLOG 0x%x result %d ret %d\n", pagecode, cmd.result, ret);
 #endif
@@ -609,8 +704,10 @@ class PosixEnv : public Env {
   typedef std::deque<BGItem> BGQueue;
   BGQueue queue_;
 
-  int kv_fd_;
-  int kv_ns_id_;
+  int GetDevIdx(InSDBKey key) { return key.seq%kv_ns_id_.size(); }
+
+  std::vector<int> kv_fd_;
+  std::vector<int> kv_ns_id_;
   std::vector<pthread_t> threads_to_join_;
 
 };
@@ -618,8 +715,8 @@ class PosixEnv : public Env {
 
 PosixEnv::PosixEnv()
     : started_bgthread_(false),
-      kv_fd_(-1),
-      kv_ns_id_(-1) {
+      kv_fd_(),
+      kv_ns_id_() {
   PthreadCall("mutex_init", pthread_mutex_init(&mu_, NULL));
   PthreadCall("cvar_init", pthread_cond_init(&bgsignal_, NULL));
 }

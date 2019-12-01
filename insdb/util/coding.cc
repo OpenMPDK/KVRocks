@@ -143,10 +143,11 @@ char* EncodeVarint64(char* dst, uint64_t v) {
   return reinterpret_cast<char*>(ptr);
 }
 
-void PutVarint64(std::string* dst, uint64_t v) {
+uint8_t PutVarint64(std::string* dst, uint64_t v) {
   char buf[10];
   char* ptr = EncodeVarint64(buf, v);
   dst->append(buf, ptr - buf);
+  return (uint8_t)(ptr-buf);
 }
 
 void PutLengthPrefixedSlice(std::string* dst, const Slice& value) {

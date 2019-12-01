@@ -354,6 +354,22 @@ std::vector<int> ParseVectorInt(const std::string& value) {
   return result;
 }
 
+std::vector<std::string> ParseVectorString(const std::string& value) {
+  std::vector<std::string> result;
+  size_t start = 0;
+  while (start < value.size()) {
+    size_t end = value.find(':', start);
+    if (end == std::string::npos) {
+      result.push_back(value.substr(start));
+      break;
+    } else {
+      result.push_back(value.substr(start, end - start));
+      start = end + 1;
+    }
+  }
+  return result;
+}
+
 bool SerializeIntVector(const std::vector<int>& vec, std::string* value) {
   *value = "";
   for (size_t i = 0; i < vec.size(); ++i) {

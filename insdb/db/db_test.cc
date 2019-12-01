@@ -616,7 +616,7 @@ namespace insdb {
                         return Status::NotFound(key);
                     }
 
-                    virtual Status GetLatestSequenceForKey(const Slice& key,uint64_t* sequence, bool* found, uint16_t col_id=0) {
+                    virtual Status GetLatestSequenceForKey(const Slice& key,uint64_t* sequence, bool* found, uint8_t col_id=0) {
                         assert(false);      // Not implemented
                         return Status::NotFound(key);
                     }

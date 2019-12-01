@@ -1,0 +1,601 @@
+--- core.c	2019-10-22 13:02:50.756944000 -0700
++++ core.c.patched	2019-10-22 13:00:13.466614000 -0700
+@@ -2,6 +2,10 @@
+  * NVM Express device driver
+  * Copyright (c) 2011-2014, Intel Corporation.
+  *
++ * Modified by Heekwon Park from Samsung Electronics.
++ * See KV_NVME_SUPPORT to check modification.
++ * E-mail : heekwon.p@samsung.com
++ *
+  * This program is free software; you can redistribute it and/or modify it
+  * under the terms and conditions of the GNU General Public License,
+  * version 2, as published by the Free Software Foundation.
+@@ -24,13 +28,23 @@
+ #include <linux/types.h>
+ #include <linux/pr.h>
+ #include <linux/ptrace.h>
+-#include <linux/nvme_ioctl.h>
++#ifdef KV_NVME_SUPPORT
++#include "linux_nvme_ioctl.h"
++#else
++#include "linux/nvme_ioctl.h"
++#endif
+ #include <linux/t10-pi.h>
+ #include <linux/pm_qos.h>
+ #include <scsi/sg.h>
+ #include <asm/unaligned.h>
+ 
+ #include "nvme.h"
++#ifdef KV_NVME_SUPPORT
++#include <linux/proc_fs.h>
++#include "kv_iosched.h"
++#else
++#include <linux/nvme_ioctl.h>
++#endif
+ 
+ #define NVME_MINORS		(1U << MINORBITS)
+ 
+@@ -443,10 +457,23 @@
+ 	unsigned timeout = 0;
+ 	int status;
+ 
++#ifndef KV_NVME_SUPPORT
+ 	if (!capable(CAP_SYS_ADMIN))
+ 		return -EACCES;
++#endif
+ 	if (copy_from_user(&cmd, ucmd, sizeof(cmd)))
+ 		return -EFAULT;
++#ifdef KV_NVME_SUPPORT
++        if (!capable(CAP_SYS_ADMIN))
++        {
++            if (ns == NULL && cmd.opcode == 0x02 && (cpu_to_le32(cmd.cdw10) & 0x000000ff) == 0xd0)
++            {
++                /* skip capability check to allow InSDB to delete DB with device iterator. */
++            }
++            else
++                return -EACCES;
++        }
++#endif
+ 
+ 	memset(&c, 0, sizeof(c));
+ 	c.common.opcode = cmd.opcode;
+@@ -472,9 +499,33 @@
+ 			return -EFAULT;
+ 	}
+ 
++#ifdef KV_NVME_SUPPORT
++    if (ns == NULL && c.common.opcode == 0x02 && (c.common.cdw10[0] & 0x000000ff) == 0xD0) {
++#ifndef NO_LOG
++        atomic64_inc(&kv_sync_get_log);
++#endif
++    }
++#endif
+ 	return status;
+ }
+-
++#ifdef KV_NVME_SUPPORT
++int nvme_kv_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
++        struct nvme_passthru_cmd __user *ucmd);
++int nvme_kv_multi_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
++        struct nvme_passthru_cmd __user *ucmd);
++
++int nvme_kv_iosched_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
++        struct nvme_passthru_cmd __user *ucmd);
++int nvme_kv_multi_iosched_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
++        struct nvme_passthru_kv_cmd __user *ucmd);
++
++int nvme_kv_flush_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
++        struct nvme_passthru_cmd __user *ucmd);
++int nvme_kv_discard_readahead_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
++        struct nvme_passthru_kv_cmd __user *ucmd);
++int nvme_kv_read_from_readahead_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
++        struct nvme_passthru_kv_cmd __user *ucmd);
++#endif
+ static int nvme_ioctl(struct block_device *bdev, fmode_t mode,
+ 		unsigned int cmd, unsigned long arg)
+ {
+@@ -488,6 +539,22 @@
+ 		return nvme_user_cmd(ns->ctrl, NULL, (void __user *)arg);
+ 	case NVME_IOCTL_IO_CMD:
+ 		return nvme_user_cmd(ns->ctrl, ns, (void __user *)arg);
++#ifdef KV_NVME_SUPPORT
++        case NVME_IOCTL_KV_NONBLOCKING_READ_CMD:
++            return nvme_kv_read_from_readahead_cmd(ns->ctrl, ns, (void __user *)arg);
++        case NVME_IOCTL_KV_SYNC_CMD:
++            return nvme_kv_cmd(ns->ctrl, ns, (void __user *)arg);
++        case NVME_IOCTL_KV_MULTISYNC_CMD:
++            return nvme_kv_multi_cmd(ns->ctrl, ns, (void __user *)arg);
++        case NVME_IOCTL_KV_ASYNC_CMD:
++            return nvme_kv_iosched_cmd(ns->ctrl, ns, (void __user *)arg);
++        case NVME_IOCTL_KV_MULTIASYNC_CMD:
++            return nvme_kv_multi_iosched_cmd(ns->ctrl, ns, (void __user *)arg);
++        case NVME_IOCTL_KV_FLUSH_CMD:
++            return nvme_kv_flush_cmd(ns->ctrl, ns, (void __user *)arg);
++        case NVME_IOCTL_KV_DISCARD_RA_CMD:
++            return nvme_kv_discard_readahead_cmd(ns->ctrl, ns, (void __user *)arg);
++#endif
+ 	case NVME_IOCTL_SUBMIT_IO:
+ 		return nvme_submit_io(ns, (void __user *)arg);
+ #ifdef CONFIG_BLK_DEV_NVME_SCSI
+@@ -1376,6 +1443,10 @@
+ 	return NULL;
+ }
+ 
++#ifndef NO_LOG
++struct kv_iosched_struct *proc_kv_iosched[12] = {NULL,};
++#endif
++int kv_ssd_id = 0;
+ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid)
+ {
+ 	struct nvme_ns *ns;
+@@ -1391,6 +1462,7 @@
+ 	ns->queue = blk_mq_init_queue(ctrl->tagset);
+ 	if (IS_ERR(ns->queue))
+ 		goto out_free_ns;
++	queue_flag_set_unlocked(QUEUE_FLAG_NOMERGES, ns->queue);
+ 	queue_flag_set_unlocked(QUEUE_FLAG_NONROT, ns->queue);
+ 	ns->queue->queuedata = ns;
+ 	ns->ctrl = ctrl;
+@@ -1403,7 +1475,18 @@
+ 	ns->ns_id = nsid;
+ 	ns->disk = disk;
+ 	ns->lba_shift = 9; /* set to a default value for 512 until disk is validated */
+-
++#ifdef KV_NVME_SUPPORT
++    /* need to create a new kv_iosched object */
++    ns->kv_iosched = kzalloc_node(sizeof(*ns->kv_iosched), GFP_KERNEL, node);
++    {
++        int err = kv_iosched_init(ns->kv_iosched, node);
++#ifndef NO_LOG
++        proc_kv_iosched[kv_ssd_id] = ns->kv_iosched;
++#endif
++        ns->kv_iosched->kv_ssd_id = kv_ssd_id++;
++        printk("[%d:%s] kv_iosched size = %ldKB(err : %d)(KVSSD ID : %d )\n",__LINE__, __func__, sizeof(*ns->kv_iosched)/1024, err, ns->kv_iosched->kv_ssd_id);
++    }
++#endif
+ 
+ 	blk_queue_logical_block_size(ns->queue, 1 << ns->lba_shift);
+ 	nvme_set_queue_limits(ctrl, ns->queue);
+@@ -1453,6 +1536,12 @@
+ 		blk_mq_abort_requeue_list(ns->queue);
+ 		blk_cleanup_queue(ns->queue);
+ 	}
++#ifdef KV_NVME_SUPPORT
++    /*
++     * Flush remained works and destroy data structure include
++     */
++    kv_iosched_destroy(ns->kv_iosched);
++#endif
+ 	mutex_lock(&ns->ctrl->namespaces_mutex);
+ 	list_del_init(&ns->list);
+ 	mutex_unlock(&ns->ctrl->namespaces_mutex);
+@@ -1717,16 +1806,409 @@
+ 	}
+ 	mutex_unlock(&ctrl->namespaces_mutex);
+ }
++#ifdef KV_NVME_SUPPORT
++/*
++ * proc fs to check internal value
++ */
++struct gendisk *disk;
++#ifndef NO_LOG
++uint64_t kv_proc_total_async_request;
++uint64_t kv_proc_total_get_async_merge;
++uint64_t kv_proc_total_put_del_async_merge;
++uint64_t kv_proc_total_async_submit;
++uint64_t kv_proc_total_sync_request;
++uint64_t kv_proc_total_sync_submit;
++uint64_t kv_proc_total_blocked_submit;
++uint64_t kv_proc_total_async_interrupt;
++uint64_t kv_proc_total_async_complete;
++uint64_t kv_proc_total_ra_hit;
++uint64_t kv_proc_total_nonblocking_read_fail;
++uint64_t kv_proc_total_ra_hit_in_flight;
++uint64_t kv_proc_total_canceled_ra;
++uint64_t kv_proc_total_discard_ra;
++uint64_t kv_proc_total_discard_not_found_ra;
++uint64_t kv_proc_total_discard_cancel_not_on_device;
++uint64_t kv_proc_total_discard_on_device;
++uint64_t kv_proc_total_sync_complete;
++uint64_t kv_proc_total_sync_finished;
++uint64_t kv_proc_completion_retry;
++uint64_t kv_proc_completion_rq_empty;
++uint64_t kv_proc_completion_wakeup_by_int;
++uint64_t kv_proc_completion_wakeup_by_submit;
++uint64_t kv_proc_flush_wakeup_by_submit;
++uint64_t kv_proc_flush_wakeup_by_completion;
++uint64_t kv_proc_flush_statistics[KV_flush_nr];
++uint64_t kv_proc_hash_restart[KV_hash_restart_nr];
++uint64_t kv_proc_async_get_req;
++uint64_t kv_proc_async_put_req;
++uint64_t kv_proc_async_del_req;
++uint64_t kv_proc_sync_get_req;
++uint64_t kv_proc_sync_get_merge_with_async_put;
++uint64_t kv_proc_sync_get_merge_with_async_del;
++uint64_t kv_proc_sync_put_req;
++uint64_t kv_proc_sync_del_req;
++uint64_t kv_proc_sync_iter_req;
++uint64_t kv_proc_sync_iter_read_req;
++uint64_t kv_proc_sync_get_log;
++#endif
++
++
++
++static int kv_proc_show(struct seq_file *p, void *v) {
++#ifndef NO_LOG
++    int i;
++    bool print_out = false;
++
++    uint64_t local_kv_total_async_request = atomic64_read(&kv_total_async_request);
++    uint64_t local_kv_total_get_async_merge = atomic64_read(&kv_total_get_async_merge);
++    uint64_t local_kv_total_put_del_async_merge = atomic64_read(&kv_total_put_del_async_merge);
++    uint64_t local_kv_total_async_submit = atomic64_read(&kv_total_async_submit);
++    uint64_t local_kv_total_sync_request = atomic64_read(&kv_total_sync_request);
++    uint64_t local_kv_total_sync_submit = atomic64_read(&kv_total_sync_submit);
++    uint64_t local_kv_total_blocked_submit = atomic64_read(&kv_total_blocked_submit);
++    uint64_t local_kv_total_async_interrupt = atomic64_read(&kv_total_async_interrupt);
++    uint64_t local_kv_total_async_complete = atomic64_read(&kv_total_async_complete);
++    uint64_t local_kv_total_ra_hit = atomic64_read(&kv_total_ra_hit);
++    uint64_t local_kv_total_nonblocking_read_fail = atomic64_read(&kv_total_nonblocking_read_fail);
++    uint64_t local_kv_total_ra_hit_in_flight = atomic64_read(&kv_total_ra_hit_in_flight);
++    uint64_t local_kv_total_canceled_ra = atomic64_read(&kv_total_canceled_ra);
++    uint64_t local_kv_total_discard_ra = atomic64_read(&kv_total_discard_ra);
++    uint64_t local_kv_total_discard_not_found_ra = atomic64_read(&kv_total_discard_not_found_ra);
++    uint64_t local_kv_total_discard_cancel_not_on_device = atomic64_read(&kv_total_discard_cancel_not_on_device);
++    uint64_t local_kv_total_discard_on_device = atomic64_read(&kv_total_discard_on_device);
++    uint64_t local_kv_total_sync_complete = atomic64_read(&kv_total_sync_complete);
++    uint64_t local_kv_total_sync_finished = atomic64_read(&kv_total_sync_finished);
++    uint64_t local_kv_completion_retry = atomic64_read(&kv_completion_retry);
++    uint64_t local_kv_completion_rq_empty = atomic64_read(&kv_completion_rq_empty);
++    uint64_t local_kv_completion_wakeup_by_int = atomic64_read(&kv_completion_wakeup_by_int);
++    uint64_t local_kv_completion_wakeup_by_submit = atomic64_read(&kv_completion_wakeup_by_submit);
++    uint64_t local_kv_flush_wakeup_by_submit = atomic64_read(&kv_flush_wakeup_by_submit);
++    uint64_t local_kv_flush_wakeup_by_completion = atomic64_read(&kv_flush_wakeup_by_completion);
++    uint64_t local_kv_async_get_req = atomic64_read(&kv_async_get_req);
++    uint64_t local_kv_async_put_req = atomic64_read(&kv_async_put_req);
++    uint64_t local_kv_async_del_req = atomic64_read(&kv_async_del_req);
++    uint64_t local_kv_sync_get_req = atomic64_read(&kv_sync_get_req);
++    uint64_t local_kv_sync_get_merge_with_async_put = atomic64_read(&kv_sync_get_merge_with_async_put);
++    uint64_t local_kv_sync_get_merge_with_async_del = atomic64_read(&kv_sync_get_merge_with_async_del);
++    uint64_t local_kv_sync_put_req = atomic64_read(&kv_sync_put_req);
++    uint64_t local_kv_sync_del_req = atomic64_read(&kv_sync_del_req);
++    uint64_t local_kv_sync_iter_req = atomic64_read(&kv_sync_iter_req);
++    uint64_t local_kv_sync_iter_read_req = atomic64_read(&kv_sync_iter_read_req);
++    uint64_t local_kv_sync_get_log = atomic64_read(&kv_sync_get_log);
++
++    uint64_t local_kv_dev_pending =  local_kv_total_async_submit -local_kv_total_async_interrupt;
++    uint64_t local_kv_completion_pending = local_kv_total_async_interrupt -local_kv_total_async_complete;
++    uint64_t local_kv_hash_restart[KV_hash_restart_nr];
++    uint64_t local_kv_flush_statistics[KV_flush_nr];
++
++    for(i = KV_hash_com_insert; i < KV_hash_restart_nr; i++){
++        local_kv_hash_restart[i] = atomic64_read(&kv_hash_restart[i]);
++    }
++    for(i = KV_flush_begin ; i < KV_flush_nr; i++){
++        local_kv_flush_statistics[i] = atomic64_read(&kv_flush_statistics[i]);
++    }
++
++    seq_printf(p, "============ Asynchronous IO ============ \n");
++    seq_printf(p, "Total Async RQ                 : %llu : delta : %llu\n", local_kv_total_async_request, local_kv_total_async_request-kv_proc_total_async_request);
++    seq_printf(p, "Total Merged RQ with Get RQ    : %llu : delta : %llu\n", local_kv_total_get_async_merge, local_kv_total_get_async_merge - kv_proc_total_get_async_merge);
++    seq_printf(p, "Total Merged RQ with Pet/Del RQ: %llu : delta : %llu\n", local_kv_total_put_del_async_merge, local_kv_total_put_del_async_merge -kv_proc_total_put_del_async_merge);
++    seq_printf(p, "Total Submitted Async RQ       : %llu : delta : %llu\n", local_kv_total_async_submit, local_kv_total_async_submit -kv_proc_total_async_submit);
++    seq_printf(p, "Total Blokced Async Submission : %llu : delta : %llu\n", local_kv_total_blocked_submit, local_kv_total_blocked_submit-kv_proc_total_blocked_submit);
++    seq_printf(p, "Total Async interrupt          : %llu : delta : %llu\n", local_kv_total_async_interrupt,local_kv_total_async_interrupt-kv_proc_total_async_interrupt);
++    seq_printf(p, "Total Async Completed RQ       : %llu : delta : %llu\n", local_kv_total_async_complete, local_kv_total_async_complete-kv_proc_total_async_complete);
++    for(i = 0 ; i < kv_ssd_id ; i++){
++        if(proc_kv_iosched[i]){
++            if(atomic_read(&proc_kv_iosched[i]->kv_hash[KV_RA_HASH].nr_rq) || atomic_read(&proc_kv_iosched[i]->kv_hash[KV_RQ_HASH].nr_rq)){
++                seq_printf(p, "[KVSSDID : %d]Total # of Req. in Readahread RQ    : %d\n", i, atomic_read(&proc_kv_iosched[i]->kv_hash[KV_RA_HASH].nr_rq));
++                seq_printf(p, "[KVSSDID : %d]Total # of Req. In Pending    RQ    : %d\n", i, atomic_read(&proc_kv_iosched[i]->kv_hash[KV_RQ_HASH].nr_rq));
++            }
++        }
++    }
++    seq_printf(p, "Total # Device Pending Req.         : %llu\n", local_kv_dev_pending);
++    seq_printf(p, "Total # interrup -completed Req.   : %llu\n", local_kv_completion_pending);
++    seq_printf(p, "The # of Async Get RQ               : %llu : delta : %llu\n", local_kv_async_get_req, local_kv_async_get_req -kv_proc_async_get_req);
++    seq_printf(p, "The # of Async Put RQ               : %llu : delta : %llu\n", local_kv_async_put_req, local_kv_async_put_req-kv_proc_async_put_req);
++    seq_printf(p, "The # of Async Del RQ               : %llu : delta : %llu\n", local_kv_async_del_req, local_kv_async_del_req-kv_proc_async_del_req);
++
++    seq_printf(p, "============ Asynchronous Error Status============ \n");
++    seq_printf(p, "Async Put Success    : %lu\n", atomic64_read(&kv_async_error[kv_async_success]));
++    for(i = kv_async_invalidValueSize; i <= kv_async_unknownError; i++){
++        seq_printf(p, "Async Put Fail(%d)       : %lu\n", i, atomic64_read(&kv_async_error[i]));
++    }
++    seq_printf(p, "============ Synchronous IO ============ \n");
++    seq_printf(p, "Total Requested Sync RQ       : %llu : delta : %llu\n", local_kv_total_sync_request, local_kv_total_sync_request-kv_proc_total_sync_request);
++    seq_printf(p, "Total Submitted Sync RQ       : %llu : delta : %llu\n", local_kv_total_sync_submit,local_kv_total_sync_submit-kv_proc_total_sync_submit);
++    seq_printf(p, "Total Sync Completed RQ       : %llu : delta : %llu\n", local_kv_total_sync_complete,local_kv_total_sync_complete-kv_proc_total_sync_complete);
++    seq_printf(p, "Total Sync Finished  RQ       : %llu : delta : %llu\n", local_kv_total_sync_finished,local_kv_total_sync_finished-kv_proc_total_sync_finished);
++    seq_printf(p, "The # of RA hit                      : %llu : delta : %llu\n", local_kv_total_ra_hit,local_kv_total_ra_hit-kv_proc_total_ra_hit);
++    seq_printf(p, "The # of non-blocking read faile     : %llu : delta : %llu\n", local_kv_total_nonblocking_read_fail,local_kv_total_nonblocking_read_fail-kv_proc_total_nonblocking_read_fail);
++    seq_printf(p, "The # of canceled RA(And sync Get)   : %llu : delta : %llu\n", local_kv_total_canceled_ra,local_kv_total_canceled_ra-kv_proc_total_canceled_ra);
++    seq_printf(p, "The # of discard RA Found            : %llu : delta : %llu\n", local_kv_total_discard_ra,local_kv_total_discard_ra-kv_proc_total_discard_ra);
++    seq_printf(p, "The # of discard RA Not Found        : %llu : delta : %llu\n", local_kv_total_discard_not_found_ra,local_kv_total_discard_not_found_ra-kv_proc_total_discard_not_found_ra);
++    seq_printf(p, "The # of discard Not on device       : %llu : delta : %llu\n", local_kv_total_discard_cancel_not_on_device,local_kv_total_discard_cancel_not_on_device-kv_proc_total_discard_cancel_not_on_device);
++    seq_printf(p, "The # of discard on device           : %llu : delta : %llu\n", local_kv_total_discard_on_device,local_kv_total_discard_on_device-kv_proc_total_discard_on_device);
++    seq_printf(p, "The # of in flight RA hit            : %llu : delta : %llu\n", local_kv_total_ra_hit_in_flight, local_kv_total_ra_hit_in_flight-kv_proc_total_ra_hit_in_flight);
++    seq_printf(p, "The # of Sync Get RQ                 : %llu : delta : %llu\n", local_kv_sync_get_req, local_kv_sync_get_req-kv_proc_sync_get_req);
++    seq_printf(p, "The # of Sync Get Merged To Async Put: %llu : delta : %llu\n", local_kv_sync_get_merge_with_async_put,local_kv_sync_get_merge_with_async_put-kv_proc_sync_get_merge_with_async_put);
++    seq_printf(p, "The # of Sync Get Merged To Async Del: %llu : delta : %llu\n", local_kv_sync_get_merge_with_async_del,local_kv_sync_get_merge_with_async_del-kv_proc_sync_get_merge_with_async_del);
++    seq_printf(p, "The # of Sync Put RQ                 : %llu : delta : %llu\n", local_kv_sync_put_req,local_kv_sync_put_req-kv_proc_sync_put_req);
++    seq_printf(p, "The # of Sync Del RQ                 : %llu : delta : %llu\n", local_kv_sync_del_req,local_kv_sync_del_req-kv_proc_sync_del_req);
++    seq_printf(p, "The # of Sync Iterate req RQ         : %llu : delta : %llu\n", local_kv_sync_iter_req,local_kv_sync_iter_req-kv_proc_sync_iter_req);
++    seq_printf(p, "The # of Sync Iterate read RQ        : %llu : delta : %llu\n", local_kv_sync_iter_read_req,local_kv_sync_iter_read_req-kv_proc_sync_iter_read_req);
++    seq_printf(p, "The # of Sync Getlog RQ        : %llu : delta : %llu\n", local_kv_sync_get_log, local_kv_sync_get_log-kv_proc_sync_get_log);
++
++
++    seq_printf(p, "============ Wake Completion Work up============ \n");
++    seq_printf(p, "by Interrupt Handler: %llu : delta : %llu\n", local_kv_completion_wakeup_by_int,local_kv_completion_wakeup_by_int-kv_proc_completion_wakeup_by_int);
++    seq_printf(p, "by Submission Daemon: %llu : delta : %llu\n", local_kv_completion_wakeup_by_submit,local_kv_completion_wakeup_by_submit-kv_proc_completion_wakeup_by_submit);
++    seq_printf(p, "by Completion Daemon: %llu : delta : %llu\n", local_kv_completion_retry,local_kv_completion_retry-kv_proc_completion_retry);
++    seq_printf(p, "============ Completion Work ============ \n");
++    seq_printf(p, "Empty completed rq list in Completion Daemon: %llu : delta : %llu\n", local_kv_completion_rq_empty,local_kv_completion_rq_empty-kv_proc_completion_rq_empty);
++    seq_printf(p, "============ Flush ============ \n");
++    seq_printf(p, "Flush begin :  %llu : delta : %llu\n", local_kv_flush_statistics[KV_flush_begin],local_kv_flush_statistics[KV_flush_begin] -kv_proc_flush_statistics[KV_flush_begin]);
++    seq_printf(p, "Wake up by sumbmit: %llu : delta : %llu\n", local_kv_flush_wakeup_by_submit,local_kv_flush_wakeup_by_submit-kv_proc_flush_wakeup_by_submit);
++    seq_printf(p, "Wake up by complete: %llu : delta : %llu\n", local_kv_flush_wakeup_by_completion,local_kv_flush_wakeup_by_completion-kv_proc_flush_wakeup_by_completion);
++
++    seq_printf(p, "Sigle No key : %llu : delta : %llu\n", local_kv_flush_statistics[KV_flush_single_nokey_found],local_kv_flush_statistics[KV_flush_single_nokey_found]-kv_proc_flush_statistics[KV_flush_single_nokey_found]);
++    seq_printf(p, "Sigle Flush : %llu : delta : %llu\n", local_kv_flush_statistics[KV_flush_single],local_kv_flush_statistics[KV_flush_single]-kv_proc_flush_statistics[KV_flush_single]);
++    seq_printf(p, "All Flush : %llu : delta : %llu\n", local_kv_flush_statistics[KV_flush_all],local_kv_flush_statistics[KV_flush_all]-kv_proc_flush_statistics[KV_flush_all]);
++    seq_printf(p, "Do Flush :     %llu : delta : %llu\n", local_kv_flush_statistics[KV_flush_done], local_kv_flush_statistics[KV_flush_done]-kv_proc_flush_statistics[KV_flush_done]);
++    seq_printf(p, "All Cancel Flush : %llu : delta : %llu\n", local_kv_flush_statistics[KV_flush_all_cancel],local_kv_flush_statistics[KV_flush_all_cancel]-kv_proc_flush_statistics[KV_flush_all_cancel]);
++    seq_printf(p, "Single Cancel Flush : %llu : delta : %llu\n", local_kv_flush_statistics[KV_flush_single_cancel],local_kv_flush_statistics[KV_flush_single_cancel]-kv_proc_flush_statistics[KV_flush_single_cancel]);
++    seq_printf(p, "Flush end:     %llu : delta : %llu\n", local_kv_flush_statistics[KV_flush_end ],local_kv_flush_statistics[KV_flush_end]-kv_proc_flush_statistics[KV_flush_end]);
++    seq_printf(p, "Flush Wait Time :     %llu : delta : %llumsec\n", local_kv_flush_statistics[KV_flush_wait_time],local_kv_flush_statistics[KV_flush_wait_time]-kv_proc_flush_statistics[KV_flush_wait_time]);
++    seq_printf(p, "Total Flush Time:     %llu : delta : %llumsec\n", local_kv_flush_statistics[KV_flush_entire_time],local_kv_flush_statistics[KV_flush_entire_time]-kv_proc_flush_statistics[KV_flush_entire_time]);
++
++
++    seq_printf(p, "============ Hash search restart reason ============ \n");
++    seq_printf(p, " sync completed     : %llu : delta : %llu\n",     local_kv_hash_restart[KV_hash_com_sync],local_kv_hash_restart[KV_hash_com_sync]-kv_proc_hash_restart[KV_hash_com_sync]);
++    seq_printf(p, " sync invalidated   : %llu : delta : %llu\n",     local_kv_hash_restart[KV_hash_inv_sync],local_kv_hash_restart[KV_hash_inv_sync]-kv_proc_hash_restart[KV_hash_inv_sync]);
++    seq_printf(p, " sync  blocked      : %llu : delta : %llu\n",     local_kv_hash_restart[KV_hash_blk_sync],local_kv_hash_restart[KV_hash_blk_sync]-kv_proc_hash_restart[KV_hash_blk_sync]);
++    seq_printf(p, " insert completed   : %llu : delta : %llu\n",     local_kv_hash_restart[KV_hash_com_insert],local_kv_hash_restart[KV_hash_com_insert]-kv_proc_hash_restart[KV_hash_com_insert]);
++    seq_printf(p, " insert invalidated : %llu : delta : %llu\n",   local_kv_hash_restart[KV_hash_inv_insert],local_kv_hash_restart[KV_hash_inv_insert]-kv_proc_hash_restart[KV_hash_inv_insert]);
++    seq_printf(p, " insert blocked     : %llu : delta : %llu\n",   local_kv_hash_restart[KV_hash_blk_insert],local_kv_hash_restart[KV_hash_blk_insert]-kv_proc_hash_restart[KV_hash_blk_insert]);
++
++    kv_proc_total_async_request =                    local_kv_total_async_request ;
++    kv_proc_total_get_async_merge =                  local_kv_total_get_async_merge ;
++    kv_proc_total_put_del_async_merge =              local_kv_total_put_del_async_merge ;
++    kv_proc_total_async_submit =                     local_kv_total_async_submit ;
++    kv_proc_total_sync_request =                     local_kv_total_sync_request ;
++    kv_proc_total_sync_submit =                      local_kv_total_sync_submit ;
++    kv_proc_total_blocked_submit =                   local_kv_total_blocked_submit ;
++    kv_proc_total_async_interrupt =                  local_kv_total_async_interrupt ;
++    kv_proc_total_async_complete =                   local_kv_total_async_complete ;
++    kv_proc_total_ra_hit =                           local_kv_total_ra_hit ;
++    kv_proc_total_nonblocking_read_fail=                           local_kv_total_nonblocking_read_fail;
++    kv_proc_total_ra_hit_in_flight =                 local_kv_total_ra_hit_in_flight ;
++    kv_proc_total_canceled_ra =                      local_kv_total_canceled_ra ;
++    kv_proc_total_discard_ra =                       local_kv_total_discard_ra;
++    kv_proc_total_discard_not_found_ra =             local_kv_total_discard_not_found_ra;
++    kv_proc_total_discard_cancel_not_on_device =     local_kv_total_discard_cancel_not_on_device;
++    kv_proc_total_discard_on_device =         local_kv_total_discard_on_device;
++    kv_proc_total_sync_complete =                    local_kv_total_sync_complete ;
++    kv_proc_total_sync_finished =                    local_kv_total_sync_finished ;
++    kv_proc_completion_retry =                       local_kv_completion_retry ;
++    kv_proc_completion_rq_empty =                    local_kv_completion_rq_empty ;
++    kv_proc_completion_wakeup_by_int =               local_kv_completion_wakeup_by_int ;
++    kv_proc_completion_wakeup_by_submit =            local_kv_completion_wakeup_by_submit ;
++    kv_proc_flush_wakeup_by_submit =                 local_kv_flush_wakeup_by_submit ;
++    kv_proc_flush_wakeup_by_completion =             local_kv_flush_wakeup_by_completion ;
++    kv_proc_async_get_req =                          local_kv_async_get_req ;
++    kv_proc_async_put_req =                          local_kv_async_put_req ;
++    kv_proc_async_del_req =                          local_kv_async_del_req ;
++    kv_proc_sync_get_req =                           local_kv_sync_get_req ;
++    kv_proc_sync_get_merge_with_async_put =          local_kv_sync_get_merge_with_async_put ;
++    kv_proc_sync_get_merge_with_async_del =          local_kv_sync_get_merge_with_async_del ;
++    kv_proc_sync_put_req =                           local_kv_sync_put_req ;
++    kv_proc_sync_del_req =                           local_kv_sync_del_req ;
++    kv_proc_sync_iter_req =                          local_kv_sync_iter_req ;
++    kv_proc_sync_iter_read_req =                     local_kv_sync_iter_read_req ;
++    kv_proc_sync_get_log =                           local_kv_sync_get_log;
++
++    for(i = KV_hash_com_insert; i < KV_hash_restart_nr; i++){
++        kv_proc_hash_restart[i] = local_kv_hash_restart[i];
++    }
++    for(i = KV_flush_begin ; i < KV_flush_nr; i++){
++        kv_proc_flush_statistics[i] = local_kv_flush_statistics[i];
++    }
++
++    for(i = 0 ; i < 8 ;i++){
++        if(strcmp(kvct_ioctl[i], "init")){
++
++#if 1
++            if(!print_out)
++                seq_printf(p, "============ Asynchronous RQ Trace ============ \n");
++            seq_printf(p, "Async ioctl code(id:%d): %s\n", i, kvct_ioctl[i]);
++#else
++            if(!print_out)
++                seq_printf(p, "============ Flush memq lock Trace ============ \n");
++            seq_printf(p, "Flush code(id:%d): %s\n", i, kvct_ioctl[i]);
++#endif
++            print_out = true;
++        }
++    }
++    print_out = false;
++    for(i = READ_DAEMON ; i < NR_DAEMON;i++){
++        if(strcmp(kvct_submission[i], "init")){
++            if(!print_out)
++                seq_printf(p, "============ Daemon Trace ============ \n");
++            seq_printf(p, "Submission(%d) code : %s\n", i, kvct_submission[i]);
++            print_out = true;
++        }
++    }
++    for(i = 0; i < NR_KV_SSD;i++){
++        if(strcmp(kvct_completion[i], "init")){
++            if(!print_out)
++                seq_printf(p, "============ Daemon Trace ============ \n");
++            seq_printf(p, "[%d]Completion code : %s\n", i, kvct_completion[i]);
++            print_out = true;
++        }
++    }
++    if(strcmp(kvct_int_handle, "init")){
++        if(!print_out)
++            seq_printf(p, "============ Daemon Trace ============ \n");
++        seq_printf(p, "INT handle code : %s\n", kvct_int_handle);
++        print_out = true;
++    }
++    print_out = false;
++    for(i = 0 ; i < 8 ;i++){
++        if(strcmp(kvct_sync_io[i], "init")){
++#if 0
++            if(!print_out)
++                seq_printf(p, "============ Synchronous RQ Trace ============ \n");
++            seq_printf(p, "Sync ioctl code(id:%d): %s\n", i, kvct_sync_io[i]);
++#else
++            if(!print_out)
++                seq_printf(p, "============ memq lock Trace in scheduling daemon============ \n");
++            seq_printf(p, "Scheduling daemon(id:%d): %s\n", i, kvct_sync_io[i]);
++#endif
++            print_out = true;
++        }
++    }
++    for(i = 0 ; i < 8 ;i++){
++        if(strcmp(kvct_discard_readahead[i], "init")){
++            if(!print_out)
++                seq_printf(p, "============ Discard Readahead Trace ============ \n");
++            seq_printf(p, "Async ioctl code(id:%d): %s\n", i, kvct_discard_readahead[i]);
++            print_out = true;
++        }
++    }
++    for(i = 0 ; i < 8 ;i++){
++        if(strcmp(kvct_flush[i], "init")){
++            if(!print_out)
++                seq_printf(p, "============ Flush Trace============ \n");
++            seq_printf(p, "Flush code(id:%d): %s\n", i, kvct_flush[i]);
++            print_out = true;
++        }
++    }
++    seq_printf(p, "Complie DD with #define NO_LOG(kv_iosched.h) to disable logging\n");
++#else
++    seq_printf(p, "Complie DD without #define NO_LOG(kv_iosched.h) to see the log\n");
++#endif
++    return 0;
++}
++static int kv_proc_open(struct inode *inode, struct  file *file) {
++    struct block_device *bdev = I_BDEV(file->f_mapping->host);
++    disk = bdev->bd_disk;
++    return single_open(file, kv_proc_show, NULL);
++}
++
++static ssize_t kv_proc_write(struct file *filp,const char *buf,size_t count,loff_t *offp)
++{
++#ifndef NO_LOG
++    int i;
++
++    atomic64_set(&kv_total_async_request, 0);
++    atomic64_set(&kv_total_get_async_merge, 0);
++    atomic64_set(&kv_total_put_del_async_merge, 0);
++    atomic64_set(&kv_total_async_submit, 0);
++    atomic64_set(&kv_total_sync_request, 0);
++    atomic64_set(&kv_total_sync_submit, 0);
++    atomic64_set(&kv_total_blocked_submit, 0);
++    atomic64_set(&kv_total_async_complete, 0);
++    atomic64_set(&kv_total_ra_hit, 0);
++    atomic64_set(&kv_total_nonblocking_read_fail, 0);
++    atomic64_set(&kv_total_ra_hit_in_flight, 0);
++    atomic64_set(&kv_total_canceled_ra, 0);
++    atomic64_set(&kv_total_discard_ra, 0);
++    atomic64_set(&kv_total_discard_not_found_ra, 0);
++    atomic64_set(&kv_total_discard_cancel_not_on_device, 0);
++    atomic64_set(&kv_total_discard_on_device, 0);
++    atomic64_set(&kv_total_sync_complete, 0);
++    atomic64_set(&kv_total_sync_finished, 0);
++    atomic64_set(&kv_total_async_interrupt, 0);
++    atomic64_set(&kv_completion_retry, 0);
++    atomic64_set(&kv_completion_rq_empty, 0);
++    atomic64_set(&kv_completion_wakeup_by_int, 0);
++    atomic64_set(&kv_completion_wakeup_by_submit, 0);
++    atomic64_set(&kv_flush_wakeup_by_submit, 0);
++    atomic64_set(&kv_flush_wakeup_by_completion, 0);
++    atomic64_set(&kv_async_get_req, 0);
++    atomic64_set(&kv_async_put_req, 0);
++    atomic64_set(&kv_async_del_req, 0);
++    atomic64_set(&kv_sync_get_req, 0);
++    atomic64_set(&kv_sync_get_merge_with_async_put, 0);
++    atomic64_set(&kv_sync_get_merge_with_async_del, 0);
++    atomic64_set(&kv_sync_put_req, 0);
++    atomic64_set(&kv_sync_del_req, 0);
++    atomic64_set(&kv_sync_iter_req, 0);
++    atomic64_set(&kv_sync_iter_read_req, 0);
++    atomic64_set(&kv_sync_get_log, 0);
++
++
++    for(i = kv_async_success; i <= kv_async_unknownError; i++){
++        atomic64_set(&kv_async_error[i], 0);
++    }
++
++    for(i = KV_flush_begin ; i < KV_flush_nr ; i++){
++        atomic64_set(&kv_flush_statistics[i], 0);
++    }
++    for(i = KV_hash_com_insert; i < KV_hash_restart_nr; i++){
++        atomic64_set(&kv_hash_restart[i], 0);
++    }
++    for(i = READ_DAEMON ; i < NR_DAEMON;i++)
++        sprintf(kvct_submission[i], "init");
++    for(i = 0; i < NR_KV_SSD;i++)
++        sprintf(kvct_completion[i], "init");
++    sprintf(kvct_int_handle, "init");
++    for(i = 0 ; i < 8 ;i++){
++        sprintf(kvct_ioctl[i], "init");
++        sprintf(kvct_sync_io[i], "init");
++        sprintf(kvct_discard_readahead[i], "init");
++        sprintf(kvct_flush[i], "init");
++    }
++#endif
++    return count;
++}
++
++static const struct file_operations kv_proc_fops = {
++    .owner = THIS_MODULE,
++    .open = kv_proc_open,
++    .read = seq_read,
++    .write = kv_proc_write,
++    .llseek = seq_lseek,
++    .release = seq_release,
++};
++#endif
+ 
+ int __init nvme_core_init(void)
+ {
+ 	int result;
++#ifdef KV_NVME_SUPPORT
++    result = kv_core_init();
++    if(result < 0)
++        return result;
++#endif
+ 
+ 	result = register_blkdev(nvme_major, "nvme");
+ 	if (result < 0)
+ 		return result;
+ 	else if (result > 0)
+ 		nvme_major = result;
++#ifdef KV_NVME_SUPPORT
++
++    proc_create("kv_proc", 0, NULL, &kv_proc_fops);
++#endif
+ 
+ 	result = __register_chrdev(nvme_char_major, 0, NVME_MINORS, "nvme",
+ 							&nvme_dev_fops);
+@@ -1747,6 +2229,9 @@
+ 	__unregister_chrdev(nvme_char_major, 0, NVME_MINORS, "nvme");
+  unregister_blkdev:
+ 	unregister_blkdev(nvme_major, "nvme");
++#ifdef KV_NVME_SUPPORT
++    remove_proc_entry("kv_proc", NULL);
++#endif
+ 	return result;
+ }
+ 
+@@ -1755,4 +2240,8 @@
+ 	unregister_blkdev(nvme_major, "nvme");
+ 	class_destroy(nvme_class);
+ 	__unregister_chrdev(nvme_char_major, 0, NVME_MINORS, "nvme");
++#ifdef KV_NVME_SUPPORT
++    remove_proc_entry("kv_proc", NULL);
++    kv_core_exit();
++#endif
+ }

@@ -88,8 +88,10 @@ TESTS = \
 	db/db_test \
 	db/c_test \
 	db/structsize_test \
+	db/keymap_test\
 	db/skiplist_test\
 	db/skiplist_test2\
+	db/skiplist_test3\
 	db/skiplist_test_ext\
 	util/arena_test \
 	util/cuckoo_test \
@@ -408,11 +410,17 @@ $(STATIC_OUTDIR)/hash_test:util/hash_test.cc $(STATIC_LIBOBJECTS) $(TESTHARNESS)
 #$(STATIC_OUTDIR)/recovery_test:db/recovery_test.cc $(STATIC_LIBOBJECTS) $(TESTHARNESS)
 #	$(CXX) $(LDFLAGS) $(CXXFLAGS) db/recovery_test.cc $(STATIC_LIBOBJECTS) $(TESTHARNESS) -o $@ $(LIBS)
 
+$(STATIC_OUTDIR)/keymap_test:db/keymap_test.cc $(STATIC_LIBOBJECTS) $(TESTHARNESS)
+	$(CXX) $(LDFLAGS) $(CXXFLAGS) db/keymap_test.cc $(STATIC_LIBOBJECTS) $(TESTHARNESS) -o $@ $(LIBS)
+
 $(STATIC_OUTDIR)/skiplist_test:db/skiplist_test.cc $(STATIC_LIBOBJECTS) $(TESTHARNESS)
 	$(CXX) $(LDFLAGS) $(CXXFLAGS) db/skiplist_test.cc $(STATIC_LIBOBJECTS) $(TESTHARNESS) -o $@ $(LIBS)
 
 $(STATIC_OUTDIR)/skiplist_test2:db/skiplist_test2.cc $(STATIC_LIBOBJECTS) $(TESTHARNESS)
 	$(CXX) $(LDFLAGS) $(CXXFLAGS) db/skiplist_test2.cc $(STATIC_LIBOBJECTS) $(TESTHARNESS) -o $@ $(LIBS)
+
+$(STATIC_OUTDIR)/skiplist_test3:db/skiplist_test3.cc $(STATIC_LIBOBJECTS) $(TESTHARNESS)
+	$(CXX) $(LDFLAGS) $(CXXFLAGS) db/skiplist_test3.cc $(STATIC_LIBOBJECTS) $(TESTHARNESS) -o $@ $(LIBS)
 
 $(STATIC_OUTDIR)/skiplist_test_ext:db/skiplist_test_ext.cc $(STATIC_LIBOBJECTS) $(TESTHARNESS)
 	$(CXX) $(LDFLAGS) $(CXXFLAGS) db/skiplist_test_ext.cc $(STATIC_LIBOBJECTS) $(TESTHARNESS) -o $@ $(LIBS)

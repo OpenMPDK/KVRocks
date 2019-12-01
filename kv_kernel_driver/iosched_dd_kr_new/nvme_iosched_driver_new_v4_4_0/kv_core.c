@@ -23,7 +23,11 @@
 #include "kv_iosched.h"
 #include "kv_fifo.h"
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
 static void kv_end_io_sync_rq(struct request *rq, int error)
+#else
+static void kv_end_io_sync_rq(struct request *rq, blk_status_t error)
+#endif
 {
     struct completion *waiting = rq->end_io_data;
 
@@ -36,7 +40,11 @@ static void kv_end_io_sync_rq(struct request *rq, int error)
     complete(waiting);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
 static void kv_end_io_async_rq(struct request *req, int error)
+#else
+static void kv_end_io_async_rq(struct request *req, blk_status_t error)
+#endif
 {
     struct kv_async_request *rq =(struct kv_async_request *) req->end_io_data;
 
@@ -81,7 +89,9 @@ static void kv_end_io_async_rq(struct request *req, int error)
 static void kv_blk_rq_bio_prep(struct request_queue *q, struct request *rq,
         struct bio *bio)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
     rq->cmd_type = REQ_TYPE_DRV_PRIV;
+#endif
 
     if (bio_has_data(bio))
         rq->nr_phys_segments = bio_phys_segments(q, bio);
@@ -89,8 +99,12 @@ static void kv_blk_rq_bio_prep(struct request_queue *q, struct request *rq,
     rq->__data_len = bio->bi_iter.bi_size;
     rq->bio = rq->biotail = bio;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
     if (bio->bi_bdev)
         rq->rq_disk = bio->bi_bdev->bd_disk;
+#else
+    rq->rq_disk = bio->bi_disk;
+#endif
 }
 
 
@@ -152,11 +166,19 @@ static int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
             goto out;
         bio = req->bio;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
         bio->bi_bdev = bdget_disk(disk, 0);
         if (!bio->bi_bdev) {
             ret = -ENODEV;
             goto out_unmap;
         }
+#else
+        bio->bi_disk = disk;
+        if (!bio->bi_disk) {
+            ret = -ENODEV;
+            goto out_unmap;
+        }
+#endif
     }else{/* For Delete Command */
         // build temp_bio for meta_data
         // - need prvent to call blk_rq_unmap_user.
@@ -180,6 +202,7 @@ static int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
 
     /* An iterate command has NO memory for key */
     if (key_addr && key_length > KVCMD_INLINE_KEY_MAX) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
         struct bio_integrity_payload *bip;
         bip = bio_integrity_alloc(bio, GFP_KERNEL, 1);
         if (IS_ERR(bip)) {
@@ -195,6 +218,10 @@ static int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
             ret = -ENOMEM;
             goto out_unmap;
         }
+#else
+        ret = -E2BIG;
+        goto out_unmap;
+#endif
     }
 
 #ifdef KV_NVME_TRACE
@@ -202,11 +229,13 @@ static int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
 #endif
     {
         DECLARE_COMPLETION_ONSTACK(wait);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
         char sense[SCSI_SENSE_BUFFERSIZE];
 
         memset(sense, 0, sizeof(sense));
         req->sense = sense;
         req->sense_len = 0;
+#endif
 
         req->end_io_data = &wait;
         req->special = &cqe;
@@ -219,6 +248,7 @@ static int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
 #endif
     }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
     /* return success if the key does exist. set the error code in user command instead */
     if(req->errors == 0x310) {
         put_user(KVS_ERR_KEY_NOT_EXIST, &sync_rq->ucmd->status);
@@ -230,15 +260,30 @@ static int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
     {
         *result = le32_to_cpu(cqe.result);
     }
+#else
+    /* return success if the key does exist. set the error code in user command instead */
+    if(nvme_req(req)->status == 0x310) {
+        put_user(KVS_ERR_KEY_NOT_EXIST, &sync_rq->ucmd->status);
+        ret = 0;
+    } else {
+        ret = nvme_req(req)->status;
+    }
+    if (result)
+    {
+        *result = le32_to_cpu(cqe.result.u32);
+    }
+#endif
 
 out_unmap:
     if (bio && udata_addr) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
         if (disk && bio->bi_bdev)
             bdput(bio->bi_bdev);
-        if (is_kv_cmd(cmd->common.opcode) && 
+        if (is_kv_cmd(cmd->common.opcode) &&
                 req->bio && bio_integrity(req->bio)) {
             bio_integrity_free(req->bio);
         }
+#endif
         blk_rq_unmap_user(bio);
     }else if(bio)/*Delete command*/
         bio_put(bio);
@@ -813,7 +858,11 @@ out:
     return ret;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
 static void kv_end_io_multi_sync_rq(struct request *rq, int error)
+#else
+static void kv_end_io_multi_sync_rq(struct request *rq, blk_status_t error)
+#endif
 {
     struct multicmd_completion *mcmd_comp =rq->end_io_data;
     rq->end_io_data = NULL;
@@ -887,11 +936,15 @@ static int nvme_submit_kv_multicmd(struct kv_sync_request *sync_rq_head, int cou
             }
             bio = req->bio;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
             bio->bi_bdev = bdget_disk(disk, 0);
             if (!bio->bi_bdev) {
                 ret = -ENODEV;
                 break;
             }
+#else
+            bio->bi_disk = disk;
+#endif
         }else{/* For Delete Command */
             // build temp_bio for meta_data
             // - need prvent to call blk_rq_unmap_user.
@@ -906,6 +959,7 @@ static int nvme_submit_kv_multicmd(struct kv_sync_request *sync_rq_head, int cou
 
         /* An iterate command has NO memory for key */
         if (sync_rq->key_addr && sync_rq->key_length > KVCMD_INLINE_KEY_MAX) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
             struct bio_integrity_payload *bip;
             bip = bio_integrity_alloc(bio, GFP_KERNEL, 1);
             if (IS_ERR(bip)) {
@@ -921,6 +975,10 @@ static int nvme_submit_kv_multicmd(struct kv_sync_request *sync_rq_head, int cou
                 ret = -ENOMEM;
                 break;
             }
+#else
+            ret = -E2BIG;
+            break;
+#endif
         }
 
     #ifdef KV_NVME_TRACE
@@ -979,6 +1037,7 @@ cleanup:
             struct nvme_passthru_kv_cmd __user *ucmd = sync_rq->ucmd;
 
             if (bio && sync_rq->udata_addr) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
                 struct request_queue *q = sync_rq->q;
                 struct nvme_ns *ns = q->queuedata;
                 struct gendisk *disk = ns ? ns->disk : NULL;
@@ -988,18 +1047,31 @@ cleanup:
                         bio && bio_integrity(bio)) {
                     bio_integrity_free(bio);
                 }
+#endif
                 blk_rq_unmap_user(bio);
             }else if(bio) /*Delete command*/
                 bio_put(bio);
             blk_mq_free_request(req);
             /* set result from the device */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
             put_user(le32_to_cpu(sync_rq->cqe.result), &ucmd->result);
+#else
+            put_user(le32_to_cpu(sync_rq->cqe.result.u32), &ucmd->result);
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
             switch(req->errors) {
+#else
+            switch(nvme_req(req)->status) {
+#endif
             case 0x310:
                 put_user(KVS_ERR_KEY_NOT_EXIST, &ucmd->status);
                 break;
             default:
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
                 put_user((uint32_t)req->errors, &ucmd->status);
+#else
+                put_user((uint32_t)nvme_req(req)->status, &ucmd->status);
+#endif
             }
         }
     }
@@ -1206,11 +1278,19 @@ int __nvme_submit_iosched_kv_cmd(struct kv_memqueue_struct *memq)
 
             bio = req->bio;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
             bio->bi_bdev = bdget_disk(disk, 0);
             if (!bio->bi_bdev) {
                 bio_put(bio);
                 SUBMIT_ERROR_RETURN(req,rq,memq, "bdget_disk fail", -ENODEV);
             }
+#else
+            bio->bi_disk = disk;
+            if (!bio->bi_disk) {
+                bio_put(bio);
+                SUBMIT_ERROR_RETURN(req,rq,memq, "disk fail", -ENODEV);
+            }
+#endif
         }else{/* For Delete Command */
             // build temp_bio for meta_data
             // - need prvent to call blk_rq_unmap_user.
@@ -1230,6 +1310,7 @@ int __nvme_submit_iosched_kv_cmd(struct kv_memqueue_struct *memq)
             bio->bi_end_io = bio_kern_endio;
         }
         if (key && key_length > KVCMD_INLINE_KEY_MAX) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
             struct bio_integrity_payload *bip;
 
             bip = bio_integrity_alloc(bio, GFP_KERNEL, 1);
@@ -1246,9 +1327,15 @@ int __nvme_submit_iosched_kv_cmd(struct kv_memqueue_struct *memq)
                 bio_put(bio);
                 SUBMIT_ERROR_RETURN(req,rq,memq, "bio_integrity_add_page fail", -ENOMEM);
             }
+#else
+            ret = -E2BIG;
+            SUBMIT_ERROR_RETURN(req,rq,memq, "bio_integrity_add_page fail", -ENOMEM);
+#endif
         }
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
         req->sense = NULL;
         req->sense_len = 0;
+#endif
 
         req->end_io_data = rq;
         req->special = &rq->cqe;

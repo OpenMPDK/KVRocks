@@ -122,6 +122,11 @@ DBOptions BuildDBOptions(const ImmutableDBOptions& immutable_db_options,
   options.allow_ingest_behind =
       immutable_db_options.allow_ingest_behind;
   options.prefix_detection = immutable_db_options.prefix_detection;
+  options.disable_cache = immutable_db_options.disable_cache;
+  options.disable_io_size_check = immutable_db_options.disable_io_size_check;
+  options.iterpad_share = immutable_db_options.iterpad_share;
+  options.keep_written_keyblock = immutable_db_options.keep_written_keyblock;
+  options.table_eviction = immutable_db_options.table_eviction;
   options.kv_ssd = immutable_db_options.kv_ssd;
   options.num_write_worker = immutable_db_options.num_write_worker;
   options.max_request_size= immutable_db_options.max_request_size;
@@ -352,6 +357,9 @@ bool ParseOptionHelper(char* opt_address, const OptionType& opt_type,
       break;
     case OptionType::kString:
       *reinterpret_cast<std::string*>(opt_address) = value;
+      break;
+    case OptionType::kVectorString:
+      *reinterpret_cast<std::vector<std::string>*>(opt_address) = ParseVectorString(value);
       break;
     case OptionType::kDouble:
       *reinterpret_cast<double*>(opt_address) = ParseDouble(value);

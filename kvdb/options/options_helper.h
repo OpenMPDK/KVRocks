@@ -69,6 +69,7 @@ enum class OptionType {
   kUInt64T,
   kSizeT,
   kString,
+  kVectorString,
   kDouble,
   kCompactionStyle,
   kCompactionPri,
@@ -153,7 +154,7 @@ static std::unordered_map<std::string, OptionTypeInfo> db_options_type_info = {
       std::vector<std::shared_ptr<EventListener>> listeners;
      */
     {"kv_ssd",
-     {offsetof(struct DBOptions, kv_ssd), OptionType::kString,
+     {offsetof(struct DBOptions, kv_ssd), OptionType::kVectorString,
       OptionVerificationType::kNormal, false, 0}},
     {"advise_random_on_open",
      {offsetof(struct DBOptions, advise_random_on_open), OptionType::kBoolean,

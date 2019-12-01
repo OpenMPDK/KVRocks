@@ -44,13 +44,16 @@ namespace insdb {
         //sktable
         kSuperSKTable = 6,
         kSKTable = 7,
-        kMaxMetaType = 7,
+        kHashMap = 8,
+        kColLog = 9,
+        kMaxMetaType = 9,
     };
     /**
       return Metadata key.
       ManiFest      		key = dbname | kManifest     		| INVALID_SKT_ID
       Super SKTable 		key = dbname | kSuperSKTable 		| SKTable ID
       SKTable       		key = dbname | kSKTable      		| SKTable ID
+      kHashMap      		key = dbname | kSKTable      		| SKTable ID
       SKTUpdateList    		key = dbname | kSKTUpdateList		| SKTable ID
       kSKTIterUpdateList 	key = dbname | kSKTIterUpdateList	| SKTable ID
       LogRecord     		key = dbname | kLogRecord    		| INVALID_SKT_ID
@@ -64,6 +67,18 @@ namespace insdb {
         key.meta_info = 0;
         return key;
     }
+
+    inline InSDBKey GetColInfoKey(const uint32_t dbname, const uint32_t skt_id, const uint32_t colinfo_id) {
+        InSDBKey key = {0,0};
+        key.db_id = dbname;
+        key.type = kColLog;
+        key.split_seq = 0;
+        key.meta_id = skt_id;
+        key.meta_info = colinfo_id;
+        return key;
+    }
+
+
     /**
       return KB or its Metadata key.
       kKBlock   key = dbname | kKBlock | seq

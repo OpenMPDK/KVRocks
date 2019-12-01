@@ -43,14 +43,16 @@ namespace insdb {
       compression(kSnappyCompression),
       reuse_logs(false),
       prefix_detection(false),
+      disable_cache(false),
+      disable_io_size_check(false),
       filter_policy(NULL),
       max_cache_size(2*1024*1024*1024UL),
-      num_write_worker(3),
+      num_write_worker(8),
       num_column_count(1),
       max_request_size(32*1024),
       align_size(4),
       //align_size(4096),
-      slowdown_trigger(64*1024),
+      slowdown_trigger(128*1024),
       max_key_size(128),
       max_table_size(512*1024),
       max_uval_prefetched_size(200000000UL),
@@ -58,17 +60,22 @@ namespace insdb {
       flush_threshold(1024*1024),
       /*Do not increase min_update_cnt_table_flush too high, it may cause out of memory*/
       min_update_cnt_table_flush(64*1024),
-      kv_ssd("/dev/nvme0n1"),
       approx_key_size(16),
       approx_val_size(4096),
+      approx_table_encoding_factor(4),
       iter_prefetch_hint(1),
       random_prefetch_hint(1),
       split_prefix_bits(0),
+      use_compact_key(false),
       AddUserKey(nullptr),
       AddUserKeyContext(nullptr),
       Flush(nullptr),
-      FlushContext(nullptr)
+      FlushContext(nullptr),
+      iterpad_share(false),
+      keep_written_keyblock(true),
+      table_eviction(true)
       {
-}
+        kv_ssd = {"/dev/nvme0n1"};
+      }
 
 }  // namespace insdb

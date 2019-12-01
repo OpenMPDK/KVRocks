@@ -151,8 +151,12 @@ static struct kmem_cache *kv_sync_request_cachep;
 static struct kmem_cache *kv_async_request_cachep;
 
 inline u32 get_hash_key(void *key, u32 key_length){
-    if(key_length  > KVCMD_INLINE_KEY_MAX) 
+    if(key_length  > KVCMD_INLINE_KEY_MAX)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
         return hash_64((u64)full_name_hash(key, key_length), KV_HASH_BITS);
+#else
+        return hash_64((u64)full_name_hash(NULL, key, key_length), KV_HASH_BITS);
+#endif
     else
         return  hash_128(*(uint128_t *)key, KV_HASH_BITS);
 }
@@ -520,7 +524,11 @@ restart:
          * Sync IOs may wait this bit.
          */
         
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
         rq->errors=rq->req->errors;
+#else
+        rq->errors=nvme_req(rq->req)->status;
+#endif
 #ifndef NO_LOG
         switch(rq->errors){
             case 0x0:
@@ -556,7 +564,11 @@ restart:
 #endif
 
         if(is_kv_retrieve_cmd(rq->c.common.opcode)) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
             rq->result = le32_to_cpu(rq->cqe.result);
+#else
+            rq->result = le32_to_cpu(rq->cqe.result.u32);
+#endif
         }
         else
             rq->result = rq->data_length;

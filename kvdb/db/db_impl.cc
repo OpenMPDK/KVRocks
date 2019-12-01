@@ -569,7 +569,9 @@ Status DB::ListColumnFamilies(const DBOptions& db_options,
             int errno_saved = errno;
 
             insdb::Options insdb_options;
-            insdb_options.kv_ssd = db_options.kv_ssd.data();
+            insdb_options.kv_ssd.resize(0);
+            for (auto devname : db_options.kv_ssd)
+                insdb_options.kv_ssd.push_back(devname.c_str());
             insdb_options.num_column_count = kInSDB_MaxNrColumnFamilies;
             if(db_options.info_log)
                 insdb_options.info_log = new InsDB_Logger(db_options.info_log);
@@ -1115,7 +1117,9 @@ static void convert_to_insdb_options(const DBOptions& db_options,
     // TODO: improve InSDB to support per-column options
     insdb_options.comparator = new InsDB_Comparator(default_cfoptions.comparator);
 	insdb_options.merge_operator = new InsDB_MergeOperator(default_cfoptions.merge_operator);
-    insdb_options.kv_ssd = db_options.kv_ssd.data();
+	insdb_options.kv_ssd.resize(0);
+    for (auto devname : db_options.kv_ssd)
+        insdb_options.kv_ssd.push_back(devname);
     insdb_options.sktable_low_key_count = db_options.tablecache_low;
     insdb_options.sktable_high_key_count = db_options.tablecache_high;
     insdb_options.max_cache_size = db_options.max_cache_size;
@@ -1130,6 +1134,16 @@ static void convert_to_insdb_options(const DBOptions& db_options,
 
     // insdb prefix detection
     insdb_options.prefix_detection = db_options.prefix_detection;
+    // insdb disable cache
+    insdb_options.disable_cache = db_options.disable_cache;
+    // insdb disable IO size check
+    insdb_options.disable_io_size_check = db_options.disable_io_size_check;
+    // share iterator pad
+    insdb_options.iterpad_share = db_options.iterpad_share;
+    // keep written key blocks in memory
+    insdb_options.keep_written_keyblock = db_options.keep_written_keyblock;
+    // allow table eviction
+    insdb_options.table_eviction = db_options.table_eviction;
     // insdb write worker count
     insdb_options.num_write_worker = db_options.num_write_worker;
     // insdb max request size
@@ -1156,6 +1170,12 @@ static void convert_to_insdb_options(const DBOptions& db_options,
     insdb_options.random_prefetch_hint = db_options.random_prefetch_hint;
     // insdb split prefix bits
     insdb_options.split_prefix_bits = db_options.split_prefix_bits;
+    switch(default_cfoptions.compression) {
+    case kNoCompression:
+        insdb_options.compression = insdb::kNoCompression; break;
+    default:
+        insdb_options.compression = insdb::kSnappyCompression; break;
+    }
 
     //insdb_options.env = options.env;
 	//insdb_options.block_cache = options.memtable_factory;
@@ -1165,7 +1185,6 @@ static void convert_to_insdb_options(const DBOptions& db_options,
 	insdb_options.block_size =;
 	insdb_options.block_restart_interval =;
 	insdb_options.max_file_size =;
-	insdb_options.compression = options.compression;
 	insdb_options.reuse_logs = ;
 	insdb_options.filter_policy = ;
 	insdb_options.max_cache_size =;
@@ -2219,8 +2238,11 @@ Status DBImpl::DeleteFile(std::string name)  {
 
 Status DBImpl::DeleteFilesInRange(ColumnFamilyHandle* column_family,
                                   const Slice* begin, const Slice* end) {
-    // InSDB does not have file.
-    return Status::OK();
+    //Feat: delete the keys 
+     CompactRangeOptions options;
+
+    return CompactRange(options, column_family, begin, end);
+    //Feat end
 }
 
 Status DBImpl::IngestExternalFile(
@@ -2305,8 +2327,11 @@ Status DestroyDB(const std::string& dbname, const Options& options) {
 
     // Destroy InSDB object
 	insdb::Options insdb_options;
-	insdb_options.kv_ssd = options.kv_ssd.data();
+	insdb_options.kv_ssd.resize(0);
+    for (auto devname : options.kv_ssd)
+        insdb_options.kv_ssd.push_back(devname.c_str());
     insdb_options.num_column_count = kInSDB_MaxNrColumnFamilies;
+    insdb_options.disable_io_size_check = options.disable_io_size_check;
     if(options.info_log)
         insdb_options.info_log = new InsDB_Logger(options.info_log);
 	insdb::Status insdb_status = insdb::DestroyDB(dbname, insdb_options);

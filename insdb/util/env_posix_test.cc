@@ -56,7 +56,7 @@ TEST(EnvPosixTest, ReadWriteDelete) {
     double iops = 0;
     Status s;
     InSDBKey key;
-    std::string path = "/dev/nvme0n1";
+    std::vector<std::string> path{"/dev/nvme0n1"};
     ASSERT_OK(env_->Open(path));
     memset(&key, 0, sizeof(InSDBKey));
     memset(buffer, 0, 4096);
@@ -122,7 +122,7 @@ test_again:
             size_vec.push_back(value_size);
         }
         std::vector<Env::DevStatus> status;
-        ASSERT_OK(env_->MultiGet(key_vec, buf_vec, size_vec, blocking_key, async, status));
+        ASSERT_OK(env_->MultiGet(key_vec, buf_vec, size_vec, blocking_key, async, 0, status));
         if(!async) {
             for(int j=0; j<this_step; j++) {
                 ASSERT_TRUE(status[j] == Env::KeyNotExist);
@@ -246,13 +246,13 @@ test_again:
     start_time = env_->NowMicros();
     key.db_id = 0x19191234;
     unsigned char iter_handle = 0;
-    ASSERT_OK(env_->IterReq(0xffffffff, key.db_id, &iter_handle, true, true));
+    ASSERT_OK(env_->IterReq(0xffffffff, key.db_id, &iter_handle, 0, true, true));
     {
         bool b_found = false;
         bool b_finished = false;
         char *data = NULL;
         while(1) {
-            s = env_->GetLog(0xD0, log_buff, 4096);
+            s = env_->GetLog(0xD0, log_buff, 4096, 0);
             if (!s.ok()) {
                 printf("fail to GetLog\n");
                 break;

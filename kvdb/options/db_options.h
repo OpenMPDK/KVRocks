@@ -82,8 +82,19 @@ struct ImmutableDBOptions {
   bool seq_per_batch;
   // insdb prefix detection
   bool prefix_detection;
+  // insdb disable cache
+  bool disable_cache;
+  // insdb disable size check
+  bool disable_io_size_check;
+  // share iterator pad
+  bool iterpad_share;
+  // free written key blocks
+  bool keep_written_keyblock;
+  // allow table eviction
+  bool table_eviction;
+
   // insdb device name
-  std::string kv_ssd;
+  std::vector<std::string> kv_ssd;
   // insdb write worker count
   int num_write_worker;
   // insdb max request size

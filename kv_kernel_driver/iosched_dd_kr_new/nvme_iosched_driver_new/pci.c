@@ -1701,6 +1701,10 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 			nvme_release_cmb(dev);
 	}
 
+#ifdef KV_NVME_SUPPORT
+    printk("[ %d : %s ] KV NVME Queue Depth : %d\n", __LINE__, __func__, dev->q_depth);
+#endif
+
 	size = db_bar_size(dev, nr_io_queues);
 	if (size > 8192) {
 		iounmap(dev->bar);

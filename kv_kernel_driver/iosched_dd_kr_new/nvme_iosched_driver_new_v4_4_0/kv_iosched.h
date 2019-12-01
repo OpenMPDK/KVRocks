@@ -16,10 +16,16 @@
  */
 #ifndef _KV_IOSCHED_H
 #define _KV_IOSCHED_H
+#include <linux/version.h>
 #include <linux/blkdev.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/freezer.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,0)
+#include <linux/sched/signal.h>
+#endif
+
 #include "kv_fifo.h"
 #include "nvme.h"
 #include "linux_nvme_ioctl.h"
@@ -553,7 +559,11 @@ static inline int kv_wait_killable(int mode)
     return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
 static inline int kv_wait_atomic_killable(atomic_t *p)
+#else
+static inline int kv_wait_atomic_killable(atomic_t *p, unsigned int mode)
+#endif
 {
     return kv_wait_killable(TASK_KILLABLE);
 }

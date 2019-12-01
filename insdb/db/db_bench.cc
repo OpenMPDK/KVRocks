@@ -461,7 +461,7 @@ namespace insdb {
                        */
                     if (!FLAGS_use_existing_db) {
                         Options options;
-                        options.kv_ssd = FLAGS_kv_ssd;
+                        options.kv_ssd.push_back(FLAGS_kv_ssd);
                         DestroyDB(FLAGS_db, options);
                     }
                 }
@@ -591,7 +591,7 @@ namespace insdb {
                             delete db_;
                             db_ = NULL;
                             Options options;
-                            options.kv_ssd = FLAGS_kv_ssd;
+                            options.kv_ssd.push_back((char*)FLAGS_kv_ssd);
                             DestroyDB(FLAGS_db, options);
                             Open();
                         }
@@ -721,7 +721,7 @@ namespace insdb {
             void SnappyCompress(ThreadState* thread) {
                 RandomGenerator gen;
                 Options options;
-                options.kv_ssd = FLAGS_kv_ssd;
+                options.kv_ssd.push_back(FLAGS_kv_ssd);
                 Slice input = gen.Generate(options.block_size);
                 int64_t bytes = 0;
                 int64_t produced = 0;
@@ -749,7 +749,7 @@ namespace insdb {
                 RandomGenerator gen;
 
                 Options options;
-                options.kv_ssd = FLAGS_kv_ssd;
+                options.kv_ssd.push_back((char*)FLAGS_kv_ssd);
                 Slice input = gen.Generate(options.block_size);
                 std::string compressed;
                 bool ok = port::Snappy_Compress(input.data(), input.size(), &compressed);
@@ -774,7 +774,7 @@ namespace insdb {
                 assert(db_ == NULL);
 
                 Options options;
-                options.kv_ssd = FLAGS_kv_ssd;
+                options.kv_ssd.push_back(FLAGS_kv_ssd);
                 options.max_cache_size = FLAGS_cache_size;
 
                 options.env = g_env;

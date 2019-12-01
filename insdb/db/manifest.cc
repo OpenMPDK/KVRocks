@@ -1,4 +1,5 @@
 /*
+ *
  * Original Code Copyright (c) 2011 The LevelDB Authors. All rights reserved.
  * Use of the original source code is governed by a BSD-style license that can be
  * found in the LICENSE file. See the AUTHORS file for names of contributors.
@@ -54,7 +55,7 @@ namespace insdb {
     //  - free_request_node_
     //  - free_uservalue_
     //  - free_skt_buffer_
-    uint64_t kFreeBufferSize = 256*1024*1024UL;
+    uint64_t kFreeBufferSize = 128UL;
 
     int kMaxSKTableSize= 512*1024;
 
@@ -67,19 +68,14 @@ namespace insdb {
     int kMaxKeySize = 40;
     const uint16_t kMaxAllocatorPool = 8;
     //  Max preferred User value size
-    uint64_t kMaxCacheSize = 2*1024*1024*1024UL;
-    uint64_t kCacheSizeLowWatermark = 0;/*Set it to 80% of kMaxKeySize in Manifest*/
+    uint64_t kMaxCacheSize = 16*1024*1024*1024UL;
+    uint64_t kCacheSizeLowWatermark = 0;/*Set it to 80% of kMaxCacheSize in Manifest*/
     // Max threshold size to flush
-    // the accumulated size of requested user value exceeds this value, trigger SKTable flush. 
-    uint32_t kMaxFlushThreshold= 1024*1024*128;
-    uint32_t kForceFlushThreshold= 1024*1024*1024;
     //Minimun update count for triggering SKTableMem Flush
     uint32_t  kSlowdownTrigger = 64*1024;
     uint32_t  kSlowdownLowWaterMark = 4*1024;
-    //uint32_t kMinUpdateCntForTableFlush= 32*1024;
-    //uint32_t kUpdateCntForForceTableFlush= 64*1024;
     uint32_t  kMinUpdateCntForTableFlush = (kMaxSKTableSize*17UL)/512;
-    uint32_t  kUpdateCntForForceTableFlush= kMinUpdateCntForTableFlush << 1;
+    uint32_t  kSKTableFlushWatermark = kMinUpdateCntForTableFlush << 1;
     /* the kRequestAlignSize must be power of two*/
 #ifdef NEW_GENERIC_FIRMWARE
     int kRequestAlignSize = 4; /**  */
@@ -89,6 +85,13 @@ namespace insdb {
 
     // KeyPrefixSize
     int kPrefixIdentifierSize = 0;
+    uint64_t kCongestionControl = 0x800000; // 256*1024;
+
+    // Share IterPad
+    bool kIterPadShare = false;
+    // Keep Written Block
+    bool kKeepWrittenKeyBlock = true;
+
 
 #ifdef INSDB_GLOBAL_STATS
     std::atomic<uint64_t> g_new_ikey_cnt;
@@ -103,6 +106,10 @@ namespace insdb {
     std::atomic<uint64_t> g_del_col_cnt;
     std::atomic<uint64_t> g_new_skt_cnt;
     std::atomic<uint64_t> g_del_skt_cnt;
+    std::atomic<uint64_t> g_new_keymap_cnt;
+    std::atomic<uint64_t> g_del_keymap_cnt;
+    std::atomic<uint64_t> g_new_arena_cnt;
+    std::atomic<uint64_t> g_del_arena_cnt;
     std::atomic<uint64_t> g_new_snap_cnt;
     std::atomic<uint64_t> g_del_snap_cnt;
     std::atomic<uint64_t> g_new_itr_cnt;
@@ -136,6 +143,27 @@ namespace insdb {
     std::atomic<uint64_t> g_skiplist_search_retry_cnt;
     std::atomic<uint64_t> g_skiplist_searchlessthanequal_retry_cnt;
     std::atomic<uint64_t> g_skiplist_searchgreaterequal_retry_cnt;
+#endif
+
+#ifdef TRACE_READ_IO
+    std::atomic<uint64_t> g_sktable_sync;
+    std::atomic<uint64_t> g_sktable_sync_hit;
+    std::atomic<uint64_t> g_sktable_async;
+    std::atomic<uint64_t> g_kb_sync;
+    std::atomic<uint64_t> g_kb_sync_hit;
+    std::atomic<uint64_t> g_kb_async;
+    std::atomic<uint64_t> g_itr_kb;
+    std::atomic<uint64_t> g_itr_kb_prefetched;
+    std::atomic<uint64_t> g_kbm_sync;
+    std::atomic<uint64_t> g_kbm_sync_hit;
+    std::atomic<uint64_t> g_kbm_async;
+    std::atomic<uint64_t> g_loadvalue_column;
+    std::atomic<uint64_t> g_loadvalue_sktdf;
+#endif
+
+#ifdef MEASURE_WAF
+    std::atomic<uint64_t> g_acc_appwrite_keyvalue_size;
+    std::atomic<uint64_t> g_acc_devwrite_keyvalue_size;
 #endif
 
 #ifdef TRACE_MEM
@@ -187,6 +215,10 @@ namespace insdb {
         printf("g_del_col_cnt %lu\n", g_del_col_cnt.load());
         printf("g_new_skt_cnt %lu\n", g_new_skt_cnt.load());
         printf("g_del_skt_cnt %lu\n", g_del_skt_cnt.load());
+        printf("g_new_keymap_cnt %lu\n", g_new_keymap_cnt.load());
+        printf("g_del_keymap_cnt %lu\n", g_del_keymap_cnt.load());
+        printf("g_new_arena_cnt %lu\n", g_new_arena_cnt.load());
+        printf("g_del_arena_cnt %lu\n", g_del_arena_cnt.load());
         printf("g_new_snap_cnt %lu\n", g_new_snap_cnt.load());
         printf("g_del_snap_cnt %lu\n", g_del_snap_cnt.load());
         printf("g_new_itr_cnt %lu\n", g_new_itr_cnt.load());
@@ -213,6 +245,23 @@ namespace insdb {
     }
 #endif
 
+    void RequestNode::UpdateLatestColumnNode(Manifest *mf, uint32_t kb_size, uint64_t ikey_seq, KeyBlockPrimaryMeta *kbpm){
+        UserKey *uk = NULL;
+        if(latest_col_node_->GetTGID()) mf->DecTrxnGroup(latest_col_node_->GetTGID(), 1);/* AddCompletedTrxnGroupRange() is called in DecTrxnGroup() */
+        do{
+            /*uk can be changed by UserKeyMerge()*/
+            if(uk) uk->ColumnUnlock(col_id_);
+            uk = latest_col_node_->GetUserKey();
+            uk->ColumnLock(col_id_);
+        }while(uk != latest_col_node_->GetUserKey());
+
+        /*Free UserValue in the UpdateColumnNode()*/
+        latest_col_node_->UpdateColumnNode(mf, kb_size, ikey_seq, kbpm);
+        latest_col_node_->SetSubmitted();
+        uk->DecreaseReferenceCount();
+        uk->ColumnUnlock(col_id_);
+
+    }
 
     int UserKeyComparator::operator()(const Slice& a, const Slice& b) const
     {
@@ -226,6 +275,7 @@ namespace insdb {
     }
 
     void DBRecoveryThread::ThreadFn() {
+#if 0
         Env *env_ = recovery_->GetEnv();
         Manifest *mf_ = recovery_->GetManifest();
         std::list<TrxnGroupRange> &completed_trxn_groups_ = recovery_->GetCompletedTrxnGroup();
@@ -290,6 +340,7 @@ namespace insdb {
             }
 
             // Recover keys in completed transaction groups
+#if 0
             for(auto colinfo : orphan_col_list){
                 TrxnInfo *trxninfo = colinfo.trxninfo;
                 TrxnGroupID tgid = trxninfo->GetTrxnGroupID();
@@ -297,7 +348,7 @@ namespace insdb {
 
                 // If in completed transaction group, add the user key to keymap
                 if(mf_->IsCompletedTrxnGroupRange(completed_trxn_groups_, tgid)) {
-                    recovery_->InsertRecoveredKeyToKeymap(colinfo);
+                    recovery_->InsertRecoveredKeyToKeymap(mf_, colinfo);
                     delete trxninfo;
                 } else {
                     // Collect column nodes and transactions to further inspect in the next step
@@ -317,17 +368,19 @@ namespace insdb {
                     }
                 }
             }
+#endif
 
             // Get ikeu seq for next KBM
             ikey_seq = kbml->GetNextIKeySeqNum();
         } //while(true)
+#endif
     }
 
     DBRecovery::DBRecovery(Manifest *mf) : mf_(mf), env_(mf_->GetEnv()), logkey_(mf->GetDBHash()) { }
     Status DBRecovery::LoadLogRecordKey() { return logkey_.Load(mf_->GetEnv()); }
 
     Status DBRecovery::CleanupSktUpdateList(SKTableMem *skt, InSDBMetaType updatelist_type) {
-
+#if 0
         // Load update list
         char updatelist_buf[kDeviceRquestMaxSize];
         std::string contents;
@@ -358,9 +411,9 @@ namespace insdb {
         }
         // decode update list
         // update lists contain user keys or key blocks in completed transaction groups
-        bool success = skt->DecodeUpdateList(delete_list, update_list, const_cast<char*>(contents.data()), data_size);
-        if(!success)
-            return Status::Corruption("cannot decode update list");
+        //bool success = skt->DecodeUpdateList(delete_list, update_list, const_cast<char*>(contents.data()), data_size);
+        //if(!success)
+        //    return Status::Corruption("cannot decode update list");
 
         // delete KB/KBM
         for(auto it : delete_list) {
@@ -415,12 +468,12 @@ namespace insdb {
         }
         if(!s.ok())
             return s;
-
+#endif
         return Status::OK();
     }
 
     Status DBRecovery::CleanupSktUpdateList(SKTableMem *skt) {
-
+#if 0
         Status s = CleanupSktUpdateList(skt, kSKTUpdateList);
         if(!s.ok())
             return s;
@@ -428,7 +481,7 @@ namespace insdb {
         s = CleanupSktUpdateList(skt, kSKTIterUpdateList);
         if(!s.ok())
             return s;
-
+#endif
         return Status::OK();
     }
 
@@ -437,6 +490,7 @@ namespace insdb {
 */
     Status DBRecovery::LoadBeginsKeysAndCLeanupSKTableMeta(uint32_t &sktid)
     {
+#if 0
         int size = 2048;
         char buffer[size];
 
@@ -501,8 +555,11 @@ namespace insdb {
         // if not found is returned, sktable is clean.
         SKTableInfo skt_info;
         s = mf_->ReadSKTableInfo(prealloc_skt, &skt_info);
-        if(s.IsNotFound())
-            mf_->InsertSKTableMemCache(skt, kCleanSKTCache);
+        if(s.IsNotFound()){
+            mf_->InsertSKTableMemCache(skt, kCleanSKTCache, SKTableMem::flags_in_clean_cache);
+        }
+#if 0
+        /* LoasSKTable has been removed */
         else if(s.ok()) {
             // Need to fix the sktable
             // Fully load
@@ -516,16 +573,19 @@ namespace insdb {
 
             // remove the link to prealloc sktable
             skt->SetPreallocSKTableID(next_skt);
-            mf_->InsertSKTableMemCache(skt, kDirtySKTCache);
+            mf_->InsertSKTableMemCache(skt, kDirtySKTCache, SKTableMem::flags_in_dirty_cache);
         }
+#endif
 
         // set next sktable ID
         sktid = next_skt;
+#endif
         return Status::OK();
     }
 
     bool DBRecovery::AddCompletedColumn(std::unordered_map<TransactionID, TransactionColCount> &TRXNList, TransactionID col_trxn_id, uint32_t count)
     {
+#if 0
         assert(count > 1);
 
         bool trxn_completed = false;
@@ -548,10 +608,13 @@ namespace insdb {
         }
 
         return trxn_completed;
+#endif
+        return true;
     }
 
     void DBRecovery::AddUncompletedColumn(std::unordered_map<TransactionID, TransactionColCount> &TRXNList, TransactionID col_trxn_id, uint32_t count)
     {
+#if 0
         assert(count > 1);
 
         // find a head transaction the column belongs to.
@@ -561,24 +624,29 @@ namespace insdb {
             TransactionColCount colcount = { .count = count, .completed = 0};
             TRXNList.insert({col_trxn_id, colcount});
         }
+#endif
     }
 
-    void DBRecovery::InsertRecoveredKeyToKeymap(ColumnInfo &colinfo) {
+    void DBRecovery::InsertRecoveredKeyToKeymap(Manifest *mf, ColumnInfo &colinfo) {
+#if 0
         Slice key(colinfo.key);
         UserKey *existing_ukey = mf_->SearchUserKey(key);
+        /* InsertColumnNode has been removed */
         if(existing_ukey) {
             // if it exists, add only column node
             // if existing column is older than the orphan column, insert the column to the user key
             // otherwise, it's a bug because it should have been deleted steps above.
             auto existing_newest_node = existing_ukey->GetColumnList(colinfo.trxninfo->GetColId())->newest();
             if(!existing_newest_node || ColumnNode::GetColumnFromLink(existing_newest_node)->GetBeginSequenceNumber() < colinfo.ikey_seq) {
-                auto col = new ColumnNode(colinfo.type, colinfo.ikey_seq, colinfo.ttl, colinfo.kb_size, colinfo.kb_index);
+                auto col = mf->AllocColumnNode();
+                col->Init(colinfo.type, colinfo.ikey_seq, colinfo.ttl, colinfo.kb_size, colinfo.kb_index);
                 existing_ukey->InsertColumnNode(col, colinfo.trxninfo->GetColId());
             } else {
                 port::Crash(__FILE__,__LINE__);
             }
         } else {
-            auto col = new ColumnNode(colinfo.type, colinfo.ikey_seq, colinfo.ttl, colinfo.kb_size, colinfo.kb_index);
+            auto col = mf->AllocColumnNode();
+            col->Init(colinfo.type, colinfo.ikey_seq, colinfo.ttl, colinfo.kb_size, colinfo.kb_index);
             KeySlice keyslice(key);
             auto ukey = mf_->AllocUserKey(key.size());
             ukey->InitUserKey(keyslice);
@@ -590,6 +658,7 @@ namespace insdb {
                 port::Crash(__FILE__,__LINE__);
             }
         }
+#endif
     }
 
     /**
@@ -603,6 +672,7 @@ namespace insdb {
     /**
     */
     Status DBRecovery::RunRecovery() {
+#if 0
         Status s;
         SuperSKTable super_skt;
         uint32_t skt_id = 0;
@@ -725,7 +795,7 @@ restart_all_workers:
         // the lefover is completed trasactions
         // Add them to keymap
         for (auto colinfo : UncompletedKeyList)
-            InsertRecoveredKeyToKeymap(colinfo);
+            InsertRecoveredKeyToKeymap(mf_, colinfo);
 
         // Flush all key block meta updates
         //Do not delete KBM even if it has no valid bit in the bitmap
@@ -733,74 +803,9 @@ restart_all_workers:
         success = UpdateAllKBMsInOrder();
         if(!success)
             return Status::IOError("could not update KBMs");
-
+#endif
         return Status::OK();
     }
-
-    void IterScratchPad::ClearIterScratchpad(Manifest *mf){
-        assert(!ref_cnt_.load(std::memory_order_relaxed));
-        assert(allocator_);
-#ifdef CODE_TRACE
-        printf("clear iter for skt id %d\n", skt_->GetSKTableID());
-#endif
-        skt_ = NULL; 
-        next_skt_ = NULL; 
-        begin_seq_ = 0;
-        last_seq_ = 0;
-        if(!use_org_sktdf_ && sktdf_){
-            sktdf_->CleanUp(mf);
-            delete sktdf_;
-        }
-        sktdf_ = NULL;
-        key_entry_count_ = 0;
-
-        std::queue<UserValue*> *uv_queue = &uv_queue_;
-        while(!uv_queue->empty()){
-            UserValue* uv = uv_queue->front();
-            uv_queue->pop();
-            mf->FreeUserValue(uv);
-        }
-        std::queue<KeyBlockPrimaryMeta*> *kbpm_queue = &kbpm_queue_;
-        while(!kbpm_queue->empty()){
-            KeyBlockPrimaryMeta* kbpm = kbpm_queue->front();
-            kbpm_queue->pop();
-            if (kbpm->DecRefCntAndTryEviction(mf)) {
-                mf->FreeKBPM(kbpm);
-            }
-        }
-    }
-
-    void KeyMap::CleanUp(){
-        UserKey* uk = First();
-        uint32_t cnt = 0;
-        while(uk) {
-            cnt++;
-            if(Remove(uk->GetKeySlice())){
-                uk->UserKeyCleanup(mf_, true);
-                mf_->FreeUserKey(uk);
-                uk = First();
-            }
-            else{
-                printf("[%d :: %s] Fail to remove a key from keymap_\n", __LINE__, __func__);
-                abort();
-            }
-            /* if (uk) delete uk; delete will be done by GC */
-        }
-    }
-
-
-    ObjectAllocator<IterScratchPad>* IterScratchPadAllocatorPool::GetIterScratchPadAllocator(){
-
-        ObjectAllocator<IterScratchPad>* sp_allocator = reinterpret_cast<ObjectAllocator<IterScratchPad>*>(pthread_getspecific(pool_id_));
-        if(!sp_allocator){
-            uint16_t id = ++id_;
-            if(id == kMaxAllocatorPool) id_ = 0;
-            sp_allocator = mf_->GetIterScratchPadAllocator(id - 1);
-            pthread_setspecific(pool_id_, sp_allocator);
-        }
-        return sp_allocator;
-    }
-
 
     ObjectAllocator<UserValue>* UVAllocatorPool::GetUVAllocator(){
 
@@ -812,6 +817,17 @@ restart_all_workers:
             pthread_setspecific(pool_id_, uv_allocator);
         }
         return uv_allocator;
+    }
+    SimpleObjectAllocator<ColumnNode>* CNAllocatorPool::GetCNAllocator(){
+
+        SimpleObjectAllocator<ColumnNode>* cn_allocator = reinterpret_cast<SimpleObjectAllocator<ColumnNode>*>(pthread_getspecific(pool_id_));
+        if(!cn_allocator){
+            uint16_t id = ++id_;
+            if(id == kMaxAllocatorPool) id_ = 0;
+            cn_allocator = mf_->GetCNAllocator(id - 1);
+            pthread_setspecific(pool_id_, cn_allocator);
+        }
+        return cn_allocator;
     }
     ObjectAllocator<UserKey>* UKAllocatorPool::GetUKAllocator(){
 
@@ -838,15 +854,17 @@ restart_all_workers:
     }
 
 
+    
+    /////////////////////////////////////////// START: Manifest Functions ///////////////////////////////////////////
     Manifest::Manifest(const Options& option, std::string& dbname)
         : env_(option.env), options_(option), dbname_(dbname),
         worker_mu_(),
         worker_cv_(&worker_mu_),
         worker_cnt_(0), 
+        term_worker_cnt_(0),
         worker_terminated_(false),
         worker_termination_mu_(),
         worker_termination_cv_(&worker_termination_mu_),
-        kbm_update_list_(),
         nr_worker_in_running_(0),
         /* "0 ~ kUnusedNextInternalKey(kMaxUserCount + kMaxWriteWorkerCount)" is used for ColumnNodes being submitted*/
         next_InSDBKey_seq_num_(kUnusedNextInternalKey),
@@ -854,37 +872,82 @@ restart_all_workers:
         next_trxn_id_(1 << TGID_SHIFT), // Trxn ID 0 is researved for non-TRXN request. and only this has 0 TGID.
         next_sktable_id_(0),
         memory_usage_(0),
+#ifdef MEM_TRACE
+        skt_usage_(0),
+        uk_usage_(0),
+        col_usage_(0),
+        sktdf_usage_(0),
+        kbpm_usage_(0),
+        iter_usage_(0),
+        flush_miss_(0),
+        flush_hit_(0),
+        update_to_clean_(0),
+        evicted_skt_(0),
+        flush_to_clean_(0),
+        flush_to_dirty_(0),
+        flush_split_inc_(0),
+        pr_iterbuild_cnt_(0),
+        pr_next_cnt_(0),
+        clear_pr_cnt_(0),
+        skip_pr_cnt_(0),
+        evict_with_pr_(0),
+        evict_iter_(0),
+        evict_skt_iter_(0),
+        evict_stop_skt_ref_(0),
+        evict_recalim_(0),
+#endif
+        update_cnt_(0),
+        evict_sktable_id_(0),
         nr_iterator_(0),
         ukey_comparator_(option.comparator), gcinfo_(16), sktlist_(ukey_comparator_, &gcinfo_),/* keymap_(option.comparator, &gcinfo_, this),*/
+#ifdef USE_HOTSCOTCH
+        hopscotch_key_hasp_lock_(),
+        hopscotch_key_hashmap_(new HotscotchKeyHashMap(1024*1024)),
+#endif
 #ifdef INSDB_USE_HASHMAP
-        key_hashmap_(new KeyHashMap(1024*1024)),
-        kbpm_hashmap_(new KBPMHashMap(1024*1024)), 
+        key_hashmap_(new KeyHashMap(256*1024)),
+        uk_count_(0),
+        congestion_control_(false),
+        congestion_control_mu_(),
+        congestion_control_cv_(&congestion_control_mu_),
+        kbpm_hashmap_(new KBPMHashMap(256*1024)), 
+        flushed_key_hashmap_(new KeyHashMap(256*1024)),
 #endif
         skt_sorted_simplelist_lock_(),
         snapshot_simplelist_lock_(),
         skt_sorted_simplelist_(),
         snapshot_simplelist_(),
 
-        coldness_rnd_(0xdeadbeef),
-        skt_cache_lock_(),
-        skt_cache_{skt_cache_lock_, skt_cache_lock_},
+        TtlList_(NULL),
+        TtlEnabledList_(NULL),
+
+        skt_dirty_cache_lock_(),
+        skt_clean_cache_lock_(),
+        skt_cache_{skt_dirty_cache_lock_, skt_clean_cache_lock_},
+        skt_kbm_update_cache_lock_(),
+        kbpm_update_list_(skt_kbm_update_cache_lock_),
         kb_pool_(NULL),
         kbpm_pool_(NULL),
-        kbml_pool_(NULL),
+        skt_flush_mu_(),
+        skt_flush_cv_(&skt_flush_mu_),
 
-        key_cache_mu_(),
-        clean_skt_cleanup_(false),
-        key_cache_cv_(&key_cache_mu_),
+        offload_lock_(),
+        offload_cnt_(0),
+        flush_offload_queue_(),
 
-        key_cache_shutdown_sem_(),
+        force_kbm_update_(),
+        kbpm_update_mu_(),
+        kbpm_update_cv_(&kbpm_update_mu_),
+
+        skt_eviction_mu_(),
+        skt_eviction_cv_(&skt_eviction_mu_),
+
+        //skt_eviction_shutdown_sem_(),
         flags_(0),
-        key_cache_shutdown_(false),
-
-        logcleanup_shutdown_(false),
-        logcleanup_mu_(),
-        logcleanup_cv_(&logcleanup_mu_),
-        logcleanup_tid_(0),
-        cleanable_kbm_cnt_(0),
+        cache_thread_shutdown_(false),
+        skt_flush_thread_tid_(0),
+        skt_eviction_thread_tid_(0),
+        kbm_update_thread_tid_(0),
 
         dio_buffer_(),
         /* Transaction Management */
@@ -896,12 +959,11 @@ restart_all_workers:
         max_iter_key_buffer_size_(kMinSKTableSize),
         max_iter_key_offset_buffer_size_(kMinSKTableSize),
 
-        sp_allocator_(NULL),
         uv_allocator_(NULL),
         uk_allocator_(NULL),
         request_node_allocator_(NULL),
-        sp_allocator_pool_(this),
         uv_allocator_pool_(this),
+        cn_allocator_pool_(this),
         uk_allocator_pool_(this),
         request_node_allocator_pool_(this),
         //free_request_node_spinlock_(NULL),
@@ -910,8 +972,9 @@ restart_all_workers:
         logcleanup_data_(NULL),
         free_skt_buffer_spinlock_(),
         free_skt_buffer_(),
-        thread_memory_pool_(),
-        normal_start_(false)
+        //thread_memory_pool_(),
+        normal_start_(false),
+        dbhash_(Hash(dbname.c_str(), dbname.size(), MF_HASH_SEED))
         {
             if (option.max_request_size) {
                 kMaxRequestSize = option.max_request_size;
@@ -920,21 +983,30 @@ restart_all_workers:
             if (option.num_write_worker) kWriteWorkerCount = option.num_write_worker;
             if (option.max_key_size) kMaxKeySize = option.max_key_size;
             if (option.max_table_size) kMaxSKTableSize = option.max_table_size;
-            if (option.max_cache_size) kMaxCacheSize = option.max_cache_size;
-            if (option.flush_threshold) kMaxFlushThreshold = option.flush_threshold;
 #if 1 
             kMinUpdateCntForTableFlush = (kMaxSKTableSize*17UL)/512;
 #else
             if (option.min_update_cnt_table_flush) kMinUpdateCntForTableFlush= option.min_update_cnt_table_flush;
 #endif
+            if (option.max_cache_size) kMaxCacheSize = option.max_cache_size;
+            if (option.flush_threshold) 
+                kSKTableFlushWatermark = option.flush_threshold;
+            else
+                kSKTableFlushWatermark = kMinUpdateCntForTableFlush << 5;
             if (option.slowdown_trigger) kSlowdownTrigger = option.slowdown_trigger;
             if (option.align_size) kRequestAlignSize = option.align_size;
             if (option.split_prefix_bits) kPrefixIdentifierSize = option.split_prefix_bits/8;
             kSlowdownLowWaterMark = kSlowdownTrigger - (kSlowdownTrigger/2);
-            kForceFlushThreshold = kMaxFlushThreshold << 1;
-            kUpdateCntForForceTableFlush = kMinUpdateCntForTableFlush << 1;
-
+            /* If total update count exceeds kSKTableFlushWatermark, flush all SKTables */
             kCacheSizeLowWatermark = (kMaxCacheSize-(kMaxCacheSize/ 8u));
+
+
+            /* Iter Pad share */ 
+            kIterPadShare = option.iterpad_share;
+            /* Keep Written key block */
+            kKeepWrittenKeyBlock = option.keep_written_keyblock;
+
+
 
             TtlList_ = new uint64_t[kMaxColumnCount];
             memset(TtlList_, 0, kMaxColumnCount*8);
@@ -980,8 +1052,8 @@ restart_all_workers:
              */
             /* 140 is average key count per 4KB SKTable */
 
-            sp_allocator_ = new ObjectAllocator<IterScratchPad>[kMaxAllocatorPool];  
             uv_allocator_ = new ObjectAllocator<UserValue>[kMaxAllocatorPool];  
+            cn_allocator_ = new SimpleObjectAllocator<ColumnNode>[kMaxAllocatorPool];
             uk_allocator_ = new ObjectAllocator<UserKey>[kMaxAllocatorPool];  
             request_node_allocator_ = new ObjectAllocator<RequestNode>[kMaxAllocatorPool];  
 
@@ -1098,8 +1170,6 @@ restart_all_workers:
              * Maximum Key count : 4K
              *
              */
-            dbhash_ = Hash(dbname_.c_str(), dbname_.size(), MF_HASH_SEED);
-
             /////////////////////****ADD FOR PACKING****////////////////////
             //Support 128 Billions(1 << (32+5)) TRXN per DB Open(Intialized to 1 << TGID_SHIFT )
             completed_trxn_group_list_.push_front(TrxnGroupRange(0)); 
@@ -1107,9 +1177,9 @@ restart_all_workers:
             ////////////////////////////////////////////////////////////////
 
             // Start SKTable cache thread
-            sem_init(&key_cache_shutdown_sem_, 0, 0);
-            env_->StartThread(&KeyCacheThread_, this);
-            logcleanup_tid_ = env_->StartThread(&LogCleanupThreadFn_, this);
+            skt_flush_thread_tid_ = env_->StartThread(&SKTFlushThread_, this);
+            skt_eviction_thread_tid_ = env_->StartThread(&SKTEvictionThread_, this);
+            kbm_update_thread_tid_ = env_->StartThread(&KBMUpdateThread_, this);
         }
 
 #ifdef CODE_TRACE
@@ -1117,6 +1187,7 @@ restart_all_workers:
     uint64_t pop_alloc = 0;
 #endif
     Manifest::~Manifest() 
+
     {
         SKTableMem* skt = NULL;
 
@@ -1154,7 +1225,9 @@ restart_all_workers:
              * It does not need to aquire read lock(sktdf_update_mu_)
              * because no one flush SKTable(no SKTDF update)
              */
-            if(skt->GetSKTableDeviceFormatNode()){
+            if(skt->IsKeymapLoaded()){
+
+                /* Delete Arena */
                 skt->DeleteSKTDeviceFormatCache(this);
             }
             delete skt;
@@ -1171,35 +1244,13 @@ restart_all_workers:
 
         nr_node = 0;
 
-#if 0
-        SKTCacheNode *cache_node = NULL;
-        while(cache_node = lockfree_skt_cache_->PopNode()){
-            assert(!cache_node->GetSKTableMemNode());
-            delete cache_node;
-        }
-
-        SKTDFCacheNode *df_node = NULL;
-        while(df_node = lockfree_skt_deviceformat_->PopNode()){
-            delete df_node;
-        }            
-#endif
-
-        //printf("[%d :: %s]%u nodes are deleted from lockfree_iter_buffer_\n", __LINE__, __func__, nr_node);
-
-
         if(nr_node || nr_stale_node)
             printf("[%d :: %s]%u nodes are deleted from lockfree_prefetch_buffer_ %u failed\n", __LINE__, __func__, nr_node, nr_stale_node);
-#if 0
-        delete lockfree_skt_cache_;
-        delete lockfree_skt_dirty_;
-        delete lockfree_skt_deviceformat_;
-#endif
-        delete [] sp_allocator_;
         delete [] uv_allocator_;
+        delete [] cn_allocator_;
         delete [] uk_allocator_;
         delete [] request_node_allocator_;
         delete [] logcleanup_data_;
-        // CleanupFreeRequestNode();
         CleanupFreeSKTableBuffer();
         //delete [] free_request_node_;
         //delete [] free_request_node_spinlock_;
@@ -1214,204 +1265,69 @@ restart_all_workers:
         printf("[%d :: %s]new alloc(%ld) pop alloc(%ld)\n", __LINE__, __func__,new_alloc, pop_alloc);
 #endif
 
+#ifdef USE_HOTSCOTCH
+        if(!hopscotch_key_hashmap_->empty())
+            abort();
+        delete hopscotch_key_hashmap_;
+#endif
         if(!key_hashmap_->empty())
             abort();
         delete key_hashmap_;
-#ifdef CODE_TRACE
+        if(!flushed_key_hashmap_->empty())
+            abort();
+        delete flushed_key_hashmap_;
         uint32_t total_kbpm_in_hash = 0;
         uint32_t total_kbpm_has_ref = 0;
         uint32_t total_kbpm_has_ref_bit = 0;
         uint32_t total_kbpm_has_prefetch = 0;
+        uint32_t total_kbpm_has_dummy = 0;
+        uint32_t total_kbpm_has_origin = 0;
+        uint32_t total_kbpm_has_no_origin = 0;
+        uint32_t total_kbpm_has_pending_update = 0;
+        uint32_t total_kbpm_has_set_w_protection = 0;
         uint32_t total_kbpm_has_none = 0;
-        for (auto it = kbpm_hashmap_->cbegin(); it != kbpm_hashmap_->cend();) {
-            KeyBlockPrimaryMeta *kbpm = it->second;
-            if (kbpm) {
-                KeyBlock* kb = kbpm->GetKeyBlockAddr();
-                if (kb) delete kb;
-                total_kbpm_in_hash++;
-                if (kbpm->GetRefCnt()) total_kbpm_has_ref++;
-                if (kbpm->CheckRefBitmap()) total_kbpm_has_ref_bit++;
-                if (kbpm->IsKBPrefetched()) total_kbpm_has_prefetch++;
-                if (!kbpm->GetRefCnt() && !kbpm->CheckRefBitmap()) total_kbpm_has_none++;
-                delete kbpm;
-                it = kbpm_hashmap_->erase(it);
-            } else {
-                ++it;
+        if (!kbpm_hashmap_->empty()) {
+            for (auto it = kbpm_hashmap_->cbegin(); it != kbpm_hashmap_->cend();) {
+                KeyBlockPrimaryMeta *kbpm = it->second;
+                if (kbpm) {
+                    KeyBlock* kb = kbpm->GetKeyBlockAddr();
+                    if (kb) delete kb;
+                    total_kbpm_in_hash++;
+                    if (kbpm->CheckRefBitmap() !=0 ) total_kbpm_has_ref_bit++;
+                    if (kbpm->IsKBPrefetched()) total_kbpm_has_prefetch++;
+                    if (kbpm->IsDummy()) {
+                        total_kbpm_has_dummy++;
+                    } else {
+                        if (kbpm->GetOriginalKeyCount()) total_kbpm_has_origin++;
+                        else total_kbpm_has_no_origin++;
+                    }
+                    if (kbpm->GetPendingUpdatedValueCnt()) total_kbpm_has_pending_update++;
+                    if (kbpm->SetWriteProtection()) total_kbpm_has_set_w_protection++;
+                    kbpm->ClearWriteProtection();
+                    if (kbpm->CheckRefBitmap() == 0) total_kbpm_has_none++;
+                    delete kbpm;
+                    it = kbpm_hashmap_->erase(it);
+                } else {
+                    ++it;
+                }
             }
         }
-        if (total_kbpm_in_hash)
-            printf("total kbpm in hash (%d): ref (%d) bit(%d) prefetch(%d) none(%d) \n", total_kbpm_in_hash, total_kbpm_has_ref, total_kbpm_has_ref_bit, total_kbpm_has_prefetch, total_kbpm_has_none);
+        if (total_kbpm_in_hash) {
+#ifdef MEM_TRACE
+            printf("total kbpm in hash (%d): ref (%d) bit(%d) prefetch(%d) none(%d) dummy(%d) has_orig(%d) has_no_orig(%d) has_pending_update(%d) has_w_protection(%d)\n",
+                    total_kbpm_in_hash, total_kbpm_has_ref, total_kbpm_has_ref_bit, total_kbpm_has_prefetch, total_kbpm_has_none,
+                    total_kbpm_has_dummy, total_kbpm_has_origin, total_kbpm_has_no_origin, total_kbpm_has_pending_update, total_kbpm_has_set_w_protection);
 #endif
-        kbpm_hashmap_->clear();
+        }
+#ifdef MEM_TRACE
+        printf("total flush miss %ld, hit %ld\n", GetMissFlush(), GetHitFlush());
+#endif
         delete kbpm_hashmap_;
         delete[] TtlList_;
         delete[] TtlEnabledList_;
     }
 
-    void Manifest::TerminateKeyCacheThread(){
-        // Shut down Cache thread
-        key_cache_shutdown_ = true;
-        key_cache_cv_.SignalAll();
-        sem_wait(&key_cache_shutdown_sem_);
-        sem_destroy(&key_cache_shutdown_sem_);
-    }
-
-    void Manifest::CleanUpSnapshot() {
-        SnapshotImpl* snapshot = NULL;
-        SimpleLinkedNode* snapshot_node = NULL;
-        while((snapshot_node = snapshot_simplelist_.newest())) {
-            snapshot = GetSnapshotImpl(snapshot_node);
-            assert(snapshot);
-            delete snapshot;
-#ifdef INSDB_GLOBAL_STATS
-            g_del_snap_cnt++;
-#endif
-        }
-    }
-
-
-    /*
-       Thread unsafe ... call only single context, eq, DB close.
-       */
-    void Manifest::CheckForceFlushSKT(uint16_t worker_id, SKTableDFBuilderInfo *dfb_info) {
-        SKTableMem *skt = GetFirstSKTable();
-        while(skt) {
-            if(skt->GetApproximateDirtyColumnCount() || IsNextSKTableDeleted(skt->GetSKTableSortedListNode())){
-                /* 
-                 * It does not need to aquire read lock(sktdf_update_mu_)
-                 * because this is last WorkerThread which means the skt is not in flushing by the other threads
-                 */
-                if(!skt->GetSKTableDeviceFormatNode()){
-                    skt->LoadSKTableDeviceFormat(this);
-                }
-                do{
-                    printf("[%d :: %s]Last minute flush SKT because of \"%s || %s\" (SKT addr : %p || ID : %d)\n", __LINE__, __func__,skt->GetApproximateDirtyColumnCount() ? "Dirty Columns" : "", IsNextSKTableDeleted(skt->GetSKTableSortedListNode())? "Deleted Next SKT":"", skt, skt->GetSKTableID());
-                    skt->FlushSKTableMem(this, worker_id, dfb_info);
-                }while(skt->GetApproximateDirtyColumnCount() || IsNextSKTableDeleted(skt->GetSKTableSortedListNode()));
-                RemoveFromSKTableMemDirtyCache(skt);
-            } 
-            if(!skt->IsKeyQueueEmpty())
-                abort();
-                    skt = Next(skt);
-        }
-    }
-
-
-    IterScratchPad* Manifest::AllocIterScratchPad(uint32_t size)
-    {
-        return sp_allocator_pool_.GetIterScratchPadAllocator()->Alloc(size);
-    }
-    void Manifest::FreeIterScratchPad(IterScratchPad *sp)
-    {
-        sp->GetAllocator()->Free(sp, 1024/* Maximun free IterScratchPad count */);
-    }
-
-#if 0
-    void Manifest::RefillFreeUserValueCount(uint32_t size){
-        uint64_t refill = free_uservalue_->NeedToRefill();
-        while(refill > size){
-            free_uservalue_->PushNode(new UserValue(size));
-            refill-=size;
-        }
-        return;
-
-    }
-#endif
-
-    UserValue*  Manifest::AllocUserValue(uint32_t size)
-    {
-        return uv_allocator_pool_.GetUVAllocator()->Alloc(size);
-    }
-
-    void Manifest::FreeUserValue(UserValue* uv)
-    {
-        if(!uv->UnPin()){
-            uv->InitPinAndFlag();
-            uv->GetAllocator()->Free(uv);
-        }
-        return;
-    }
-
-    ////////////////////////////////
-
-#if 0
-    void Manifest::RefillFreeUserKeyCount(uint32_t key_size){
-        size_t refill = free_userkey_->NeedToRefill();
-        UserKey *uk = NULL;
-        while(refill){
-            uk = new UserKey(key_size);
-            free_userkey_->PushNode(uk);
-            refill-=uk->GetSize();
-            if(refill < uk->GetSize()) break;
-        }
-    }
-#endif
-
-    UserKey* Manifest::AllocUserKey(uint32_t key_size)
-    {
-        return uk_allocator_pool_.GetUKAllocator()->Alloc(key_size);
-    }
-    void Manifest::FreeUserKey(UserKey* ukey)
-    {
-        ukey->GetAllocator()->Free(ukey);
-    }
-
-    //////////////////////////////
-
-
-    /* 
-     * this is called from WriteBatchInternal::Store()
-     */
-    RequestNode* Manifest::AllocRequestNode()
-    {
-        return request_node_allocator_pool_.GetRequestNodeAllocator()->Alloc();
-    }
-
-    /* Worker Thread calls it after request submission */
-    void Manifest::FreeRequestNode(RequestNode* req_node)
-    {
-        req_node->GetAllocator()->Free(req_node);
-    }
-
-    /* It can be Used fo SKTableDFBuilderInfo & SKTable Device Format loading */
-    /* The size is kMaxSKTableSize */
-    Slice Manifest::AllocSKTableBuffer(uint32_t size)
-    {
-        Slice buf(0);
-        free_skt_buffer_spinlock_.Lock();
-        if(!free_skt_buffer_.empty()){
-            /* Get recently freed node for CPU cache */
-            buf = free_skt_buffer_.back();
-            free_skt_buffer_.pop_back();
-        }
-        free_skt_buffer_spinlock_.Unlock();
-        if(!buf.size()) buf = Slice((char*)malloc(size), size);
-        else if(buf.size() < size) 
-            buf = Slice((char*)realloc(const_cast<char*>(buf.data()), size), size);
-        return buf;
-    }
-
-    void Manifest::FreeSKTableBuffer(Slice &buffer)
-    {
-        assert(buffer.size() <= kMaxSKTableSize);
-        free_skt_buffer_spinlock_.Lock();
-        if(free_skt_buffer_.size()+1 == kFreeBufferSize)
-            free(const_cast<char*>(buffer.data()));
-        else
-            free_skt_buffer_.push_front(buffer);
-        free_skt_buffer_spinlock_.Unlock();
-    }
-
-    void Manifest::CleanupFreeSKTableBuffer() {
-        Slice node(0);
-        while(!free_skt_buffer_.empty()){
-            node = free_skt_buffer_.front();
-            free_skt_buffer_.pop_front();
-            free(const_cast<char*>(node.data()));
-        }
-
-    }
-
+    /////////////////////////////////////////// START: SKTableMem Skiplist ///////////////////////////////////////////
     SKTableMem* Manifest::FindSKTableMem(const Slice& ukey) {
         return sktlist_.SearchLessThanEqual(ukey);
     }
@@ -1420,7 +1336,7 @@ restart_all_workers:
         return sktlist_.Insert(table->GetBeginKeySlice(), table);
     }
 
-    SKTableMem* Manifest::RemoveSKTableMemFromCacheAndSkiplist(SKTableMem* table) {
+    SKTableMem* Manifest::RemoveSKTableMemFromSkiplist(SKTableMem* table) {
 
         /*It can not be deleted by SKTable evictor because the caller, FlushSKTableMem(), has lock */
         /* table->RemoveSKTableCacheNode(); */
@@ -1450,60 +1366,9 @@ restart_all_workers:
     {
         return sktlist_.EstimateCount(key);
     }
+    /////////////////////////////////////////// END  : SKTableMem Skiplist ///////////////////////////////////////////
 
-    SKTableMem* Manifest::GetSKTableMem(SimpleLinkedNode *node){ 
-        return node ? class_container_of(node, SKTableMem, skt_sorted_node_) : NULL; 
-    }
-
-
-    SKTableMem* Manifest::GetLastSKTableInSortedList(){
-        //return skt_sorted_list_.oldest()->GetOwner();
-        skt_sorted_simplelist_lock_.Lock(); 
-        SimpleLinkedNode *node = skt_sorted_simplelist_.oldest();
-        skt_sorted_simplelist_lock_.Unlock();
-        return GetSKTableMem(node);
-    }
-
-    SKTableMem* Manifest::NextSKTableInSortedList(SimpleLinkedNode* skt_node){ 
-        skt_sorted_simplelist_lock_.Lock(); 
-        SimpleLinkedNode *node = skt_sorted_simplelist_.next(skt_node);
-        skt_sorted_simplelist_lock_.Unlock();
-        return GetSKTableMem(node);
-    }
-    bool Manifest::IsNextSKTableDeleted(SimpleLinkedNode* skt_node){ 
-        skt_sorted_simplelist_lock_.Lock(); 
-        SimpleLinkedNode *node = skt_sorted_simplelist_.next(skt_node);
-        skt_sorted_simplelist_lock_.Unlock();
-        SKTableMem* skt = GetSKTableMem(node);
-        return skt ? skt->IsDeletedSKT() : false;
-    }
-    SKTableMem* Manifest::PrevSKTableInSortedList(SimpleLinkedNode* skt_node){ 
-        skt_sorted_simplelist_lock_.Lock(); 
-        SimpleLinkedNode *node = skt_sorted_simplelist_.prev(skt_node);
-        skt_sorted_simplelist_lock_.Unlock();
-        return GetSKTableMem(node);
-    }
-
-    SnapshotImpl* Manifest::GetSnapshotImpl(SimpleLinkedNode *node){ return node ? class_container_of(node, SnapshotImpl, snapshot_node_) : NULL; }
-
-    /**
-      <Manifest storage format>
-      manifest::
-      size(4B)
-      crc(4B)
-      last InSDB sequence(8B)
-      last SKTable sequence(4B)
-      count of SKTable info(4B)
-      count of worker(2B)
-      [SKTable information]
-
-      SKTable information::
-      SKTable ID(4B)
-      size of begin key(var 32)
-      begin user key(var)
-      list of next ikey sequnce number(each var 64) 
-      */
-
+    /////////////////////////////////////////// START: Manifest/InSDB Creation/Recovery/Initializtion/Deletion ///////////////////////////////////////////
     Status Manifest::ReadManifest(std::string* contents) {
         // read manifest data
         Status s;
@@ -1518,11 +1383,22 @@ restart_all_workers:
             return s.NotFound("Manifest does not exist");
         }
         uint32_t mf_size = DecodeFixed32(buff);
+        uint32_t padding_size = (mf_size % kRequestAlignSize) ? (kRequestAlignSize - (mf_size % kRequestAlignSize)) : 0;
+        uint32_t remaining_value_size = 0;
+        if (options_.disable_io_size_check) {
+            remaining_value_size = mf_size + padding_size;
+            if (remaining_value_size > kDeviceRquestMaxSize) {
+                value_size = kDeviceRquestMaxSize;
+                remaining_value_size -= kDeviceRquestMaxSize;
+            } else {
+                value_size = remaining_value_size;
+                remaining_value_size = 0;
+            }
+        }
         uint32_t crc = crc32c::Unmask(DecodeFixed32(buff + MF_OFFSET_CRC));
         contents->resize(0);
         contents->append(buff, value_size);
         /* calc buffer size */
-        uint32_t padding_size = (mf_size % kRequestAlignSize) ? (kRequestAlignSize - (mf_size % kRequestAlignSize)) : 0;
         num_mf = (mf_size + padding_size +  kDeviceRquestMaxSize- 1) / kDeviceRquestMaxSize;
         for (int i = 1; i < num_mf; i++) {
             mf_key.split_seq = i;
@@ -1535,6 +1411,15 @@ restart_all_workers:
                 }
                 delete [] buff;
                 return s.NotFound("Manifest does not exist");
+            }
+            if (options_.disable_io_size_check) {
+                if (remaining_value_size > kDeviceRquestMaxSize) {
+                    value_size = kDeviceRquestMaxSize;
+                    remaining_value_size -= kDeviceRquestMaxSize;
+                } else {
+                    value_size = remaining_value_size;
+                    remaining_value_size = 0;
+                }
             }
             contents->append(buff, value_size);
         }
@@ -1594,6 +1479,7 @@ restart_all_workers:
         }
     }
 
+    /* Load Manifest from device and then initialize the class Manifest*/
     Status Manifest::InitManifest() {
         Status s;
         std::string mf_data;
@@ -1611,7 +1497,8 @@ restart_all_workers:
         uint64_t* next_seq = new uint64_t[worker_count];
         uint32_t* key_count= new uint32_t[kMaxColumnCount];
         uint64_t skt_id = 0;
-        uint64_t sktdf_size = 0;
+        uint32_t keymap_node_size = 0;
+        uint32_t keymap_hash_size = 0;
         uint32_t offset = MF_OFFSET_NEXT_WORKER_INFO;
         uint32_t begin_key_size = 0;
         /* calc buffer size */
@@ -1637,7 +1524,9 @@ restart_all_workers:
         for (uint32_t i = 0; i < sktinfo_count; i++) { //Parseing SKTable infomation.
             skt_id = DecodeFixed32(parse.data());
             parse.remove_prefix(4);
-            sktdf_size = DecodeFixed32(parse.data());
+            keymap_node_size = DecodeFixed32(parse.data());
+            parse.remove_prefix(4);
+            keymap_hash_size = DecodeFixed32(parse.data());
             parse.remove_prefix(4);
             skt_id &= ~MF_SKT_ID_MASK;
             if(!(GetVarint32(&parse, &begin_key_size)))
@@ -1647,7 +1536,7 @@ restart_all_workers:
             //uint16_t col_info_size = DecodeFixed16(parse.data());
             //parse.remove_prefix(2);
             //Slice col_slice(parse.data(), col_info_size);
-            skt = new SKTableMem(this, begin_key, skt_id, sktdf_size); //parseing SKTable
+            skt = new SKTableMem(this, begin_key, skt_id, keymap_node_size, keymap_hash_size); //parseing SKTable
             //parse.remove_prefix(col_info_size);
 #ifdef INSDB_GLOBAL_STATS
             g_new_skt_cnt++;
@@ -1657,7 +1546,9 @@ restart_all_workers:
             if ( (rnd.Next()%sktinfo_count) < cacheable_skt_cnt )
                 skt->PrefetchSKTable(this, false/*To clean cache*/);
         }
-
+#ifdef CODE_TRACE
+        printf("[%d :: %s]InitManifest current sequence number %ld\n", __LINE__, __func__, GetLastSequenceNumber());
+#endif
         delete [] next_seq;
         delete [] key_count;
         return s.OK();
@@ -1700,7 +1591,10 @@ restart_all_workers:
              * Event if no explict update on sktable, transaction ID is changed means
              * there is possibility that uncompleted transation is changed to completed staus.
              */
-            if(skt->GetApproximateDirtyColumnCount() ){
+            if (skt->IsKeymapLoaded()) {
+                skt->DeleteSKTDeviceFormatCache(this);
+            }
+            if(skt->KeyQueueKeyCount() ){
                 abort();
             } else if(IsNextSKTableDeleted(skt->GetSKTableSortedListNode())){
                 abort();
@@ -1721,11 +1615,12 @@ restart_all_workers:
             skt_id = skt->GetSKTableID();
             assert(!skt->IsFetchInProgress());
             assert(!IsNextSKTableDeleted(skt->GetSKTableSortedListNode()));
-            assert(!skt->GetApproximateDirtyColumnCount());
+            assert(!skt->KeyQueueKeyCount());
             assert(!skt->IsDeletedSKT());
             assert(skt_id != 0);
             PutFixed32(&contents, skt_id);
-            PutFixed32(&contents, skt->GetSKTDFNodeSize());
+            PutFixed32(&contents, skt->GetKeymapNodeSize());
+            PutFixed32(&contents, skt->GetKeymapHashSize());
             KeySlice beginkey = skt->GetBeginKeySlice();
             PutVarint32(&contents, beginkey.size());
             contents.append(beginkey.data(), beginkey.size());
@@ -1748,6 +1643,9 @@ restart_all_workers:
                 num_sktable_count, num_fetched);
 #endif
 
+#ifdef CODE_TRACE
+        printf(" BuildManifest current sequence number %ld\n", GetLastSequenceNumber());
+#endif
         EncodeFixed64(&contents[MF_OFFSET_LAST_IKEY_SEQ], next_InSDBKey_seq_num_);
         EncodeFixed64(&contents[MF_OFFSET_LAST_SEQ], sequence_number_);
         EncodeFixed32(&contents[MF_OFFSET_LAST_SKT_SEQ], next_sktable_id_);
@@ -1848,8 +1746,6 @@ restart_all_workers:
             return s.NotSupported("column count mismatched: ", std::to_string(super_skt.max_column_count));
         if (super_skt.max_request_size != kMaxRequestSize) { 
             kMaxRequestSize = super_skt.max_request_size;
-            //kMinUpdateCntForTableFlush = kMaxRequestSize*1024/4096;
-            //kUpdateCntForForceTableFlush = kMinUpdateCntForTableFlush << 1;
         }
         if (kMaxRequestPerKeyBlock != super_skt.max_req_per_kb) {
             fprintf(stderr, "Not matche Reqeust per KeyBlock db %d  superblock %d", kMaxRequestPerKeyBlock, super_skt.max_req_per_kb);
@@ -1898,62 +1794,51 @@ restart_all_workers:
         return Status::OK();
     }
 
-    uint32_t Manifest::BuildFirstSKTable(int32_t skt_id) {
+    Status Manifest::BuildFirstSKTable(int32_t skt_id, uint32_t &io_size, uint32_t &hash_data_size) {
         Status s;
+
         std::string contents;
-        contents.resize(0);
+        // FiX me  -- need to add option.
+        Keymap* keymap = new Keymap(KeySlice(0), GetComparator());
+        Arena* arena = new Arena(4096);
+        keymap->InitArena(arena, options_.use_compact_key);
+        keymap->InsertArena(arena);
+         
+        std::string hash_data;
+        keymap->BuildHashMapData(hash_data);
+        hash_data_size = hash_data.size();
+        char* data = const_cast<char*>(hash_data.data());
+        uint32_t crc = crc32c::Value(data + 4 /*crc 4B*/, hash_data_size -4/*crc 4B */);
+        *((uint32_t*)data) = crc32c::Mask(crc);
+        InSDBKey hashkey = GetMetaKey(GetDBHash(), kHashMap, skt_id);
+        Slice hash_value(data, hash_data_size);
+        s = env_->Put(hashkey, hash_value);
+        if (!s.ok()) return s;
 
-        contents.append(SKTDF_BEGIN_KEY_OFFSET, (char)0); /* fill zero for 40 byte skt info 1 */
-
-#if 0
-        /* No store zerokey */
-        KeySlice zerokey(0);
-        PutFixed16(&contents, 0);/* Begin key prev offset diff */
-        PutFixed16(&contents, 7);/* Begin key next offset diff : 7 = prev/next offset diff(4) + shared size(1) + non_shared size(1) + nr column(1)*/ 
-        PutVarint16(&contents, (uint16_t)0); /* share size */
-        PutVarint16(&contents, (uint16_t)0); /* non-shared size */
-        contents.append(1, (char)0);
-#endif
-        uint32_t skt_info_2_offset = contents.size();
-
-        /* skt info 2 */
-        contents.append(2, (char)0); /* decording base key size space */
-        EncodeFixed16(const_cast<char*>(contents.data()) +  skt_info_2_offset, 0); 
-#if 0
-        uint32_t key_hash_offset_start = contents.size();
-        contents.append(8, (char)0); /* space for hash offset */
-        const uint64_t hash_offset = ((uint64_t)zerokey.GetHashValue() << SKTDF_HASH_SHIFT) | (uint64_t)SKTDF_BEGIN_KEY_OFFSET;   
-        EncodeFixed64(const_cast<char*>(contents.data()) + key_hash_offset_start, hash_offset);
-#endif
-
-        /* fill skt info 1 */
-        EncodeFixed32(const_cast<char*>(contents.data()) + SKTDF_NR_KEY_OFFSET, (uint32_t)0/*No key exists*/);
-        EncodeFixed32(const_cast<char*>(contents.data()) + SKTDF_INFO_2_OFFSET, skt_info_2_offset);
-        EncodeFixed32(const_cast<char*>(contents.data()) + SKTDF_COMP_START_OFFSET, skt_info_2_offset);
-        EncodeFixed32(const_cast<char*>(contents.data()) + SKTDF_SKT_SIZE_OFFSET, contents.size() - SKTDF_BEGIN_KEY_OFFSET/*No begin key exists*/);
-        EncodeFixed64(const_cast<char*>(contents.data()) + SKTDF_LARGEST_SEQ_NUM, GenerateSequenceNumber());
-        EncodeFixed32(const_cast<char*>(contents.data()) + SKTDF_NEXT_ID_OFFSET, 0);
-        EncodeFixed32(const_cast<char*>(contents.data()) + SKTDF_PREALLOC_ID_OFFSET, GenerateNextSKTableID());
-
-        /* fill crc */
-        uint32_t crc = crc32c::Value(const_cast<char*>(contents.data())+SKTDF_NR_KEY_OFFSET, SKTDF_BEGIN_KEY_OFFSET-SKTDF_NR_KEY_OFFSET);
-        EncodeFixed32(const_cast<char*>((contents.data())+SKTDF_CRC_2_OFFSET), crc32c::Mask(crc));
-
-        crc = crc32c::Value(const_cast<char*>(contents.data())+SKTDF_CRC_2_OFFSET, contents.size()-SKTDF_CRC_2_OFFSET);
-        EncodeFixed32(const_cast<char*>(contents.data())+SKTDF_CRC_1_OFFSET, crc32c::Mask(crc));
-
-        if (contents.size() % kRequestAlignSize) {
-            uint32_t padding_size = kRequestAlignSize - (contents.size() % kRequestAlignSize);
-            contents.append(padding_size, 0xff);
-        }
+        uint32_t keymap_size = keymap->GetAllocatedSize();
+        uint32_t peding_size = ((keymap_size % kRequestAlignSize) ? (kRequestAlignSize - (keymap_size % kRequestAlignSize)) : 0); /* 64 bit padding */
+        if (keymap_size + peding_size > 4096) keymap_size = 4096;
+        else keymap_size += peding_size;
+        data = arena->GetBaseAddr();
+        KEYMAP_HDR *hdr = (KEYMAP_HDR*)data;
+        hdr->skt_id = skt_id;
+        hdr->prealloc_skt_id = GenerateNextSKTableID();
+        hdr->next_skt_id = 0;
+        hdr->start_colinfo = 0;
+        hdr->last_colinfo = 0;
+        hdr->keymap_size = keymap_size - sizeof(KEYMAP_HDR); /* exclude KEMAP_HDR */
+        /* calc CRC and set */
+        crc = crc32c::Value(data + 4 /*crc 4B*/, hdr->keymap_size + sizeof(KEYMAP_HDR) -4/*crc 4B*/);
+        hdr->crc = crc32c::Mask(crc);
         InSDBKey superkey = GetMetaKey(dbhash_, kSKTable, skt_id);
-        Slice value(contents);
+        Slice value(data, keymap_size);
+        io_size = keymap_size;
         s = env_->Put(superkey, value);
         if (!s.ok()){
             printf("[%d :: %s]fail to write first SKTable\n", __LINE__, __func__);
-            abort();
         }
-        return value.size();
+        delete keymap;
+        return s;
     }
 
     Status Manifest::CreateNewInSDB() {
@@ -1963,13 +1848,16 @@ restart_all_workers:
         if (!s.ok()) return s;
         KeySlice zerokey(0);
         uint32_t first_skt_id = 1;
+        uint32_t io_size = 0;
+        uint32_t hash_data_size = 0;
         SetNextSKTableID(first_skt_id);
-        uint32_t sktdf_size = BuildFirstSKTable(first_skt_id);
+        s = BuildFirstSKTable(first_skt_id, io_size, hash_data_size);
+        if (!s.ok()) return s;
         Slice col_slice(0);
 #ifdef CODE_TRACE
         printf("[%d :: %s]sktdf_size : %d\n", __LINE__, __func__,sktdf_size);
 #endif
-        SKTableMem* first_skt = new SKTableMem(this, zerokey, first_skt_id, sktdf_size);
+        SKTableMem* first_skt = new SKTableMem(this, zerokey, first_skt_id, io_size, hash_data_size);
 
 
 #ifdef CODE_TRACE
@@ -1979,26 +1867,13 @@ restart_all_workers:
         g_new_skt_cnt++;
 #endif 
         first_skt->LoadSKTableDeviceFormat(this);
-#ifdef CODE_TRACE
-        {
-            SKTDFCacheNode* skt_df_cache = first_skt->GetSKTableDeviceFormatNode();
-            char* device_format = skt_df_cache->GetDeviceFormatData();
-            uint32_t comp_data_start = DecodeFixed32(device_format+SKTDF_COMP_START_OFFSET);
-            uint32_t skt_data_size = DecodeFixed32(device_format + SKTDF_SKT_SIZE_OFFSET);
-            printf("[%d :: %s]comp_data_start : %d, skt_data_size : %d, key count: %d\n", __LINE__, __func__,comp_data_start, skt_data_size, skt_df_cache->GetKeyCount());
-        }
-#endif
+
         /*No lock because there is no other threads*/
 #ifdef CODE_TRACE
         printf("[%d :: %s] Set Fetch for first SKT\n", __LINE__, __func__);
 #endif
-#if 0
-        first_skt->SetForceFlush();
-        SKTableDFBuilderInfo dfb_info(this);
-        first_skt->FlushSKTableMem(this, 0, &dfb_info);
-#endif
         /* There is no key stored yet. A new key will be stored after creating the 1st SKTable */
-        InsertSKTableMemCache(first_skt, kCleanSKTCache/*kDirtySKTCache*/);
+        InsertSKTableMemCache(first_skt, kCleanSKTCache/*kDirtySKTCache*/, SKTableMem::flags_in_clean_cache);
         return Status::OK();
     }
 
@@ -2006,29 +1881,128 @@ restart_all_workers:
 #if 1 //New(packing) implementation
     int Manifest::ReadSKTableMeta(char* buffer, InSDBMetaType type, uint32_t skt_id, GetType req_type, int buffer_size) {
         int value_size = buffer_size;
-        Status s = env_->Get(GetMetaKey(dbhash_, type, skt_id), buffer, &value_size, req_type);
+        bool from_readahead = false;
+        Status s = env_->Get(GetMetaKey(dbhash_, type, skt_id), buffer, &value_size, req_type, IsIOSizeCheckDisabled()?Env::GetFlag_NoReturnedSize:0, &from_readahead);
         if (!s.ok()){
-            return 0; 
+            return 0;
         }
-        if(value_size == 0 && req_type == kNonblokcingRead) return 0; 
+        if(!from_readahead && req_type == kNonblokcingRead) return 0;
+
+#ifdef TRACE_READ_IO
+        if (req_type == kSyncGet) {
+            g_sktable_sync ++;
+            if (from_readahead)
+                g_sktable_sync_hit++;
+        }
+#endif
+
+
 #if 0
         if(req_type == kNonblokcingRead)
             printf("[ %d : %s ] Success SKT prefetch mechanism\n", __LINE__, __func__);
 #endif
-        if (type == kSuperSKTable) { 
-            if(crc32c::Unmask(DecodeFixed32(buffer)) != crc32c::Value(buffer + sizeof(uint32_t), value_size - sizeof(uint32_t))){
-                fprintf(stderr, "[ %d : %s ]sktable size : %d(crc : actual = 0x%x : 0x%x) %s \n", __LINE__, __func__, value_size, crc32c::Unmask(DecodeFixed32(buffer)), crc32c::Value(buffer + sizeof(uint32_t), value_size - sizeof(uint32_t)), type == kSuperSKTable?"Super SKTable" : "Normal SKTable");
-                fprintf(stderr, "super sktable crs is mismatch\n");
-                return 0;
-            }
-        }/*else(type == kSKTable){ SKTDFCacheNode will check the CRC } */
+        if (!options_.disable_io_size_check) {
+            if (type == kSuperSKTable) {
+                    if(crc32c::Unmask(DecodeFixed32(buffer)) != crc32c::Value(buffer + sizeof(uint32_t), value_size - sizeof(uint32_t))){
+                        fprintf(stderr, "[ %d : %s ]sktable size : %d(crc : actual = 0x%x : 0x%x) %s \n", __LINE__, __func__, value_size, crc32c::Unmask(DecodeFixed32(buffer)), crc32c::Value(buffer + sizeof(uint32_t), value_size - sizeof(uint32_t)), type == kSuperSKTable?"Super SKTable" : "Normal SKTable");
+                        fprintf(stderr, "super sktable crs is mismatch\n");
+                        return 0;
+                    }
+            }/*else(type == kSKTable){ SKTDFCacheNode will check the CRC } */
+        } else {
+            // TODO: compare with size info in SKTable
+            value_size = buffer_size;
+        }
         return value_size;
     }
 #endif
 
+    Arena* Manifest::LoadKeymapFromDevice(uint32_t skt_id, uint32_t keymap_size, uint32_t hash_data_size, KeyMapHashMap*& hashmap,  GetType type) {
+        /*
+         * Asummption:
+         * 1. Compressed Data will be saved as below format.
+         * [KEYMAP_HDR| compressed data=(from orig src + KEYMAP_HDR to end )] 
+         * - compressing start from src + sizeof(KEYMAP_HDR)
+         * 2. keymap_hdr->keymap_size = total datasize - sizeof(KEYMAP_HDR);
+         */
+        std::string hash_data;
+        hash_data.resize(hash_data_size);
+        char* hash_buf = const_cast<char*>(hash_data.data());
+        int hash_size = ReadSKTableMeta(hash_buf, kHashMap, skt_id, type, hash_data_size);
+        if (hash_size) { 
+            if (hash_size != hash_data_size) {
+                printf("[%d :: %s] The SKT Hash size is different to recorded size in SKTableMem(actual size : %d || given size : %d)\n", __LINE__, __func__,
+                        hash_size, hash_data_size);
+                abort();
+            }
+            uint32_t orig_crc = crc32c::Unmask(*(uint32_t *)hash_buf); //get crc
+            char* crc_buffer = hash_buf + 4; /* crc(4B) */
+            uint32_t actual_crc = crc32c::Value(crc_buffer, hash_data_size - 4/*crc*/);
+            if (orig_crc != actual_crc) {
+                printf("[%d :: %s] crc mismatch chek this orig(%d) and actual(%d)\n", __LINE__, __func__, orig_crc, actual_crc);
+                abort();
+            }
+            hashmap = BuildKeymapHashmapWithString(hash_data);
+        }
+
+
+        Arena *arena = nullptr;
+        Slice io_buffer = AllocSKTableBuffer(keymap_size);  // It will be freed after submitting SKTable.
+        if(io_buffer.size() < keymap_size) abort();
+        char* buf = const_cast<char*>(io_buffer.data()); /* get bufer */
+        int size = ReadSKTableMeta(buf, kSKTable, skt_id, type, keymap_size);
+        if(size){ 
+            KEYMAP_HDR *keymap_hdr = (KEYMAP_HDR*)buf;
+            /* check size */
+            if(keymap_size != size){
+                printf("[%d :: %s] The SKTDF size is different to recorded size in SKTableMem(actual size : %d || given size : %d)\n", __LINE__, __func__, size, keymap_size);
+                abort();
+            }
+            /* check crc */
+            uint32_t orig_crc = crc32c::Unmask(keymap_hdr->crc); //get crc
+            char* crc_buffer = buf + 4; /* crc(4B) */
+            uint32_t data_size =  (keymap_hdr->keymap_size & KEYMAP_SIZE_MASK);
+            uint32_t total_data_size =  (keymap_hdr->keymap_size & KEYMAP_SIZE_MASK) + sizeof(KEYMAP_HDR);
+            uint32_t actual_crc = crc32c::Value(crc_buffer, total_data_size-4/*crc*/);
+            if (orig_crc != actual_crc) {
+                printf("[%d :: %s] crc mismatch chek this orig(%d) and actual(%d)\n", __LINE__, __func__, orig_crc, actual_crc);
+                abort();
+            } 
+            if (keymap_hdr->keymap_size & KEYMAP_COMPRESS) {
+                /* It was compressed */
+                size_t ulength = 0;
+                char* table_buffer = buf + sizeof(KEYMAP_HDR); /* skip KEYMAP_HDR */
+                if (!port::Snappy_GetUncompressedLength(table_buffer, data_size, &ulength)) {
+                    printf("[%d :: %s] corrupted compressed data\n", __LINE__, __func__);
+                    abort();
+                } else {
+                    uint32_t alloc_size = sizeof(KEYMAP_HDR) + ulength;
+                    alloc_size += ((alloc_size % 4096) ? (4096 - (alloc_size % 4096)):0); /* 4KB base padding size */
+                    arena = new Arena(alloc_size);
+                    char *dest = arena->GetBaseAddr();
+                    if (!port::Snappy_Uncompress(table_buffer, data_size, dest + sizeof(KEYMAP_HDR))) {
+                        printf("[%d :: %s] corrupted compressed data\n", __LINE__, __func__);
+                        abort();
+                    }
+                    memcpy(dest, buf, sizeof(KEYMAP_HDR));
+                }
+            }  else {
+                uint32_t alloc_size = total_data_size + ((total_data_size % 4096) ? (4096 - (total_data_size % 4096)):0); /* 4KB base padding size */
+                arena = new Arena(alloc_size);
+                char *dest = arena->GetBaseAddr();
+                memcpy(dest, buf, total_data_size); 
+            } 
+        }
+        FreeSKTableBuffer(io_buffer);  // It will be freed after submitting SKTable.
+        return arena;
+    }
+
     Status Manifest::ReadAheadSKTableMeta(InSDBMetaType type, uint32_t skt_id, int buffer_size) {
         int value_size = buffer_size;
         InSDBKey skt_key = GetMetaKey(dbhash_, type, skt_id);
+#ifdef TRACE_READ_IO
+        g_sktable_async++;
+#endif
         return env_->Get(skt_key, NULL, &value_size, kReadahead);
     }
 
@@ -2055,25 +2029,13 @@ restart_all_workers:
             delete [] buff;
             return s;
         }
-        int comp_offset = DecodeFixed32(buff + SKTDF_COMP_START_OFFSET);
-        if(comp_offset >= value_size) {
-            delete [] buff;
-            return Status::Corruption("invalid compress offset");
-        }
-
-        // beginkey CRC check
-        uint32_t beginkey_crc = crc32c::Unmask(DecodeFixed32(buff + SKTDF_CRC_2_OFFSET));
-        uint32_t new_begin_key_crc = crc32c::Value(buff+SKTDF_NR_KEY_OFFSET, comp_offset-SKTDF_NR_KEY_OFFSET);
-        if(beginkey_crc != new_begin_key_crc) {
-            delete [] buff;
-            printf("begin key crc mismatch. stored %x calc %d\n", beginkey_crc, new_begin_key_crc);
-            return Status::Corruption("begin key crc mismstch");
-        }
-
+#ifdef TRACE_READ_IO
+        g_sktable_sync++;
+#endif
+        KEYMAP_HDR *hdr = (KEYMAP_HDR*)buff;
         skt_info->skt_id = skt_id;
-        skt_info->next_skt_id = DecodeFixed32(buff + SKTDF_NEXT_ID_OFFSET);
-        skt_info->prealloc_skt_id = DecodeFixed32(buff + SKTDF_PREALLOC_ID_OFFSET);
-        skt_info->largest_seq_num = DecodeFixed64(buff + SKTDF_LARGEST_SEQ_NUM);
+        skt_info->next_skt_id = hdr->next_skt_id;
+        skt_info->prealloc_skt_id = hdr->prealloc_skt_id;
         delete [] buff;
         return s.OK();
     }
@@ -2109,207 +2071,8 @@ restart_all_workers:
         // return IO error
         return s;
     }
-    void Manifest::DeleteSnapshot(Snapshot *handle) {
-        SnapshotImpl* snap = reinterpret_cast<SnapshotImpl*>(handle);
-        assert(snap);
-        if(__DisconnectSnapshot(snap)){
-            delete snap; 
-        }
-    }
 
-
-
-    SnapshotImpl* Manifest::__CreateSnapshot() {
-        SnapshotImpl* snapshot = NULL;
-        SimpleLinkedNode* snapshot_node = NULL;
-        snapshot_simplelist_lock_.Lock();
-        if ((snapshot_node = snapshot_simplelist_.newest())) {
-            snapshot = GetSnapshotImpl(snapshot_node);
-            assert(snapshot);
-            if (snapshot->GetCurrentSequenceNumber() == GetLastSequenceNumber()) {
-                snapshot->IncRefCount();
-                //RefSnapshot(snap);
-                snapshot_simplelist_lock_.Unlock();
-                return snapshot;
-            }
-        }
-        snapshot = new SnapshotImpl(this, GetLastSequenceNumber(), env_->NowSecond());
-#ifdef INSDB_GLOBAL_STATS
-        g_new_snap_cnt++;
-#endif
-        assert(snapshot);
-        snapshot_node = snapshot->GetSnapshotListNode();
-        snapshot->IncRefCount();
-        //RefSnapshot(snap);
-        snapshot_simplelist_.InsertFront(snapshot_node);
-        snapshot_simplelist_lock_.Unlock();
-
-        return snapshot;
-    }
-
-    bool Manifest::__DisconnectSnapshot(SnapshotImpl* snapshot) {
-        snapshot_simplelist_lock_.Lock();
-        if (snapshot->DecRefCount() <= 0 && snapshot->GetIterCount() == 0) {
-            snapshot_simplelist_.Delete(snapshot->GetSnapshotListNode());
-            snapshot_simplelist_lock_.Unlock();
-            return true;
-        }
-        snapshot_simplelist_lock_.Unlock();
-        return false;
-    }
-
-    Snapshot* Manifest::CreateSnapshot() {
-        return reinterpret_cast<Snapshot*>(__CreateSnapshot());
-    }
-
-    Iterator* Manifest::CreateNewIterator(const ReadOptions& options, uint16_t col_id) {
-        nr_iterator_.fetch_add(1, std::memory_order_relaxed);
-        if (options.snapshot) {
-            Snapshot* snapshot = const_cast<Snapshot*>(options.snapshot);
-            SnapshotImpl* snap = reinterpret_cast<SnapshotImpl*>(snapshot);
-            snap->IncRefCount();
-            //RefSnapshot(snap);
-            return snap->CreateNewIterator(col_id);
-        }
-        SnapshotImpl* snap = __CreateSnapshot();
-        assert(snap);
-        return snap->CreateNewIterator(col_id);
-    }
-
-    void Manifest::DeleteIterator(Iterator *iter) {
-        delete iter;
-    }
-
-    Status Manifest::CleanUpSKTable(int skt_id, DeleteInSDBCtx *Delctx) {
-        memset(Delctx, 0, sizeof(*Delctx));
-        return Status::OK();
-    }
-
-    void Manifest::DeleteSKTable(void *arg) {
-        Status s;
-        DeleteSKTableCtx *delctx = reinterpret_cast<DeleteSKTableCtx*>(arg);
-        DeleteInSDBCtx d_ctx;
-        s = Env::Default()->Flush(kWriteFlush);
-        if(!s.ok()){
-            printf("[%d :: %s]Flush Fail \n", __LINE__, __func__);
-            abort();
-        }
-        for (uint32_t i = 0; i < delctx->num_skt; i++) {
-            s = CleanUpSKTable(delctx->skt_ids[i], &d_ctx);  //cleanup sktable 
-            if (s.ok()) {
-                CleanupPreallocSKTable(d_ctx.prealloc_skt_id, d_ctx.next_skt_id); //remove prealloc
-            }
-        }
-        delctx->state->mu.Lock();
-        delctx->state->num_running -= 1;
-        delctx->state->mu.Unlock();
-        return;
-    }
-
-    Status Manifest::DeleteInSDBWithManifest(uint16_t column_count) {
-        Status s;
-        int sleep_microsecond = 10000; //10ms
-        uint32_t max_thread = 16;
-        std::string mf_data;
-        s = ReadManifest(&mf_data);
-        if (!s.ok()) return s;
-        uint32_t *skt_ids = NULL;
-        const char* data = mf_data.data();
-        uint16_t mf_size = DecodeFixed32(data);
-#if 0
-        uint64_t insdbkey_seq_num = DecodeFixed64(data + MF_OFFSET_LAST_IKEY_SEQ);
-        uint64_t seq_num = DecodeFixed64(data + MF_OFFSET_LAST_SEQ);
-        uint32_t last_sktable_id = DecodeFixed32(data + MF_OFFSET_LAST_SKT_SEQ);
-#endif
-        uint32_t sktinfo_count = DecodeFixed32(data + MF_OFFSET_NUM_SKT_INFO);
-        int worker_count = DecodeFixed32(data + MF_OFFSET_NUM_WORKER);
-        uint64_t skt_id = 0;
-        uint32_t offset = MF_OFFSET_NEXT_WORKER_INFO;
-
-        uint32_t padding_size = (mf_size % kRequestAlignSize) ? (kRequestAlignSize - (mf_size % kRequestAlignSize)) : 0;
-        uint16_t num_mf = (mf_size + padding_size +  kDeviceRquestMaxSize- 1) / kDeviceRquestMaxSize;
-
-        Slice parse(mf_data);
-        parse.remove_prefix(offset);
-        assert(worker_count);
-        for (int i = 0; i < worker_count; i++) {
-            DecodeFixed64(parse.data());
-            parse.remove_prefix(8);
-        }
-        /* get skt_id */
-        if (sktinfo_count) {
-            uint32_t key_size = 0;
-            uint32_t sktdf_size = 0;
-            skt_ids = new uint32_t[sktinfo_count];
-            for (uint32_t i = 0; i < sktinfo_count; i++) { //Parseing SKTable infomation.
-                skt_id = DecodeFixed32(parse.data());
-                parse.remove_prefix(4);
-                skt_id &= ~MF_SKT_ID_MASK;
-                skt_ids[i] = skt_id;
-                sktdf_size = DecodeFixed32(parse.data());
-                parse.remove_prefix(4);
-                if(!GetVarint32(&parse, &key_size))
-                    port::Crash(__FILE__,__LINE__);
-                parse.remove_prefix(key_size);
-                uint16_t col_info_size = DecodeFixed16(parse.data());
-                parse.remove_prefix(2);
-                parse.remove_prefix(col_info_size);
-            }
-
-            uint32_t thread_count = (sktinfo_count > max_thread) ? max_thread : sktinfo_count;
-            uint32_t skt_count = sktinfo_count / thread_count;
-            uint32_t mod_remains = sktinfo_count % thread_count;
-            InSDBThreadsState state;
-            state.num_running = thread_count;
-            DeleteSKTableCtx *delctxs = new DeleteSKTableCtx[thread_count];
-            uint32_t remains = sktinfo_count;
-            uint32_t req = 0;
-            uint32_t index = 0;
-            for (uint32_t i = 0; i < thread_count; i++) {
-                req = (remains > skt_count) ? skt_count : remains;
-                if (mod_remains && i < mod_remains) req++;
-                delctxs[i].mf = this;
-                delctxs[i].state = &state;
-                delctxs[i].num_skt = req; 
-                delctxs[i].skt_ids = &skt_ids[index];
-                env_->StartThread(Manifest::DeleteSKTableWrapper, (void *)&delctxs[i]);
-                index += req;
-                remains -= req;
-            }
-            while(1) {
-                state.mu.Lock();
-                int num = state.num_running;
-                state.mu.Unlock();
-                if (num == 0) {
-                    break;
-                }
-                env_->SleepForMicroseconds(sleep_microsecond);
-            }
-            for (int i = skt_count -1; i >= 0; i--) {
-                DeleteSKTableMeta(kSKTable, skt_ids[i]); // remove sktale
-            }
-            delete [] delctxs;
-            delete [] skt_ids;
-        }
-        InSDBKey mf_key = GetMetaKey(dbhash_, kManifest, 0);
-        for (int i = 0; i < num_mf; i++) {
-            mf_key.split_seq = i;
-            env_->Delete(mf_key);
-        }
-        DeleteSKTableMeta(kSuperSKTable, 0); //remove super sktable
-        return s.OK();
-    }
-
-    class InSDBKeyCompare {
-        public:
-            bool operator() (const InSDBKey &lhs, const InSDBKey &rhs) const {
-                if (lhs.type != rhs.type) return lhs.type < rhs.type;
-                if (lhs.split_seq != rhs.split_seq) return lhs.split_seq < rhs.split_seq;
-                if (lhs.seq != rhs.seq) return lhs.seq < rhs.seq;
-                return false;
-            }
-    };
-#if 0
+    #if 0
     Status Manifest::DeleteInSDBWithIter() {
         Status s;
         unsigned char iter_handle = 0;
@@ -2419,62 +2182,62 @@ exit:
         char *buffer = new char[1024*32];
         std::set<InSDBKey, InSDBKeyCompare> keyslist;
         assert(buffer);
-        s = env_->IterReq(0xffffffff, dbhash_, &iter_handle, true);
-        if (!s.ok()) goto exit;
-        /* iter read */
-        while(1) {
-            iter_buff_size = 1024*32;
-            s = env_->IterRead(buffer, &iter_buff_size, iter_handle);
-            if (s.ok()) {
-                total_iter_read ++;
-                if (!iter_buff_size) continue; /* iterator can report 0 size length */
-#ifdef NEW_GENERIC_FIRMWARE
-                char *data_buff = buffer;
-                uint32_t key_size = 0;
-                /* read key count */
-                uint32_t key_count = *((uint32_t *)data_buff);
-                iter_buff_size -= sizeof(uint32_t);
-                data_buff += sizeof(uint32_t);
-                for (uint32_t i = 0; i < key_count; i++) {
-                    if (iter_buff_size < (int)sizeof(uint32_t)) {
-                        printf("check Firmware : unexpected buffer size %s:%d\n", __FILE__, __LINE__);
-                        goto close_exit;
-                    }
-                    /* read key size */
-                    key_size = *((uint32_t *)data_buff);
+        for (int dev_idx = 0; dev_idx < options_.kv_ssd.size(); dev_idx++) {
+            s = env_->IterReq(0xffffffff, dbhash_, &iter_handle, dev_idx, true);
+            if (!s.ok()) goto exit;
+            /* iter read */
+            while(1) {
+                iter_buff_size = 1024*32;
+                s = env_->IterRead(buffer, &iter_buff_size, iter_handle, dev_idx);
+                if (s.ok()) {
+                    total_iter_read ++;
+                    if (!iter_buff_size) continue; /* iterator can report 0 size length */
+    #ifdef NEW_GENERIC_FIRMWARE
+                    char *data_buff = buffer;
+                    uint32_t key_size = 0;
+                    /* read key count */
+                    uint32_t key_count = *((uint32_t *)data_buff);
                     iter_buff_size -= sizeof(uint32_t);
                     data_buff += sizeof(uint32_t);
+                    for (uint32_t i = 0; i < key_count; i++) {
+                        if (iter_buff_size < (int)sizeof(uint32_t)) {
+                            printf("check Firmware : unexpected buffer size %s:%d\n", __FILE__, __LINE__);
+                            goto close_exit;
+                        }
+                        /* read key size */
+                        key_size = *((uint32_t *)data_buff);
+                        iter_buff_size -= sizeof(uint32_t);
+                        data_buff += sizeof(uint32_t);
 
-                    if (key_size != sizeof(InSDBKey)) {
-                        printf("check Firmware : unexpected buffer size %s:%d\n", __FILE__, __LINE__);
-                        goto close_exit;
+                        if (key_size != sizeof(InSDBKey)) {
+                            printf("check Firmware : unexpected buffer size %s:%d\n", __FILE__, __LINE__);
+                            goto close_exit;
+                        }
+                        if (key_size >= 256) {
+                            printf("check Firmware : unexpected buffer size %s:%d\n", __FILE__, __LINE__);
+                            goto close_exit;
+                        }
+                        keyslist.insert(*((InSDBKey*)data_buff));
+                        iter_buff_size -= sizeof(InSDBKey);
+                        data_buff += sizeof(InSDBKey);
                     }
-                    if (key_size >= 256) {
-                        printf("check Firmware : unexpected buffer size %s:%d\n", __FILE__, __LINE__);
-                        goto close_exit;
-                    }
-                    keyslist.insert(*((InSDBKey*)data_buff));
-                    iter_buff_size -= sizeof(InSDBKey);
-                    data_buff += sizeof(InSDBKey); 
-                }
-#else
-                count = iter_buff_size/16;
-                key_array = (InSDBKey*)buffer;
-                keyslist.insert(key_array, key_array + count);
-#endif
-            } else break;
-        }
-        total_keys_found = keyslist.size();
+    #else
+                    count = iter_buff_size/16;
+                    key_array = (InSDBKey*)buffer;
+                    keyslist.insert(key_array, key_array + count);
+    #endif
+                } else break;
+            }
+            total_keys_found = keyslist.size();
 close_exit:
-        env_->IterReq(0xffffffff, dbhash_, &iter_handle, false);
-        if (total_keys_found) {
+            env_->IterReq(0xffffffff, dbhash_, &iter_handle, dev_idx, false);
             for (auto it = keyslist.begin(); it != keyslist.end(); ++it) {
                 //printf("%dth deleted entry db_id(%u) type(%d) split_seq(%d) seq(%lu)\n",
                 //        count, (*it).db_id, (*it).type, (*it).split_seq, (*it).seq);
                 env_->Delete(*it);
                 //count++;
             }
-            env_->Flush(kWriteFlush);
+            env_->Flush(kWriteFlush, dev_idx);
         }
         if (total_keys_found == 0) s = Status::NotFound("iter cannot read anything");
         else s = Status::OK();
@@ -2483,6 +2246,131 @@ exit:
         return s;
     }
 #endif
+
+    Status Manifest::DeleteInSDBWithManifest(uint16_t column_count) {
+        Status s;
+        int sleep_microsecond = 10000; //10ms
+        uint32_t max_thread = 16;
+        std::string mf_data;
+        s = ReadManifest(&mf_data);
+        if (!s.ok()) return s;
+        SKTMetaInfo *skt_ids = NULL;
+        const char* data = mf_data.data();
+        uint16_t mf_size = DecodeFixed32(data);
+#if 0
+        uint64_t insdbkey_seq_num = DecodeFixed64(data + MF_OFFSET_LAST_IKEY_SEQ);
+        uint64_t seq_num = DecodeFixed64(data + MF_OFFSET_LAST_SEQ);
+        uint32_t last_sktable_id = DecodeFixed32(data + MF_OFFSET_LAST_SKT_SEQ);
+#endif
+        uint32_t sktinfo_count = DecodeFixed32(data + MF_OFFSET_NUM_SKT_INFO);
+        int worker_count = DecodeFixed32(data + MF_OFFSET_NUM_WORKER);
+        uint64_t skt_id = 0;
+        uint32_t offset = MF_OFFSET_NEXT_WORKER_INFO;
+
+        uint32_t padding_size = (mf_size % kRequestAlignSize) ? (kRequestAlignSize - (mf_size % kRequestAlignSize)) : 0;
+        uint16_t num_mf = (mf_size + padding_size +  kDeviceRquestMaxSize- 1) / kDeviceRquestMaxSize;
+
+        Slice parse(mf_data);
+        parse.remove_prefix(offset);
+        assert(worker_count);
+        for (int i = 0; i < worker_count; i++) {
+            DecodeFixed64(parse.data());
+            parse.remove_prefix(8);
+        }
+#ifdef CODE_TRACE
+        printf("delete InSDB skt count %d\n", sktinfo_count);
+#endif
+        /* get skt_id */
+        if (sktinfo_count) {
+            uint32_t key_size = 0;
+            uint32_t sktdf_size = 0;
+            uint32_t hash_size = 0;
+            skt_ids = new SKTMetaInfo[sktinfo_count];
+            for (uint32_t i = 0; i < sktinfo_count; i++) { //Parseing SKTable infomation.
+                skt_id = DecodeFixed32(parse.data());
+                parse.remove_prefix(4);
+                skt_id &= ~MF_SKT_ID_MASK;
+                skt_ids[i].skt_id = skt_id;
+                sktdf_size = DecodeFixed32(parse.data());
+                skt_ids[i].sktdf_size = sktdf_size;
+                parse.remove_prefix(4);
+                hash_size = DecodeFixed32(parse.data());
+                skt_ids[i].hash_size = hash_size;
+                parse.remove_prefix(4);
+                if(!GetVarint32(&parse, &key_size))
+                    port::Crash(__FILE__,__LINE__);
+                parse.remove_prefix(key_size);
+#if 0
+                uint16_t col_info_size = DecodeFixed16(parse.data());
+                parse.remove_prefix(2);
+                parse.remove_prefix(col_info_size);
+#endif
+                /* send prefetch for sktable */
+                InSDBKey skt_key = GetMetaKey(GetDBHash(), kSKTable, skt_id);
+                int val_size = sktdf_size;
+                env_->Get(skt_key, NULL, &val_size, kReadahead);
+            }
+
+            uint32_t thread_count = (sktinfo_count > max_thread) ? max_thread : sktinfo_count;
+            uint32_t skt_count = sktinfo_count / thread_count;
+            uint32_t mod_remains = sktinfo_count % thread_count;
+            InSDBThreadsState state;
+            state.num_running = thread_count;
+            DeleteSKTableCtx *delctxs = new DeleteSKTableCtx[thread_count];
+            uint32_t remains = sktinfo_count;
+            uint32_t req = 0;
+            uint32_t index = 0;
+            for (uint32_t i = 0; i < thread_count; i++) {
+                req = (remains > skt_count) ? skt_count : remains;
+                if (mod_remains && i < mod_remains) req++;
+                delctxs[i].mf = this;
+                delctxs[i].state = &state;
+                delctxs[i].num_skt = req; 
+                delctxs[i].skt_ids = &skt_ids[index];
+                env_->StartThread(Manifest::DeleteSKTableWrapper, (void *)&delctxs[i]);
+                index += req;
+                remains -= req;
+            }
+            while(1) {
+                state.mu.Lock();
+                int num = state.num_running;
+                state.mu.Unlock();
+                if (num == 0) {
+                    break;
+                }
+                env_->SleepForMicroseconds(sleep_microsecond);
+            }
+            for (int i = skt_count -1; i >= 0; i--) {
+                DeleteSKTableMeta(kSKTable, skt_ids[i].skt_id); // remove sktale
+                DeleteSKTableMeta(kHashMap, skt_ids[i].skt_id); // remove sktale hash
+                InSDBKey iterkey = GetMetaKey(GetDBHash(), kSKTIterUpdateList, skt_ids[i].skt_id);
+                InSDBKey updatekey = GetMetaKey(GetDBHash(), kSKTUpdateList, skt_ids[i].skt_id);
+                for (int j = 0; j < 10; j++) {
+                    /*Delete remained iter kbm list written in previous flush */
+                    iterkey.split_seq = j;
+                    updatekey.split_seq = j;
+                    Env::Default()->Delete(iterkey, true);//async
+                    Env::Default()->Delete(updatekey, true);//async
+                }
+            }
+            delete [] delctxs;
+            delete [] skt_ids;
+        }
+        InSDBKey mf_key = GetMetaKey(dbhash_, kManifest, 0);
+        for (int i = 0; i < num_mf; i++) {
+            mf_key.split_seq = i;
+            env_->Delete(mf_key);
+        }
+        DeleteSKTableMeta(kSuperSKTable, 0); //remove super sktable
+        env_->Delete(GetMetaKey(dbhash_, kLogRecord));
+        s = Env::Default()->Flush(kWriteFlush);
+        if(!s.ok()){
+            printf("[%d :: %s]Flush Fail \n", __LINE__, __func__);
+            abort();
+        }
+        return s.OK();
+    }
+
     /**
       Delete InSDB
       1. read super sktable and get sktble id.
@@ -2498,7 +2386,6 @@ exit:
         DeleteInSDBCtx d_ctx;
         std::vector<uint64_t>skt_ids;
         skt_ids.clear();
-
 #ifdef USE_FIRMWARE_ITERATOR
         //FIX: fix Destroy DB return “not found”
         //return s after DeleteInSDBWithIter
@@ -2512,64 +2399,526 @@ exit:
         if (s.ok()) return s;
         DeleteManifest(); // remove manifest
         skt_id = super_skt.first_skt_id;
+        std::set<uint64_t> keyslist;
         while(skt_id != 0) {
             skt_ids.push_back(skt_id); 
-            s = CleanUpSKTable(skt_id, &d_ctx);  //cleanup sktable 
+            s = CleanUpSKTable(skt_id, kMaxSKTableSize, kMaxSKTableSize, &d_ctx, keyslist);  //cleanup sktable 
             if (!s.ok()) break;;
             CleanupPreallocSKTable(d_ctx.prealloc_skt_id, d_ctx.next_skt_id); //remove prealloc
             skt_id = d_ctx.next_skt_id;
         }
+
+
+        for (auto it = keyslist.begin(); it != keyslist.end(); ++it) {
+            InSDBKey kbm_key = GetKBKey(GetDBHash(), kKBMeta, *it);
+            env_->Delete(kbm_key);
+            InSDBKey kb_key = GetKBKey(GetDBHash(), kKBlock, *it);
+            env_->Delete(kb_key);
+        }
+
         for (int i = skt_ids.size() - 1;  i >= 0; i--) {
             DeleteSKTableMeta(kSKTable, skt_ids[i]); // remove sktale
+            DeleteSKTableMeta(kHashMap, skt_ids[i]); // remove sktale hash
+            InSDBKey iterkey = GetMetaKey(GetDBHash(), kSKTIterUpdateList, skt_ids[i]);
+            InSDBKey updatekey = GetMetaKey(GetDBHash(), kSKTUpdateList, skt_ids[i]);
+            for (int j = 0; j < 10; j++) {
+                /*Delete remained iter kbm list written in previous flush */
+                iterkey.split_seq = j;
+                updatekey.split_seq = j;
+                Env::Default()->Delete(iterkey, true);//async
+                Env::Default()->Delete(updatekey, true);//async
+            }
+
         }
         DeleteSKTableMeta(kSuperSKTable, 0); //remove super sktable
         // remove log record
         s = env_->Delete(GetMetaKey(dbhash_, kLogRecord));
+        s = Env::Default()->Flush(kWriteFlush);
+        if(!s.ok()){
+            printf("[%d :: %s]Flush Fail \n", __LINE__, __func__);
+            abort();
+        }
         return s;
     }
 
-    bool Manifest::EvictUserKeys(int64_t reclaim_size, char* begin_key_buffer, char* end_key_buffer,bool discard_prefetch)
+    Status Manifest::CleanUpSKTable(int skt_id, int keymap_size, int keymap_hash_size, DeleteInSDBCtx *Delctx, std::set<uint64_t> &keyslist) {
+        memset(Delctx, 0, sizeof(*Delctx));
+        KeyMapHashMap* hashmap = nullptr;
+        Arena* arena = LoadKeymapFromDevice(skt_id, keymap_size, keymap_hash_size, hashmap, kSyncGet);
+        if (!arena) return Status::NotFound("skt does not exist");
+        Keymap* table = new Keymap(arena, GetComparator(), hashmap);
+        KeyMapHandle handle = table->First();
+        while(handle) {
+            table->GetiKeySeqNum(handle, keyslist);
+            handle = table->Next(handle);
+        }
+        KEYMAP_HDR *hdr = (KEYMAP_HDR*)(arena->GetBaseAddr());
+
+        /* fillup Delctx */
+        Delctx->next_skt_id = hdr->next_skt_id;
+        Delctx->prealloc_skt_id = hdr->prealloc_skt_id;
+        /* delete colinfo */
+        for(uint32_t colinfo_id = hdr->start_colinfo; colinfo_id < hdr->last_colinfo; colinfo_id++) { 
+            InSDBKey colinfo_key = GetColInfoKey(GetDBHash(), skt_id, colinfo_id);
+            env_->Delete(colinfo_key);
+        }
+        delete table;
+        return Status::OK();
+    }
+
+    void Manifest::DeleteSKTable(void *arg) {
+        Status s;
+        DeleteSKTableCtx *delctx = reinterpret_cast<DeleteSKTableCtx*>(arg);
+        DeleteInSDBCtx d_ctx;
+        std::set<uint64_t> keyslist;
+        for (uint32_t i = 0; i < delctx->num_skt; i++) {
+            s = CleanUpSKTable(delctx->skt_ids[i].skt_id, delctx->skt_ids[i].sktdf_size, delctx->skt_ids[i].hash_size, &d_ctx, keyslist);  //cleanup sktable 
+            if (s.ok()) {
+                CleanupPreallocSKTable(d_ctx.prealloc_skt_id, d_ctx.next_skt_id); //remove prealloc
+            }
+        }
+#ifdef CODE_TRACE
+        printf("delete kb/kbpm count %ld\n", keyslist.size());
+#endif 
+        for (auto it = keyslist.begin(); it != keyslist.end(); ++it) {
+            InSDBKey kbm_key = GetKBKey(GetDBHash(), kKBMeta, *it);
+            env_->Delete(kbm_key);
+            InSDBKey kb_key = GetKBKey(GetDBHash(), kKBlock, *it);
+            env_->Delete(kb_key);
+        }
+
+        delctx->state->mu.Lock();
+        delctx->state->num_running -= 1;
+        delctx->state->mu.Unlock();
+        return;
+    }
+
+    /////////////////////////////////////////// END  : Manifest Creation/Initializtion/Deletion ///////////////////////////////////////////
+
+    /////////////////////////////////////////// START: Sorted list related functions ///////////////////////////////////////////
+    SKTableMem* Manifest::GetSKTableMem(SimpleLinkedNode *node){ 
+        return node ? class_container_of(node, SKTableMem, skt_sorted_node_) : NULL; 
+    }
+
+
+    SKTableMem* Manifest::GetLastSKTableInSortedList(){
+        //return skt_sorted_list_.oldest()->GetOwner();
+        skt_sorted_simplelist_lock_.Lock(); 
+        SimpleLinkedNode *node = skt_sorted_simplelist_.oldest();
+        skt_sorted_simplelist_lock_.Unlock();
+        return GetSKTableMem(node);
+    }
+
+    SKTableMem* Manifest::NextSKTableInSortedList(SimpleLinkedNode* skt_node){ 
+        skt_sorted_simplelist_lock_.Lock(); 
+        SimpleLinkedNode *node = skt_sorted_simplelist_.next(skt_node);
+        skt_sorted_simplelist_lock_.Unlock();
+        return GetSKTableMem(node);
+    }
+    bool Manifest::IsNextSKTableDeleted(SimpleLinkedNode* skt_node){ 
+        skt_sorted_simplelist_lock_.Lock(); 
+        SimpleLinkedNode *node = skt_sorted_simplelist_.next(skt_node);
+        skt_sorted_simplelist_lock_.Unlock();
+        SKTableMem* skt = GetSKTableMem(node);
+        return skt ? skt->IsDeletedSKT() : false;
+    }
+    SKTableMem* Manifest::PrevSKTableInSortedList(SimpleLinkedNode* skt_node){ 
+        skt_sorted_simplelist_lock_.Lock(); 
+        SimpleLinkedNode *node = skt_sorted_simplelist_.prev(skt_node);
+        skt_sorted_simplelist_lock_.Unlock();
+        return GetSKTableMem(node);
+    }
+    /////////////////////////////////////////// END  : Sorted list related functions ///////////////////////////////////////////
+
+    /////////////////////////////////////////// START: Dirty/KBMUpdate/Clean Cache Management ///////////////////////////////////////////
+    void Manifest::InsertSKTableMemCache(SKTableMem* sktm, SKTCacheType type, uint16_t cache) {
+        if(!sktm->IsCached()){
+            if(!sktm->SetCachingInProgress()){
+                skt_cache_[type].PushBack(sktm);
+                sktm->SetCacheBit(cache);
+                sktm->ClearCachingInProgress();
+            }
+        }
+    }
+
+    void Manifest::InsertSKTableMemCache(SKTableMem* sktm, SKTCacheType type) {
+        skt_cache_[type].PushBack(sktm);
+    }
+
+    void Manifest::SpliceCacheList(std::list<SKTableMem*> &skt_list, SKTCacheType type, bool to_front){
+        if(to_front)
+            skt_cache_[type].SpliceToFront(skt_list);
+        else
+            skt_cache_[type].SpliceToBack(skt_list);
+    }
+
+    void Manifest::SwapSKTCacheList(std::list<SKTableMem*> &skt_list, SKTCacheType type) {
+        assert(skt_list.empty());
+        skt_cache_[type].SwapCacheList(skt_list);
+    }
+
+
+    void Manifest::SpliceKBPMCacheList(std::list<KeyBlockPrimaryMeta*> &kbpm_list){
+        kbpm_update_list_.SpliceToBack(kbpm_list);
+    }
+
+    void Manifest::SwapKBPMCacheList(std::list<KeyBlockPrimaryMeta*> &kbpm_list){
+        assert(kbpm_list.empty());
+        kbpm_update_list_.SwapCacheList(kbpm_list);
+    }
+
+
+
+#if 0
+    size_t Manifest::SKTCountInSKTableMemCache(SKTCacheType type) {
+        return skt_cache_[type].GetCacheSize();
+    }
+    /*PopSKTableMem is not used anymore. We use SwapSKTCacheList instead of this function */
+    SKTableMem* Manifest::PopSKTableMem(SKTCacheType type) {
+#ifndef NDEBUG
+        SKTableMem* sktm = skt_cache_[type].PopItem();
+        if (sktm){
+            if(type == kDirtySKTCache) assert(sktm->IsInDirtyCache());
+            else assert(sktm->IsInCleanCache());
+        }
+        return sktm;
+#else
+        return skt_cache_[type].PopItem();
+#endif
+    }
+#endif
+
+    /////////////////////////////////////////// END  : Dirty/KBMUpdate/Clean Cache Management ///////////////////////////////////////////
+
+    /////////////////////////////////////////// START: Cache Threads(Dirty/KBM update/Clean/Log) related functions ///////////////////////////////////////////
+    void Manifest::SignalSKTFlushThread()
+    {
+
+        /* 
+         * We assume that this function is not called frequently.
+         * Call it when update count exceeds watermark or update count of a sktable exceeds kMinUpdateCntForTableFlush
+         * So, set count and check flag under lock
+         */
+        skt_flush_mu_.Lock();
+        if(!IsInSKTableFlush())
+            skt_flush_cv_.SignalAll();
+        skt_flush_mu_.Unlock();
+    }
+
+    void Manifest::SignalKBPMUpdateThread()
+    {
+
+        /* It is called from Flush Thread that means calling frequency is not high. */
+        kbpm_update_mu_.Lock();
+        if( !IsInKBPMUpdate() )
+            kbpm_update_cv_.SignalAll();
+        kbpm_update_mu_.Unlock();
+    }
+
+    void Manifest::SignalSKTEvictionThread(bool move_to_dirty)
+    {
+        if(move_to_dirty) SetCleanToDirty();
+        if( (MemoryUsage() > kMaxCacheSize && !IsInMemoryReclaim()) || cache_thread_shutdown_ || move_to_dirty)
+        {
+            skt_eviction_mu_.Lock();
+            skt_eviction_cv_.SignalAll();
+            skt_eviction_mu_.Unlock();
+        }
+    }
+    uint32_t WorkerData::ZeroNRSCount(){
+        uint32_t count = 0;
+        for(uint32_t i = 0  ; i < 2 ; i++){
+            for(auto it = queue_[i].begin(); it != queue_[i].end() ; it++){
+                KeyBlockPrimaryMeta* kbpm = *it;
+                if(!(kbpm->GetNRSCount()))
+                    count++;
+            }
+        }
+        return count;
+    }
+
+    // Collect key block delete candidates for a worker
+    void Manifest::WorkerLogCleanupInternal(WorkerData &logcleanup_data, std::list<SequenceNumber> &worker_next_ikey_seq, std::queue<KeyBlockPrimaryMeta*> &kbpm_cleanup, SequenceNumber &smallest_ikey)
+    {
+        bool first = true;
+        SequenceNumber n_ikey = 0;
+        std::deque<KeyBlockPrimaryMeta*> * logQ = logcleanup_data.GetInActiveQueue();
+        KeyBlockPrimaryMeta* kbpm, *last_cleanup_kbpm=NULL;
+scan:
+        // iterate each KBML
+        Spinlock *logLock = logcleanup_data.GetInActiveLock();
+        logLock->Lock();
+        while(!logQ->empty()){
+            kbpm = logQ->front();
+            if(kbpm->GetNRSCount()) {
+                goto finish_this_worker;
+            }
+            // append the ikey seq num to the device format
+            logQ->pop_front();
+            // append kbpm to delete candidate list
+            if(kbpm->GetiKeySequenceNumber() < smallest_ikey){
+                /*For size reduction(diff : store "ikey - smallest_ikey")*/
+                smallest_ikey = kbpm->GetiKeySequenceNumber(); 
+            }
+            kbpm_cleanup.push(kbpm);
+            // store the last added ikey to determine worker's next ikey seq
+            last_cleanup_kbpm = kbpm;
+            n_ikey = last_cleanup_kbpm->GetNextIKeySeqNum();
+            // collect KBMLs up to the max to prevent IO size overflow.
+            // 2MB / 9 bytes
+#if 0
+            if (kbpm_cleanup.size() > 45000) {
+#ifdef CODE_TRACE
+                printf("[%d :: %s] Log Cleanup count is bigger than 45000(%ld)\n", __LINE__, __func__, kbpm_cleanup.size());
+#endif
+                goto finish_this_worker;
+            }
+#endif
+        }
+        // switch active queue when the inactive queue is drained.
+        if(logQ->empty() && first){
+            logLock->Unlock();
+            // switch only once
+            first = false;
+            // switch
+            logcleanup_data.ChangeActive();
+            goto scan;
+        }
+finish_this_worker:
+        logLock->Unlock();
+        // add the worker's next ikey sequence
+        if (last_cleanup_kbpm) {
+            worker_next_ikey_seq.push_back(n_ikey);
+            logcleanup_data.SetLastWorkerNextIKeySeq(n_ikey);
+        } else {
+            worker_next_ikey_seq.push_back(logcleanup_data.GetLastWorkerNextIKeySeq());
+        }
+    }
+
+    void Manifest::WorkerLogCleanupAndSubmission(std::queue<KeyBlockPrimaryMeta*> kbpm_cleanup, SequenceNumber &smallest_ikey)
+    {
+        KeyBlockPrimaryMeta *kbpm;
+        //std::list<SequenceNumber> deleteSeqList;
+        //deleteSeqList.push_back(smallest_ikey);
+        // Free KB, KBM, and KBML memory, and construct key names
+        while(!kbpm_cleanup.empty()) {
+            kbpm = kbpm_cleanup.front();
+            kbpm_cleanup.pop();
+            if (kbpm->IsDummy()) abort();
+            // acquire submit protection
+            while(kbpm->SetWriteProtection());
+            kbpm->SetOutLog();
+
+            // release submit protection
+            kbpm->ClearWriteProtection(); 
+            // add to to-be-deleted key list
+        }
+
+        // Set the number of deleted ikey sequence number
+        //logkey.AppendIKeySeqList(deleteSeqList);
+
+    }
+
+    void Manifest::LogCleanupInternal(LogRecordKey &LogRecordkey)
+    {
+        std::queue<KeyBlockPrimaryMeta*> kbpm_cleanup;
+        std::list<TrxnGroupRange> completed_trxn_groups;
+        std::list<SequenceNumber> worker_next_ikey_seq;
+        SequenceNumber smallest_ikey = ULONG_MAX;
+
+        // Get completed transaction group
+        CopyCompletedTrxnGroupRange(completed_trxn_groups);
+
+        // Append zeroed header and the number of ikeys
+        LogRecordkey.AppendHeaderSpace();
+
+        // collect deleted ikeys in each worker queue
+#ifdef CODE_TRACE
+#define LOG_KBM_CNT
+        uint32_t cnt = 0;
+        uint32_t nrs_cnt = 0;
+#endif
+        for(int worker_idx = 0; worker_idx < kWriteWorkerCount; worker_idx++){
+            WorkerLogCleanupInternal(logcleanup_data_[worker_idx], worker_next_ikey_seq, kbpm_cleanup, smallest_ikey);
+#ifdef LOG_KBM_CNT
+            cnt+=logcleanup_data_[worker_idx].Count();
+            nrs_cnt+=logcleanup_data_[worker_idx].ZeroNRSCount();
+#endif
+        }
+        // skip writing log record key if no key is deleted.
+#ifdef LOG_KBM_CNT
+        printf("[%d :: %s]# of cleanup KBM : %d(remained : %u(zero nrs : %u) :: diff : %u)\n", __LINE__, __func__, kbpm_cleanup.size(), cnt, nrs_cnt, cnt-nrs_cnt);
+#endif
+        if(!kbpm_cleanup.size()) {
+            LogRecordkey.Reset();
+            return;
+        }
+        /* Write Log data */
+        // Append worker next ikey seq
+        LogRecordkey.AppendIKeySeqList(worker_next_ikey_seq);
+        // Append completed transaction groups
+        LogRecordkey.AppendTrxnGroupList(completed_trxn_groups);
+        // Build IO buffer. Compress if possible.
+        LogRecordkey.BuildIOBuffer();
+
+        // write the log record key
+        const Slice io_buffer( LogRecordkey.GetIOBuffer() );
+        // buffer limit is same as max sktable size
+        if(io_buffer.size() > kDeviceRquestMaxSize) {
+            port::Crash(__FILE__,__LINE__);
+        }
+        // write the log record key to the device
+        env_->Put(LogRecordkey.GetInSDBKey() , io_buffer, false);
+
+        // delete the internal keys
+        WorkerLogCleanupAndSubmission(kbpm_cleanup, smallest_ikey);
+
+        // reset the log record key object
+        LogRecordkey.Reset();
+    }
+
+    uint32_t Manifest::InsertUpdatedKBPMToMap(std::list<KeyBlockPrimaryMeta*> *kbpm_list, std::map<uint64_t, KeyBlockPrimaryMeta*> *kbpm_map)
+    {
+
+        uint32_t size = 0;
+        uint32_t kbpm_count = 0;
+        std::deque<KeyBlockPrimaryMeta*> *pending_kbm_queue = NULL;
+        KeyBlockPrimaryMeta *kbpm = NULL;
+         
+        while(!kbpm_list->empty())
+        {
+            kbpm = kbpm_list->front();
+            kbpm_list->pop_front();
+
+            /*Keep the selected SKT in order to insert to clean or dirty(flush) cache*/
+
+            /* Get all KBPMs from update queue of the SKTable */
+            /*if KBPM has not been added to KBPM map, insert the the map */
+            if(!kbpm->SetUpdateKBMMap()){
+                /* KBPM I/O size can be shrink, But can not be increased */
+                /* 
+                 * KBPM can be removed if the eviction thread evicts the SKT 
+                 * So, we need to increase additional ref count until device update
+                 */
+                /*Estimated IO Size is not needed anymore because all update does not contain TRXN information that means we use fixed size(7byte)*/
+                //size = SizeAlignment(kbpm->GetEstimatedBufferSize());
+                kbpm_map->insert({kbpm->GetiKeySequenceNumber(), kbpm});
+#ifdef CODE_TRACE
+                printf("[%d :: %s]Insert KBM : 0x%p (ikey : %ld)\n", __LINE__, __func__, kbpm, kbpm->GetiKeySequenceNumber());
+#endif
+                kbpm_count++;
+            }
+            assert(kbpm->IsNeedToUpdate());
+            kbpm->DecPendingUpdatedValueCnt();
+            /* 
+             * The updated column did not decrease the reference count in order to prevent evicting the KBPM.
+             * So, we need to decrease the ref cnt here. But, the KBPM will not be evicted until submission 
+             * because additional ref count has been increased during inserting to the map
+             */
+        }
+
+        return kbpm_count;
+    }
+
+    uint32_t Manifest::BuildKBPMUpdateData(std::map<uint64_t, KeyBlockPrimaryMeta*> *kbpm_map, struct KBPMUpdateVector *kbpm_update, std::vector<InSDBKey> *delete_key_vec, std::deque<KeyBlockPrimaryMeta*> &updated_kbpm, char* kbpm_io_buf)
+    {
+        KeyBlockPrimaryMeta* kbpm = NULL;
+        uint32_t size = 0;
+        SequenceNumber ikey = 0;
+        uint32_t kbpm_count = 0;
+
+        auto it = kbpm_map->cbegin();
+        kbpm_update->Init();
+        delete_key_vec->resize(0);;
+        if(it != kbpm_map->end()){
+            while( it != kbpm_map->end() ){
+                auto curr = it++; 
+                ikey = curr->first;
+                kbpm = curr->second;
+                assert(ikey == kbpm->GetiKeySequenceNumber());
+
+                if(!kbpm->SetWriteProtection()/* The other threads try to change KBPM */){
+                    if(!kbpm->GetPendingUpdatedValueCnt() && !kbpm->IsInlog()){
+#ifdef CODE_TRACE
+                        printf("[%d :: %s]Before clear NeedToUpdate (kbpm : %p), ikey = %ld\n", __LINE__, __func__, kbpm, kbpm->GetiKeySequenceNumber());
+#endif
+                        kbpm->ClearUpdateKBMMap();
+                        kbpm_map->erase(curr);
+                        if( kbpm->TestKeyBlockBitmap()){
+                            updated_kbpm.push_back(kbpm);
+                            kbpm_count++;
+                            size = SizeAlignment((kbpm->BuildDeviceFormatKeyBlockMeta(kbpm_io_buf)).size());
+                            /*The size must not include the TRXN size*/
+                            assert(size == 12);
+#ifdef CODE_TRACE
+                            printf("[%d :: %s]Actual size : %d\n", __LINE__, __func__,size);
+#endif
+                            kbpm->ClearWriteProtection();
+                            kbpm_update->Insert(GetKBKey(GetDBHash(), kKBMeta, ikey), kbpm_io_buf, size);
+                            kbpm_io_buf += size;
+                            /* To update vector */
+                        }else{
+                            kbpm->ClearNeedToUpdate();
+                            kbpm->ClearWriteProtection();//It may not be needed because no one accesses the KBPM.
+                            delete_key_vec->push_back(GetKBKey(GetDBHash(), kKBMeta, ikey));
+                            if(kbpm->GetOriginalKeyCount()){
+                                delete_key_vec->push_back(GetKBKey(GetDBHash(), kKBlock, ikey));
+                            }
+                            if(kbpm->EvictColdKBPM(this)){
+#ifdef CODE_TRACE
+                                printf("[%d :: %s]Free (kbpm : %p), ikey = %ld\n", __LINE__, __func__, kbpm, kbpm->GetiKeySequenceNumber());
+#endif
+                                FreeKBPM(kbpm);
+                            }
+                        }
+#ifdef CODE_TRACE
+                        printf("[%d :: %s]Before check EvictColdKBPM() (kbpm : %p), ikey = %ld\n", __LINE__, __func__, kbpm, kbpm->GetiKeySequenceNumber());
+#endif
+                        
+                    }else {
+                        kbpm->ClearWriteProtection();//It may not be needed because no one accesses the KBPM.
+                    }
+                }
+            }
+        }
+
+        return kbpm_count;
+    }
+
+    void Manifest::EvictUserKeys(std::list<SKTableMem*> &skt_list, int64_t &reclaim_size, bool cleanup)
     {
         // Start eviction with the oldest sktable
         SKTableMem *skt = NULL;
         bool cleanup_dirty_cache_needed = false;
         bool referenced = false;
+        static bool force_reclaim = false;
 
-#ifdef TRACE_MEM
-#ifdef KV_TIME_MEASURE
-        cycles_t st, e;
-        bool b_check = false;
-        st = get_cycles();
-#endif
-#endif
-        SetKeyCacheThreadBusy();
-        while(reclaim_size > 0|| discard_prefetch || clean_skt_cleanup_.load(std::memory_order_relaxed))
+        std::list<SKTableMem*> clean_list;
+        std::list<SKTableMem*> dirty_list;
+
+        while(!skt_list.empty() && (reclaim_size > 0 || cleanup) && (MemoryUsage() >= kCacheSizeLowWatermark))
         {
-#ifdef TRACE_MEM
-#ifdef KV_TIME_MEASURE
-            if (!b_check) b_check = true;
-#endif
-#endif
+            skt = skt_list.front();
+            skt_list.pop_front();
             // TODO: skip internal key sktable?
-            skt = PopSKTableMem(kCleanSKTCache);
-            if(!skt){
-                cleanup_dirty_cache_needed = true;
-                break; /*Clean Cache is Empty*/
-            }else if(skt->GetSKTRefCnt()){
+            assert(skt);
+            if(skt->GetSKTRefCnt()){
                 if(skt->IsSKTDirty(this)){
-                    InsertSKTableMemCache(skt, kDirtySKTCache, true/*Clear Eviction Flags*/);
+                    skt->ChangeStatus(SKTableMem::flags_in_clean_cache/*From*/, SKTableMem::flags_in_dirty_cache/*To*/);
+                    dirty_list.push_back(skt);
                 } else {
-                    InsertSKTableMemCache(skt, kCleanSKTCache, true/*Clear Eviction Flags*/);
+                    clean_list.push_back(skt);
                 }
                 continue;
-            }else if(!skt->GetSKTableDeviceFormatNode()){
+            }else if(!skt->IsKeymapLoaded()){
                 if(skt->IsSKTDirty(this)){
-                    InsertSKTableMemCache(skt, kDirtySKTCache, true/*Clear Eviction Flags*/);
-                }else if(discard_prefetch || clean_skt_cleanup_.load(std::memory_order_relaxed)){
-                    skt->ClearEvictingSKT();
+                    skt->ChangeStatus(SKTableMem::flags_in_clean_cache/*From*/, SKTableMem::flags_in_dirty_cache/*To*/);
+                    dirty_list.push_back(skt);
+                }else if(cleanup || force_reclaim){
+                    skt->ClearInCleanCache();
                     skt->DiscardSKTablePrefetch(this);
                 }else{
-                    InsertSKTableMemCache(skt, kCleanSKTCache, true/*Clear Eviction Flags*/);
+                    clean_list.push_back(skt);
                 }
                 continue;
             }
@@ -2578,115 +2927,1816 @@ exit:
             printf("[%d :: %s]skt_id : %d\n", __LINE__, __func__,skt->GetSKTableID());
 #endif
 
-            assert(skt->GetSKTableDeviceFormatNode());
-
+            SetSKTableIDForEviction(skt->GetSKTableID());
             bool evicted = false;
-            referenced = skt->SKTDFReclaim(this, reclaim_size, evicted, clean_skt_cleanup_.load(std::memory_order_relaxed));
-            referenced = skt->EvictCleanUserKeyFromKeymap(this, true, evicted, true);
-            if(evicted){
-                skt->IterLock();
-                skt->ReturnIterScratchPad(this);
-                skt->IncSKTDFVersion();
-                skt->IterUnlock();
+            bool active = false;
+            uint32_t put_col = 0, del_col = 0;
+            referenced = skt->SKTDFReclaim(this, reclaim_size, evicted, active, cleanup || force_reclaim, put_col, del_col);
+#ifndef NDEBUG
+            if(cleanup){
+                assert(!referenced && !active);
             }
-
+#endif
+            if(evicted){
+#ifdef MEM_TRACE
+                IncEvictSKTIter();
+#endif
+            }
+            if (!active && put_col) {
+                if (put_col < del_col) {
+#ifdef CODE_TRACE
+                    printf("[%d :: %s] put : %d, del : %d\n", __LINE__, __func__, put_col, del_col);
+#endif
+                    uint32_t orig_size = skt->GetKeymapMemSize();
+                    uint32_t new_size = 0;
+                    KeyMapHashMap* hashmap = new KeyMapHashMap(1024*32);
+                    Arena* new_arena = skt->MemoryCleanupSKTDeviceFormat(this, hashmap);
+                    if (new_arena) {
+                        new_size = new_arena->AllocatedMemorySize();
+                        assert(orig_size > new_size);
+                        /* lock */
+                        skt->InsertArena(new_arena, hashmap);
+                        skt->SetKeymapMemSize(new_size);
+                        /* unlock */
+                        DecreaseMemoryUsage(orig_size - new_size);
+                        reclaim_size-= (orig_size - new_size);
+                    }
+                }
+            }
             // Eviction loop
             if(skt->IsSKTDirty(this)){
-                InsertSKTableMemCache(skt, kDirtySKTCache, true/*Clear Eviction Flags*/);
-            }else if(referenced || skt->GetSKTRefCnt()){
-                InsertSKTableMemCache(skt, kCleanSKTCache, true/*Clear Eviction Flags*/);
-            }else{
-                assert(!skt->IsFlushing() && !skt->IsInSKTableCache(this));
-                DecreaseMemoryUsage(skt->GetSKTableDeviceFormatNode()->GetSize());
-                reclaim_size-=skt->GetSKTableDeviceFormatNode()->GetSize();
-                skt->IterLock();
-                skt->ReturnIterScratchPad(this);
-                skt->IncSKTDFVersion();
-                skt->IterUnlock();
+                skt->ChangeStatus(SKTableMem::flags_in_clean_cache/*From*/, SKTableMem::flags_in_dirty_cache/*To*/);
+                dirty_list.push_back(skt);
+            }else if(
+                    (!options_.table_eviction && !cleanup && !force_reclaim) ||
+                    referenced || skt->GetSKTRefCnt()){
+                clean_list.push_back(skt);
+                skt->ClearPrefetchKeyBlock();
+            } else if (put_col == 0 && skt->GetSKTableID() != 1) {
+                /* delete sktable */
+                reclaim_size-=skt->GetKeymapMemSize();
+                /*
+                 * Move to FlushSKTableMem to reduce additioanl load.
+                 * skt->DeleteSKTDeviceFormatCache(this, true);
+                */
+                skt->SetDeletedSKT(this);
+                skt->ClearInCleanCache();
+                while(skt->GetSKTRefCnt());
+                RemoveSKTableMemFromSkiplist(skt);
+                SKTableMem *prev = skt;
+                while(1) {
+                    SKTableMem *prev_prev = prev;
+                    prev = PrevSKTableInSortedList(prev->GetSKTableSortedListNode());
+                    if (!prev->IsDeletedSKT()) {
+                        /* Fetched status will be checked in PrefetchSKTable() */
+                        if (!prev->IsKeymapLoaded()) {
+                            prev->PrefetchSKTable(this);
+                            assert(prev->IsCached());
+                        } else if (!prev->IsCached()) {
+                            printf("[%s:%d] the previous skt(%d) of deleted skt(%d) has not been cached\n",
+                                    __func__, __LINE__, prev->GetSKTableID(), skt->GetSKTableID());
+                            InsertSKTableMemCache(prev, kDirtySKTCache, SKTableMem::flags_in_dirty_cache);
+                        }
+                        break;
+                    }
+                } 
+            } else if (skt->NeedToSplit()) {
+                /* keymap is too big .... need to split */
+                skt->ChangeStatus(SKTableMem::flags_in_clean_cache/*From*/, SKTableMem::flags_in_dirty_cache/*To*/);
+                dirty_list.push_back(skt);
+            } else {
+#ifdef CODE_TRACE
+                printf("[%d :: %s]Evict SKTID %d\n", __LINE__, __func__, skt->GetSKTableID());
+#endif
+                skt->ClearInCleanCache();
+                if (skt->ClearPrefetchKeyBlock()) {
+#ifdef MEM_TRACE
+                    IncEvictWithPr();
+#endif
+                }
+#ifdef MEM_TRACE
+                IncEvictedSKT();
+#endif
+                reclaim_size-=skt->GetKeymapMemSize();
                 skt->DeleteSKTDeviceFormatCache(this);
                 /* The SKTable has been added to SKTable cache */
-                skt->ClearEvictingSKT();
             }
-
+            ClearSKTableIDForEviction();
             // Unlock sktables
         }
-        // Check eviction on SKTable device format
-        ClearKeyCacheThreadBusy();
-#ifdef TRACE_MEM
-#ifdef KV_TIME_MEASURE
-        if (b_check) {
-            g_evict_count++;
-            e = get_cycles();
-            uint64_t delta = time_cycle_measure(st,e);
-            g_evict_cum_time.fetch_add(delta);
-            if (g_evict_max_time.load() < delta) g_evict_max_time = delta;
-        }
-#endif
-#endif
-        return cleanup_dirty_cache_needed;
-    }
 
-
-
-    void Manifest::CleanUpCleanSKTable()
-    {
-        clean_skt_cleanup_ = true;
-    }
-    void Manifest::SignalKeyCacheThread()
-    {
-
-        if( (MemoryUsage() > kMaxCacheSize && !IsInMemoryReclaim()) || clean_skt_cleanup_)
-        {
-            key_cache_mu_.Lock();
-            key_cache_cv_.SignalAll();
-            key_cache_mu_.Unlock();
-        }
-    }
-
-    void Manifest::KeyCacheThread()
-    {
-        char* begin_key_buffer = (char*) malloc(kMaxKeySize);
-        char* end_key_buffer = (char*) malloc(kMaxKeySize);;
-        bool cleanup = false;
-        while(!key_cache_shutdown_){
-            key_cache_mu_.Lock();
-            /** Wait for a signal */
-            while(!key_cache_shutdown_ && !clean_skt_cleanup_ && MemoryUsage() <= kCacheSizeLowWatermark )
-            {
-                ClearMemoryReclaim();
-                uint64_t start_time = env_->NowMicros();
-                key_cache_cv_.TimedWait(start_time + 2000000/*Wake up every 2 second*/);
-                SetMemoryReclaim();
+        while(!skt_list.empty()){
+            /* To migrate dirty SKTable the dirty cache */
+            skt = skt_list.front();
+            skt_list.pop_front();
+            // TODO: skip internal key sktable?
+            assert(skt);
+            if(skt->IsSKTDirty(this)){
+                skt->ChangeStatus(SKTableMem::flags_in_clean_cache/*From*/, SKTableMem::flags_in_dirty_cache/*To*/);
+                dirty_list.push_back(skt);
+            } else {
+                clean_list.push_back(skt);
             }
-            key_cache_mu_.Unlock();
-            cleanup = clean_skt_cleanup_;
-            if(cleanup)
-                kCacheSizeLowWatermark = 0;
-            if(key_cache_shutdown_ && !GetCountSKTableCleanList()){
+        }
+        if(!clean_list.empty())
+            SpliceCacheList(clean_list, kCleanSKTCache);
+        if(!dirty_list.empty()){
+            SpliceCacheList(dirty_list, kDirtySKTCache);
+            if(update_cnt_ >= kSKTableFlushWatermark)
+                SignalSKTFlushThread();
+        }
+
+        // if it cannot reclaim as requested, enable force reclaim for next time
+        if (force_reclaim == false && reclaim_size > 100*1024*1024) {
+#ifdef CODE_TRACE
+            printf("force reclaim is enabled.\n");
+#endif
+            force_reclaim = true;
+        } else {
+#ifdef CODE_TRACE
+            printf("force reclaim is disabled.\n");
+#endif
+            force_reclaim = false;
+        }
+    }
+
+    void Manifest::DecOffloadFlushCount(){
+        offload_cnt_.fetch_sub(1, std::memory_order_relaxed);
+    }
+    SKTableMem* Manifest::GetFlushOffloadSKTable(){
+        SKTableMem* sktable = NULL;
+        if(offload_cnt_.load(std::memory_order_relaxed)){
+            offload_lock_.Lock();
+            if(!flush_offload_queue_.empty()){
+                sktable = flush_offload_queue_.front();
+                flush_offload_queue_.pop();
+            }
+            offload_lock_.Unlock();
+        }
+        return sktable;
+
+    }
+
+    void Manifest::SKTFlushThread()
+    {
+        (void)pthread_setname_np(pthread_self(), "flush");
+
+        SKTableMem* sktable = NULL;
+        bool update_kbm = false;
+
+        std::list<SKTableMem*> skt_list;
+        std::list<SKTableMem*> clean_list;
+        std::list<SKTableMem*> dirty_list;
+        bool first_flush = false;
+
+        // threshold to insert tables to update cache
+        uint32_t skt_update_cache_threshold = 50000;
+
+        char* dev_buffer = (char*)malloc(kDeviceRquestMaxSize);
+        std::string col_info_table;
+        col_info_table.reserve(kDeviceRquestMaxSize);
+        Slice comp_col_info_table(dev_buffer, kDeviceRquestMaxSize);
+        std::list<KeyBlockPrimaryMeta*> kbpm_list;
+        std::queue<KeyBlockPrimaryMeta*> in_log_KBM_queue;
+        KeyBlockPrimaryMeta *in_log_kbm = NULL;
+
+        while(true){
+            skt_flush_mu_.Lock();
+            /** Wait for a signal */
+            while(!cache_thread_shutdown_ && (IsSKTDirtyListEmpty() || update_cnt_ < kSKTableFlushWatermark)/* if update count during flushing SKTable exceeds watermard, Do flush again */)
+            {
+                ClearSKTableFlush();
+                skt_flush_cv_.TimedWait(env_->NowMicros() + 1000000/*Wake up every 2 second*/);
+                SetSKTableFlush();
+                /* If Dirty Cache is no empty, do flush at least one time */
+                if(!IsSKTDirtyListEmpty())
+                    break;
+            }
+            skt_flush_mu_.Unlock();
+            SignalSKTEvictionThread(true);
+            if(CheckExitCondition()){
                 /*Finish the Cache Thread if there is no more SKT in the clean cache list */
                 break;
             }
-            while(((MemoryUsage() > kCacheSizeLowWatermark)/*For memory reclaim*/ || cleanup) && GetCountSKTableCleanList()/*For DB termination*/)
-            {
-                int64_t reclaim_size = MemoryUsage() - kCacheSizeLowWatermark;
-                if(reclaim_size < 0 ) abort();
-                if(EvictUserKeys(reclaim_size, begin_key_buffer, end_key_buffer, false)){
-                    SignalWorkerThread(true);
+            bool skt_force_load = false;
+            if(update_cnt_ >= kSKTableFlushWatermark || CheckKeyEvictionThreshold()) {
+                SignalSKTEvictionThread(true);
+                skt_force_load = true;
+            }
+            SetFlushThreadBusy();
+#if 1
+            if(cache_thread_shutdown_ && !flush_offload_queue_.empty()){
+                SKTableMem* sktable = NULL;
+                while(sktable = GetFlushOffloadSKTable())
+                    this->InsertSKTableMemCache(sktable, kDirtySKTCache); 
+            }
+#endif
+            update_cnt_ = 0;
+            bool del_skt = false;
+            if(!IsSKTDirtyListEmpty()){
+                uint32_t kbm_update_cnt = 0;
+                uint32_t update_cache_skt_cnt = 0;
+                SwapSKTCacheList(skt_list, kDirtySKTCache);
+                SKTableMem *flush_skt = NULL;
+                while(!skt_list.empty()){
+                    flush_skt = skt_list.front();
+                    skt_list.pop_front();
+                    if(flush_skt->GetSKTRefCnt()){
+#ifdef MEM_TRACE
+                        IncMissFlush();
+#endif
+                        dirty_list.push_back(flush_skt);
+                        continue;
+                    }
+#if 1
+                    while((uk_count_.load(std::memory_order_relaxed) > (kCongestionControl >> 2)) && skt_list.size() > 1 && offload_cnt_.load(std::memory_order_relaxed) < GetWorkerCount()) {
+                        sktable = skt_list.front();
+                        skt_list.pop_front();
+                        if(sktable->GetSKTRefCnt()){
+                            dirty_list.push_back(sktable);
+                            continue;
+                        }
+                        /* Offload flush work to WorkerThread */
+                        offload_lock_.Lock();
+                        flush_offload_queue_.push(sktable);
+                        offload_lock_.Unlock();
+                        offload_cnt_.fetch_add(1, std::memory_order_relaxed);
+                    }
+#endif
 
-                    /* 
-                     * Wait for 0.5 Sec, WorkerThread will cleanup the SKT dirty cache and then wake eviction thread up.
+                    if(offload_cnt_.load(std::memory_order_relaxed)){
+                        SignalAllWorkerThread();
+                    }
+                    assert(flush_skt);
+
+                    bool loaded_skt = true;
+                    if(!flush_skt->IsKeymapLoaded()){
+                        loaded_skt = flush_skt->LoadSKTableDeviceFormat(this, skt_force_load?kSyncGet:kNonblokcingRead);
+                        /* it must have been prefetched */
+                        assert(!skt_force_load || loaded_skt);
+#ifdef CODE_TRACE
+                        printf(" load sktdf for skt %p\n", sktable);
+#endif
+                    }
+                    /* sktdf must not be in cache */
+                    if(!loaded_skt){
+#ifdef MEM_TRACE
+                        IncMissFlush();
+#endif
+                        dirty_list.push_back(flush_skt);
+                    }else{
+#ifdef MEM_TRACE
+                        IncHitFlush();
+#endif
+                        flush_skt->FlushSKTableMem(this, col_info_table, comp_col_info_table, in_log_KBM_queue, kbpm_list);
+                        assert(!flush_skt->IsDeletedSKT());
+                        //if(MemoryUsage() > kCacheSizeLowWatermark)
+                        //    flush_skt->EvictKBPM(this);
+                        if(flush_skt->IsSKTDirty(this)){
+                            /* Don't need to change status */
+                            dirty_list.push_back(flush_skt);
+                        }else{
+                            flush_skt->ChangeStatus(SKTableMem::flags_in_dirty_cache/*From*/, SKTableMem::flags_in_clean_cache/*To*/);
+                            clean_list.push_back(flush_skt);
+                        }
+                    }
+                }
+                FlushUserKey(in_log_KBM_queue, kbpm_list); //Cleanup flushed_key_hash_
+                bool log_stat_change = false;
+                while(!in_log_KBM_queue.empty()) {
+                    in_log_kbm = in_log_KBM_queue.front();
+#ifdef CODE_TRACE
+                    printf("[%d :: %s];Before decrease NRS;%d;|;KBPM;%p;|;iKey;%ld;|\n", __LINE__, __func__,in_log_kbm->GetNRSCount(), in_log_kbm, in_log_kbm->GetiKeySequenceNumber());
+#endif
+                    if(in_log_kbm->DecNRSCount() == 1){
+                        kbpm_list.push_back(in_log_kbm);
+                        log_stat_change= true;
+                        /*Use extra NRS count in order to prevent log cleaning*/
+                        in_log_kbm->DecNRSCount();
+                        /* 
+                         * Increase Cleanupable count 
+                         * If the count reaches a treshold, wake LogCleanupThread up 
+                         */
+                    }
+                    in_log_KBM_queue.pop();
+                }
+                if(log_stat_change){
+                    SetLogCleanupRequest();
+                }
+
+                if(!kbpm_list.empty())
+                    SpliceKBPMCacheList(kbpm_list);
+
+                SignalKBPMUpdateThread();
+
+                if(!clean_list.empty()){
+                    SpliceCacheList(clean_list, kCleanSKTCache);
+                    SignalSKTEvictionThread(del_skt);
+                } else if (del_skt) {
+                    SignalSKTEvictionThread(true);
+                }
+
+                if(!dirty_list.empty()){
+                    SpliceCacheList(dirty_list, kDirtySKTCache);
+                }
+            }else{
+            
+                if(!flushed_key_hashmap_->empty()){
+                    FlushUserKey(in_log_KBM_queue, kbpm_list); //Cleanup flushed_key_hash_
+                    bool log_stat_change = false;
+                    while(!in_log_KBM_queue.empty()) {
+                        in_log_kbm = in_log_KBM_queue.front();
+#ifdef CODE_TRACE
+                        printf("[%d :: %s];Before decrease NRS;%d;|;KBPM;%p;|;iKey;%ld;|\n", __LINE__, __func__,in_log_kbm->GetNRSCount(), in_log_kbm, in_log_kbm->GetiKeySequenceNumber());
+#endif
+                        if(in_log_kbm->DecNRSCount() == 1){
+                            kbpm_list.push_back(in_log_kbm);
+                            log_stat_change= true;
+                            /*Use extra NRS count in order to prevent log cleaning*/
+                            in_log_kbm->DecNRSCount();
+                            /* 
+                             * Increase Cleanupable count 
+                             * If the count reaches a treshold, wake LogCleanupThread up 
+                             */
+                        }
+                        in_log_KBM_queue.pop();
+                    }
+                    if(log_stat_change){
+                        SetLogCleanupRequest();
+                    }
+
+                    if(!kbpm_list.empty())
+                        SpliceKBPMCacheList(kbpm_list);
+                    SignalKBPMUpdateThread();
+                }
+            }
+            assert(skt_list.empty() && clean_list.empty() && dirty_list.empty());
+            ClearFlushThreadBusy();
+        }
+
+        if (dev_buffer) free(dev_buffer);
+    }
+
+    /* Get updated KBMs from all SKTable KBM of update chache */ 
+    void Manifest::KBMUpdateThread()
+    {
+        // Set update thread name
+        (void)pthread_setname_np(pthread_self(), "update");
+
+        std::map<uint64_t, KeyBlockPrimaryMeta*> kbpm_map;
+        SKTableMem *skt = NULL;
+        std::list<KeyBlockPrimaryMeta*> kbpm_list;
+
+        struct KBPMUpdateVector kbpm_update; 
+        std::vector<InSDBKey> delete_key_vec;
+
+        char *kbpm_io_buf = (char*)malloc(kDeviceRquestMaxSize);
+        uint32_t kbpm_io_buf_size = kDeviceRquestMaxSize;
+        uint32_t kbpm_io_actual_size = 0;
+
+        uint32_t size = 0;
+
+        uint64_t ikey = 0;
+        KeyBlockPrimaryMeta* kbpm = NULL;
+
+        uint32_t kbpm_count = 0;
+
+        InSDBKey last_insdbkey;
+        last_insdbkey.first = 0;
+        last_insdbkey.second = 0;
+        InSDBKey null_insdbkey;
+        null_insdbkey.first = 0;
+        null_insdbkey.second = 0;
+        LogRecordKey Logkey(dbhash_);
+        InSDBKey old_col_table_key;
+        while(true){
+            kbpm_update_mu_.Lock();
+            /** Wait for a signal */
+            /* Do KBM update just one time, and waiting more KBM update */
+            bool timeout = false;
+            bool logcleanup_queue = false;
+            while(!cache_thread_shutdown_)
+            {
+                ClearKBPMUpdate();
+                timeout = kbpm_update_cv_.TimedWait(env_->NowMicros() + 1000000/*Wake up every 1 second*/);
+                SetKBPMUpdate();
+                if(!IsSKTKBMUpdateListEmpty() || kbpm_map.empty() || (logcleanup_queue = !IsWorkerLogCleanupQueueEmpty()))
+                    break;
+            }
+            kbpm_update_mu_.Unlock();
+
+            if(CheckExitCondition() && kbpm_map.empty()){
+                /*Finish the Cache Thread if there is no more SKT in the clean cache list */
+                break;
+            }
+
+            bool logcleanup_requested = ClearLogCleanupRequest() || (timeout && logcleanup_queue);
+            if(!IsSKTKBMUpdateListEmpty()  || !kbpm_map.empty() || logcleanup_requested || (cache_thread_shutdown_ && !IsWorkerLogCleanupQueueEmpty())){
+                /*TODO : Flush last Column Info Table before cleanup the Log*/
+                InSDBKey col_table_key = GetLastColInfoTableKey();
+                if(col_table_key != old_col_table_key){
+                    Env::Default()->Flush(kWriteFlush, -1, col_table_key);
+                    old_col_table_key = col_table_key;
+                }
+                if (CheckExitConditionExceptLog()) CheckForceFlushSKT();
+                SetKBMUpdateThreadBusy();
+                if(logcleanup_requested || (cache_thread_shutdown_ && !IsWorkerLogCleanupQueueEmpty()/*missing flag??*/))
+                    LogCleanupInternal(Logkey);
+
+#if 1 /* Get updated KBMs from all SKTable KBM of update chache */
+                if(!IsSKTKBMUpdateListEmpty()){
+                    SwapKBPMCacheList(kbpm_list);
+                    kbpm_count = InsertUpdatedKBPMToMap(&kbpm_list, &kbpm_map);
+                    assert(kbpm_list.empty());
+                    kbpm_io_actual_size += kbpm_count*12; // 8 = SizeAlignment(kbpm->GetEstimatedBufferSize() : KBPM_HEADER_SIZE);
+                }
+#endif
+#if 1 /* I/O Buffer Allocation */
+                /* KBPM I/O Buffer Allocation */
+                if(kbpm_io_actual_size > kbpm_io_buf_size){
+                    kbpm_io_buf_size = kbpm_io_actual_size;
+                    free(kbpm_io_buf);
+                    kbpm_io_buf = (char*)calloc(1, kbpm_io_buf_size);
+                }
+
+#endif
+#if 1 /* Build KBPM update list & KBPM vectors for device submission */
+                std::deque<KeyBlockPrimaryMeta*> updated_kbpm;
+                kbpm_count = BuildKBPMUpdateData(&kbpm_map, &kbpm_update, &delete_key_vec, updated_kbpm, kbpm_io_buf);
+                kbpm_io_actual_size -= (kbpm_count*8);
+#endif
+
+#if 1 /* Write update list, KBPM(update or delete)*/
+                /* 
+                 * Flush the most recently submitted KBPM before taking further KBPM update 
+                 */
+                if(last_insdbkey.first)
+                    Env::Default()->Flush(kWriteFlush, -1, last_insdbkey);
+
+                /*Write update list before update KBPMs*/
+
+                last_insdbkey.first = 0;
+                last_insdbkey.second = 0;
+
+                if(!delete_key_vec.empty()) {
+                    std::vector<Env::DevStatus> status;
+                    Env::Default()->MultiDel(delete_key_vec, null_insdbkey, true, status);
+                    last_insdbkey = delete_key_vec.back();
+                }
+
+                if(!kbpm_update.empty()){
+                    Env::Default()->MultiPut(kbpm_update.key_vec, kbpm_update.data_vec, kbpm_update.size_vec, null_insdbkey, true);
+                    last_insdbkey = kbpm_update.key_vec.back();
+                }
+                while(!updated_kbpm.empty()){
+                    kbpm = updated_kbpm.front();
+                    updated_kbpm.pop_front();
+                    assert(kbpm->IsNeedToUpdate());
+                    assert(!kbpm->IsInlog());
+                    if(!kbpm->SetWriteProtection()/* The other threads try to change KBPM */){
+                        if(!kbpm->GetPendingUpdatedValueCnt()){
+                            kbpm->ClearNeedToUpdate();
+                            kbpm->ClearWriteProtection();
+                            if(kbpm->EvictColdKBPM(this)){
+#ifdef CODE_TRACE
+                                printf("[%d :: %s]Free (kbpm : %p), ikey = %ld\n", __LINE__, __func__, kbpm, kbpm->GetiKeySequenceNumber());
+#endif
+                                FreeKBPM(kbpm);
+                            }
+                        }  else {
+                            kbpm->ClearWriteProtection();//It may not be needed because no one accesses the KBPM.
+                        }
+                    }
+                }
+#endif
+                ClearKBMUpdateThreadBusy();
+            }
+
+        }
+        free(kbpm_io_buf);
+        //sem_post(&skt_eviction_shutdown_sem_);
+    }
+
+    void Manifest::SKTEvictionThread()
+    {
+        int ret;
+        ret = pthread_setname_np(pthread_self(), "eviction");
+#if 0
+        ret = nice(-20);
+        if (!ret) {
+            printf("nice ret %d\n", ret);
+        }
+#endif
+
+
+        /*?? Is it needed??*/
+        bool cleanup = false;
+        while(true){
+            skt_eviction_mu_.Lock();
+            /** Wait for a signal */
+            while(!cache_thread_shutdown_ && (MemoryUsage() <= kMaxCacheSize && !IsCleanToDirty()))
+            {
+                ClearMemoryReclaim();
+                skt_eviction_cv_.TimedWait(env_->NowMicros() + 2000000/*Wake up every 2 second*/);
+                SetMemoryReclaim();
+
+                std::list<SKTableMem*> dirty_list;
+                std::list<SKTableMem*> skt_list;
+                SKTableMem *skt = NULL;
+                SwapSKTCacheList(skt_list, kCleanSKTCache);
+                for(auto it = skt_list.begin(); it != skt_list.end(); ){
+                    skt = (*it);
+                    if(skt->IsSKTDirty(this)){
+                        it = skt_list.erase(it);
+                        skt->ChangeStatus(SKTableMem::flags_in_clean_cache/*From*/, SKTableMem::flags_in_dirty_cache/*To*/);
+                        dirty_list.push_back(skt);
+                    } else {
+                        it++;
+                    }
+                }
+                if(!dirty_list.empty()){
+                    SpliceCacheList(dirty_list, kDirtySKTCache);
+                    if(update_cnt_ >= kSKTableFlushWatermark)
+                        SignalSKTFlushThread();
+                }
+                if(!skt_list.empty()){
+                    SpliceCacheList(skt_list, kCleanSKTCache);
+                }
+
+            }
+            skt_eviction_mu_.Unlock();
+            if(CheckExitCondition()){
+                /*Finish the Cache Thread if there is no more SKT in the clean cache list */
+                break;
+            }
+            cleanup = cache_thread_shutdown_.load(std::memory_order_relaxed);
+            if(cleanup) kCacheSizeLowWatermark = 0;
+            bool to_dirty = ClearCleanToDirty();
+            while(!IsSKTCleanListEmpty() && ((MemoryUsage() > kCacheSizeLowWatermark)/*For memory reclaim*/ || cleanup)) 
+            {
+                SetSKTEvictionThreadBusy();
+                std::list<SKTableMem*> dirty_list;
+                std::list<SKTableMem*> skt_list;
+                SwapSKTCacheList(skt_list, kCleanSKTCache);
+
+                SKTableMem *skt = NULL;
+
+                uint64_t memusage = MemoryUsage();
+                if(!skt_list.empty() && ((memusage > kCacheSizeLowWatermark)/*For memory reclaim*/ || cleanup)){
+                    int64_t reclaim_size = memusage - kCacheSizeLowWatermark;
+#ifdef CODE_TRACE
+                   printf("before cur Memory usage %ld - kCacheSizeLowWatermark %ld  reclaim_size %ld -->", memusage, kCacheSizeLowWatermark, reclaim_size);
+#endif
+                    EvictUserKeys(skt_list, reclaim_size, cleanup);
+#ifdef CODE_TRACE
+                    printf("after Memory usage %ld - reclaim size %ld\n", MemoryUsage(), reclaim_size);
+#endif
+                }else if(!skt_list.empty()){
+                    SpliceCacheList(skt_list, kCleanSKTCache);
+                }
+                cleanup = cache_thread_shutdown_.load(std::memory_order_relaxed);
+                if(cleanup) kCacheSizeLowWatermark = 0;
+                ClearSKTEvictionThreadBusy();
+            }
+        }
+        //sem_post(&skt_eviction_shutdown_sem_);
+    }
+#if 0
+    /*
+       Thread unsafe ... call only single context, eq, DB close.
+       */
+    void Manifest::CheckForceFlushSKT(void) {
+        SKTableMem *skt = GetFirstSKTable();
+        while(skt) {
+            if(skt->KeyQueueKeyCount() || IsNextSKTableDeleted(skt->GetSKTableSortedListNode())){
+                assert(0);
+            } 
+            if(!skt->IsKeyQueueEmpty())
+                abort();
+            skt = Next(skt);
+        }
+    }
+#endif
+    /*
+       Thread unsafe ... call only single context, eq, DB close.
+       */
+    void Manifest::CheckForceFlushSKT() {
+
+        std::list<KeyBlockPrimaryMeta*> kbpm_list;
+        std::queue<KeyBlockPrimaryMeta*> in_log_KBM_queue;
+
+        SKTableMem *skt = GetFirstSKTable();
+
+        char* dev_buffer = (char*)malloc(kDeviceRquestMaxSize);
+        std::string col_info_table;
+        col_info_table.reserve(kDeviceRquestMaxSize);
+        Slice comp_col_info_table(dev_buffer, kDeviceRquestMaxSize);
+        while(skt) {
+            if(!skt->IsCached() && skt->IsSKTDirty(this)) {
+                abort();
+                /* 
+                 * It does not need to aquire read lock(sktdf_update_mu_)
+                 * because this is last WorkerThread which means the skt is not in flushing by the other threads
+                 */
+                if(!skt->IsKeymapLoaded()){
+                    skt->LoadSKTableDeviceFormat(this);
+                }
+
+                //#ifdef CODE_TRACE
+                printf("[%d :: %s]Last minute flush SKT : dirty col cnt : %ld || %s (SKT addr : %p || ID : %d) flags 0x%04x\n", __LINE__, __func__, skt->KeyQueueKeyCount(), IsNextSKTableDeleted(skt->GetSKTableSortedListNode())? "Deleted Next SKT":"next skt is NOT deleted", skt, skt->GetSKTableID(), skt->GetFlags());
+                //#endif
+
+                skt->FlushSKTableMem(this, col_info_table, comp_col_info_table, in_log_KBM_queue, kbpm_list);
+
+                bool log_stat_change = false;
+                KeyBlockPrimaryMeta *in_log_kbm = NULL;
+                while(!in_log_KBM_queue.empty()) {
+                    in_log_kbm = in_log_KBM_queue.front();
+                    if(in_log_kbm->DecNRSCount() == 1){
+                        kbpm_list.push_back(in_log_kbm);
+                        log_stat_change= true;
+                        /*Use extra NRS count in order to prevent log cleaning*/
+                        in_log_kbm->DecNRSCount();
+                        /* 
+                         * Increase Cleanupable count 
+                         * If the count reaches a treshold, wake LogCleanupThread up 
+                         */
+                    }
+                    in_log_KBM_queue.pop();
+                }
+                if(log_stat_change){
+                    SetLogCleanupRequest();
+                }
+
+                if(!kbpm_list.empty())
+                    SpliceKBPMCacheList(kbpm_list);
+
+                if(!skt->IsKeyQueueEmpty())
+                    abort();
+            } 
+            skt = Next(skt);
+        }
+        free(dev_buffer);
+    }
+
+
+
+
+    void Manifest::TerminateCacheThread(){
+        // Shut down Cache thread
+        cache_thread_shutdown_ = true;
+        skt_flush_cv_.SignalAll();
+        skt_eviction_cv_.SignalAll();
+        kbpm_update_cv_.SignalAll();
+        if (skt_flush_thread_tid_)
+            Env::Default()->ThreadJoin(skt_flush_thread_tid_);
+        if (skt_eviction_thread_tid_)
+            Env::Default()->ThreadJoin(skt_eviction_thread_tid_);
+        if (kbm_update_thread_tid_)
+            Env::Default()->ThreadJoin(kbm_update_thread_tid_);
+    }
+    /////////////////////////////////////////// END  : Cache Threads(Dirty/KBM update/Clean) related functions ///////////////////////////////////////////
+
+    /////////////////////////////////////////// START: Snapshot/Iterator related functions ///////////////////////////////////////////
+    
+   SnapshotImpl* Manifest::GetSnapshotImpl(SimpleLinkedNode *node){ return node ? class_container_of(node, SnapshotImpl, snapshot_node_) : NULL; }
+
+    /**
+      <Manifest storage format>
+      manifest::
+      size(4B)
+      crc(4B)
+      last InSDB sequence(8B)
+      last SKTable sequence(4B)
+      count of SKTable info(4B)
+      count of worker(2B)
+      [SKTable information]
+
+      SKTable information::
+      SKTable ID(4B)
+      size of begin key(var 32)
+      begin user key(var)
+      list of next ikey sequnce number(each var 64) 
+      */
+   Status Manifest::GetSnapshotInfo(std::vector<SnapInfo> *snapinfo_list) {
+       SnapshotImpl* snapshot = NULL;
+       SimpleLinkedNode* snapshot_node = NULL;
+       SnapInfo snap_info;
+       snapshot_simplelist_lock_.Lock();
+       for(snapshot_node = snapshot_simplelist_.newest(); snapshot_node ; snapshot_node = snapshot_simplelist_.next(snapshot_node)) {
+           snapshot = GetSnapshotImpl(snapshot_node);
+           snap_info.cseq = snapshot->GetCurrentSequenceNumber();
+           snap_info.exp = snapshot->GetCurrentTime();
+           snapinfo_list->push_back(snap_info); 
+       }
+       snapshot_simplelist_lock_.Unlock();
+       return Status::OK();
+   }
+
+   SequenceNumber Manifest::GetOldestSnapshotSequenceNumber() {
+       SequenceNumber seq = 0;
+       if (!snapshot_simplelist_.empty()) {
+           SimpleLinkedNode* snapshot_node = NULL;
+           snapshot_simplelist_lock_.Lock();
+           if ((snapshot_node = snapshot_simplelist_.oldest())) 
+               seq = GetSnapshotImpl(snapshot_node)->GetCurrentSequenceNumber();
+           snapshot_simplelist_lock_.Unlock();
+       }
+       return seq;
+   }
+
+   SequenceNumber Manifest::GetLatestSnapshotSequenceNumber() {
+       SequenceNumber seq = 0;
+       if (!snapshot_simplelist_.empty()) {
+           SimpleLinkedNode* snapshot_node = NULL;
+           snapshot_simplelist_lock_.Lock();
+           if ((snapshot_node = snapshot_simplelist_.newest())) 
+               seq = GetSnapshotImpl(snapshot_node)->GetCurrentSequenceNumber();
+           snapshot_simplelist_lock_.Unlock();
+       }
+       return seq;
+
+   }
+
+   SnapshotImpl* Manifest::__CreateSnapshot() {
+       SnapshotImpl* snapshot = NULL;
+       SimpleLinkedNode* snapshot_node = NULL;
+       snapshot_simplelist_lock_.Lock();
+       if ((snapshot_node = snapshot_simplelist_.newest())) {
+           snapshot = GetSnapshotImpl(snapshot_node);
+           assert(snapshot);
+           if (snapshot->GetCurrentSequenceNumber() == GetLastSequenceNumber()) {
+               snapshot->IncRefCount();
+               //RefSnapshot(snap);
+               snapshot_simplelist_lock_.Unlock();
+#ifdef CODE_TRACE
+        printf("[%d :: %s]snapshot(%p) shared %ld\n", __LINE__, __func__, snapshot, snapshot->GetCurrentSequenceNumber());
+#endif
+               return snapshot;
+           }
+       }
+       snapshot = new SnapshotImpl(this, GetLastSequenceNumber(), env_->NowSecond());
+        assert(snapshot);
+        snapshot_node = snapshot->GetSnapshotListNode();
+        snapshot->IncRefCount();
+        //RefSnapshot(snap);
+        snapshot_simplelist_.InsertFront(snapshot_node);
+        snapshot_simplelist_lock_.Unlock();
+
+#ifdef CODE_TRACE
+        printf("[%d :: %s]snapshot(%p) new %ld\n", __LINE__, __func__, snapshot, snapshot->GetCurrentSequenceNumber());
+#endif
+        return snapshot;
+    }
+
+   
+    Iterator* Manifest::CreateNewIterator(const ReadOptions& options, uint8_t col_id) {
+        nr_iterator_.fetch_add(1, std::memory_order_relaxed);
+        if (options.snapshot) {
+            Snapshot* snapshot = const_cast<Snapshot*>(options.snapshot);
+            SnapshotImpl* snap = reinterpret_cast<SnapshotImpl*>(snapshot);
+            snap->IncRefCount();
+            //RefSnapshot(snap);
+            return snap->CreateNewIterator(col_id);
+        }
+        SnapshotImpl* snap = __CreateSnapshot();
+        assert(snap);
+        return snap->CreateNewIterator(col_id);
+    }
+
+    void Manifest::DeleteIterator(Iterator *iter) {
+        delete iter;
+    }
+
+
+    bool Manifest::__DisconnectSnapshot(SnapshotImpl* snapshot) {
+        snapshot_simplelist_lock_.Lock();
+        if (snapshot->DecRefCount() <= 0 && snapshot->GetIterCount() == 0) {
+            snapshot_simplelist_.Delete(snapshot->GetSnapshotListNode());
+            snapshot_simplelist_lock_.Unlock();
+            return true;
+        }
+        snapshot_simplelist_lock_.Unlock();
+        return false;
+    }
+
+    Snapshot* Manifest::CreateSnapshot() {
+        return reinterpret_cast<Snapshot*>(__CreateSnapshot());
+    }
+
+    void Manifest::DeleteSnapshot(Snapshot *handle) {
+       SnapshotImpl* snap = reinterpret_cast<SnapshotImpl*>(handle);
+       assert(snap);
+        if(__DisconnectSnapshot(snap)){
+            delete snap; 
+        }
+    }
+
+    void Manifest::CleanUpSnapshot() {
+        SnapshotImpl* snapshot = NULL;
+        SimpleLinkedNode* snapshot_node = NULL;
+        while((snapshot_node = snapshot_simplelist_.newest())) {
+            snapshot = GetSnapshotImpl(snapshot_node);
+            assert(snapshot);
+            delete snapshot;
+        }
+    }
+
+    /////////////////////////////////////////// END  : Snapshot related functions ///////////////////////////////////////////
+
+    /////////////////////////////////////////// START: Memory Allocation/Deallocation ///////////////////////////////////////////
+    /* It can be Used fo SKTableDFBuilderInfo & SKTable Device Format loading */
+    /* The size is kMaxSKTableSize */
+    Slice Manifest::AllocSKTableBuffer(uint32_t size)
+    {
+        Slice buf(0);
+        free_skt_buffer_spinlock_.Lock();
+        if(!free_skt_buffer_.empty()){
+            /* Get recently freed node for CPU cache */
+            buf = free_skt_buffer_.back();
+            free_skt_buffer_.pop_back();
+        }
+        free_skt_buffer_spinlock_.Unlock();
+        if(!buf.size()) buf = Slice((char*)malloc(size), size);
+        else if(buf.size() < size) 
+            buf = Slice((char*)realloc(const_cast<char*>(buf.data()), size), size);
+        return buf;
+    }
+
+    void Manifest::FreeSKTableBuffer(Slice &buffer)
+    {
+        //assert(buffer.size() <= kMaxSKTableSize * 4);
+        if(buffer.size() > kMaxSKTableSize * 4)
+            printf("[%d :: %s]SKT Size : 0x%lx\n", __LINE__, __func__, buffer.size());
+        free_skt_buffer_spinlock_.Lock();
+        if(free_skt_buffer_.size()+1 == kFreeBufferSize)
+            free(const_cast<char*>(buffer.data()));
+        else
+            free_skt_buffer_.push_front(buffer);
+        free_skt_buffer_spinlock_.Unlock();
+    }
+
+    void Manifest::CleanupFreeSKTableBuffer() {
+        Slice node(0);
+        while(!free_skt_buffer_.empty()){
+            node = free_skt_buffer_.front();
+            free_skt_buffer_.pop_front();
+            free(const_cast<char*>(node.data()));
+        }
+
+    }
+
+#if 0
+    void Manifest::RefillFreeUserValueCount(uint32_t size){
+        uint64_t refill = free_uservalue_->NeedToRefill();
+        while(refill > size){
+            free_uservalue_->PushNode(new UserValue(size));
+            refill-=size;
+        }
+        return;
+
+    }
+#endif
+
+    UserValue*  Manifest::AllocUserValue(uint32_t size)
+    {
+        return uv_allocator_pool_.GetUVAllocator()->Alloc(size);
+    }
+#define DEFAULT_UV_ENTRY_CNT    (1024*8)
+    void Manifest::FreeUserValue(UserValue* uv)
+    {
+        if(!uv->UnPin()){
+            uv->InitPinAndFlag();
+            uv->GetAllocator()->Free(uv, DEFAULT_UV_ENTRY_CNT);
+        }
+        return;
+    }
+#if 0
+    void Manifest::RefillFreeUserKeyCount(uint32_t key_size){
+        size_t refill = free_userkey_->NeedToRefill();
+        UserKey *uk = NULL;
+        while(refill){
+            uk = new UserKey(key_size);
+            free_userkey_->PushNode(uk);
+            refill-=uk->GetSize();
+            if(refill < uk->GetSize()) break;
+        }
+    }
+#endif
+
+    UserKey* Manifest::AllocUserKey(uint32_t key_size)
+    {
+#ifdef MEM_TRACE
+        IncUK_MEM_Usage(sizeof(UserKey) + kMaxColumnCount * sizeof(UserKey::ColumnData) + key_size);
+#endif
+        IncreaseMemoryUsage(sizeof(UserKey) + kMaxColumnCount * sizeof(UserKey::ColumnData) + key_size);
+#ifdef INSDB_GLOBAL_STATS
+            g_new_ukey_cnt++;
+#endif
+
+        return uk_allocator_pool_.GetUKAllocator()->Alloc(key_size);
+    }
+#define DEFAULT_UKEY_ENTRY_CNT      (1024*64)
+    void Manifest::FreeUserKey(UserKey* ukey)
+    {
+#ifdef MEM_TRACE
+        DecUK_MEM_Usage(sizeof(UserKey) + kMaxColumnCount * sizeof(UserKey::ColumnData) + ukey->GetKeySize());
+#endif
+        DecreaseMemoryUsage(sizeof(UserKey) + kMaxColumnCount * sizeof(UserKey::ColumnData) + ukey->GetKeySize());
+#ifdef INSDB_GLOBAL_STATS
+            g_del_ukey_cnt++;
+#endif
+        ukey->GetAllocator()->Free(ukey, DEFAULT_UKEY_ENTRY_CNT);
+    }
+
+    ColumnNode*  Manifest::AllocColumnNode()
+    {
+#ifdef MEM_TRACE
+        IncCOL_MEM_Usage(sizeof(ColumnNode));
+#endif
+        IncreaseMemoryUsage(sizeof(ColumnNode));
+#ifdef INSDB_GLOBAL_STATS
+                g_new_ikey_cnt++;
+#endif
+        return cn_allocator_pool_.GetCNAllocator()->Alloc();
+    }
+#define DEFAULT_COL_ENTRY_CNT       (1024*1024)
+    void Manifest::FreeColumnNode(ColumnNode* col_node)
+    {
+        assert(!col_node->GetRequestNode());
+#ifdef MEM_TRACE
+        DecCOL_MEM_Usage(sizeof(ColumnNode));
+#endif
+        DecreaseMemoryUsage(sizeof(ColumnNode));
+#ifdef INSDB_GLOBAL_STATS
+                g_del_ikey_cnt++;
+#endif
+
+        col_node->GetAllocator()->Free(col_node, DEFAULT_COL_ENTRY_CNT);
+    }
+
+    /* 
+     * this is called from WriteBatchInternal::Store()
+     */
+    RequestNode* Manifest::AllocRequestNode()
+    {
+        return request_node_allocator_pool_.GetRequestNodeAllocator()->Alloc();
+    }
+
+#define DEFAULT_REQ_ENTRY_CNT       (1024*1024)
+    /* Worker Thread calls it after request submission */
+    void Manifest::FreeRequestNode(RequestNode* req_node)
+    {
+        req_node->GetAllocator()->Free(req_node, DEFAULT_REQ_ENTRY_CNT);
+    }
+
+    /////////////////////////////////////////// END  : Memory Allocation/Deallocation ///////////////////////////////////////////
+   
+
+    /////////////////////////////////////////// START: User Key & Value[UserKey/SKTDF/KBPM/KBML] Manageement ///////////////////////////////////////////
+    KeyBlock* Manifest::LoadValue(uint64_t insdb_key_seq, uint32_t ivalue_size, bool *from_readahead, KeyBlockPrimaryMeta* kbpm)
+    {
+        Status s;
+        int buffer_size = SizeAlignment(ivalue_size);
+        InSDBKey insdb_key = GetKBKey(dbhash_, kKBlock, insdb_key_seq);
+        KeyBlock* kb = AllocKB();
+
+        Slice *io_buf = GetIOBuffer(kDeviceRquestMaxSize);
+        assert(buffer_size <= io_buf->size());
+        Slice buffer = kb->GetRawData();
+
+        char *contents = const_cast<char*>(io_buf->data());
+
+        s = env_->Get(insdb_key, contents, &buffer_size, kSyncGet, IsIOSizeCheckDisabled()?Env::GetFlag_NoReturnedSize:0, from_readahead);
+        if (!s.ok()) {
+            printf("[%d :: %s] key seq %lu size %u from_readahead %d\n", __LINE__, __func__, insdb_key_seq, buffer_size, *from_readahead);
+            fprintf(stderr, "keyblock does not exist(ikey seq: %ld)\n", insdb_key_seq);
+            abort();
+        }
+#ifdef TRACE_READ_IO
+        g_kb_sync++;
+        if (from_readahead && *from_readahead)
+            g_kb_sync_hit++;
+#endif
+#ifdef CODE_TRACE
+        printf("[%d :: %s] key seq %lu size %u from_readahead %d\n", __LINE__, __func__, insdb_key_seq, buffer_size, *from_readahead);
+#endif
+        /////////////////
+        uint32_t orig_crc = crc32c::Unmask(DecodeFixed32(contents)); /* get crc */
+        uint32_t kb_keycnt_size_loc = *((uint32_t*)(contents + 4));
+        char* kb_buffer = (char*)(contents + 8)/*CRC(4B) + # of Keys(1B) + Size of compressed KB(3B)*/;
+        uint32_t actual_crc = crc32c::Value((contents + 4), (kb_keycnt_size_loc & KEYBLOCK_KB_SIZE_MASK) + 4/* 4 is for "kb_keycnt_size_loc" */);
+
+        if (orig_crc != actual_crc) {
+            printf("[%d :: %s](ikey : %ld | ivalue size : %d)crc mismatch check this orig (%d) actual(%d)\n", __LINE__, __func__, insdb_key_seq, ivalue_size, orig_crc, actual_crc);
+            abort();
+        }
+        /////////////
+
+        if(kb_keycnt_size_loc & KEYBLOCK_COMP_MASK){
+            /*It was compressed.*/
+            size_t ulength = 0;
+            if (!port::Snappy_GetUncompressedLength(kb_buffer, kb_keycnt_size_loc & KEYBLOCK_KB_SIZE_MASK, &ulength)) {
+                fprintf(stderr, "corrupted compressed data\n");
+                abort();
+            } else {
+                kb->KeyBlockInit(ulength);  /* initially set aligned size */
+                if (!port::Snappy_Uncompress(kb_buffer, kb_keycnt_size_loc & KEYBLOCK_KB_SIZE_MASK, const_cast<char*>(kb->GetRawData().data()))) {
+                    fprintf(stderr, "corrupted compressed data\n");
+                    abort();
+                }
+            }
+        }else{
+            kb->KeyBlockInit(ivalue_size);  /* initially set aligned size */
+            memcpy(const_cast<char*>(kb->GetRawData().data()), kb_buffer, ivalue_size);
+        }
+        /////////////
+        kbpm->ClearKBPrefetched();
+#ifdef TRACE_READ_IO
+        g_loadvalue_sktdf++;
+#endif
+        IncreaseMemoryUsage(kb->GetSize());
+#ifdef MEM_TRACE
+        IncKBPM_MEM_Usage(kb->GetSize());
+#endif
+        return kb;
+
+    }
+
+#ifdef INSDB_USE_HASHMAP
+    /////////////////////////////// hopscotch hashmap ///////////////////////////////
+#ifdef USE_HOTSCOTCH
+    bool Manifest::InsertUserKeyToHopscotchHashMap(UserKey* uk) {
+        KeyHashLock();
+        auto it = hopscotch_key_hashmap_->insert({uk->GetKeySlice(), uk});
+        KeyHashUnlock();
+        if(it.second) uk_count_.fetch_add(1, std::memory_order_relaxed);
+        return it.second;
+    }
+
+    /*Reture UserKey with increased referenced count*/
+    UserKey* Manifest::FindUserKeyFromHopscotchHashMap(KeySlice& key) {
+        UserKey* uk = NULL;
+        while(!uk){
+            KeyHashLock();
+            auto it = hopscotch_key_hashmap_->find(key);
+            if (it != hopscotch_key_hashmap_->end()) {
+                KeyHashUnlock();
+                uk = it.value();
+                uk->IncreaseReferenceCount();
+                //if(uk) uk = uk->IsSKTableEvictionInProgress();
+            }else{
+                KeyHashUnlock();
+                return NULL;
+            }
+        }
+        return uk;
+    }
+
+    bool Manifest::RemoveUserKeyFromHopscotchHashMap(KeySlice key) {
+        uint32_t cnt = uk_count_.fetch_sub(1, std::memory_order_relaxed);
+        if( congestion_control_  && cnt < (kCongestionControl - (kCongestionControl>>2))){
+            MutexLock l(&congestion_control_mu_);
+            congestion_control_= false;
+            congestion_control_cv_.SignalAll();
+        }
+        KeyHashLock();
+        bool ret = hopscotch_key_hashmap_->erase(key);
+        KeyHashUnlock();
+
+        return ret;
+    }
+#endif
+    /////////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////// folly hashmap /////////////////////////////////
+    bool Manifest::InsertUserKeyToHashMap(UserKey* uk) {
+        auto it = key_hashmap_->insert(uk->GetKeySlice(), uk);
+        if(it.second) uk_count_.fetch_add(1, std::memory_order_relaxed);
+        return it.second;
+    }
+
+    /*Reture UserKey with increased referenced count*/
+    UserKey* Manifest::FindUserKeyFromHashMap(KeySlice& key) {
+        UserKey* uk = NULL;
+        while(!uk){
+            auto it = key_hashmap_->find(key);
+            if (it != key_hashmap_->end()) {
+                uk = it->second;
+                uk->IncreaseReferenceCount();
+                if(!uk->IsInHash()){
+                    uk->DecreaseReferenceCount();
+                    uk = NULL;
+                }
+            }else
+                return NULL;
+        }
+        return uk;
+    }
+
+    bool Manifest::RemoveUserKeyFromHashMap(KeySlice key) {
+        uint32_t cnt = uk_count_.fetch_sub(1, std::memory_order_relaxed);
+        if( congestion_control_  && cnt < (kCongestionControl - (kCongestionControl>>2))){
+#ifdef CODE_TRACE
+            printf("[%d :: %s]count : %u\n", __LINE__, __func__, cnt);
+#endif
+            MutexLock l(&congestion_control_mu_);
+            congestion_control_= false;
+            congestion_control_cv_.SignalAll();
+        }
+        return key_hashmap_->erase(key);
+    }
+    /////////////////////////////////////////////////////////////////////////////////
+
+
+    UserKey* Manifest::LookupUserKeyFromFlushedKeyHashMap(const KeySlice &key) {
+        UserKey* uk = NULL;
+        auto it = flushed_key_hashmap_->find(key);
+        if (it != flushed_key_hashmap_->end()) {
+            uk = it->second;
+        }
+        return uk;
+    }
+
+#if 0
+    bool Manifest::InsertUserKeyToFlushedKeyHashMap(UserKey* uk) {
+        auto it = flushed_key_hashmap_->insert(uk->GetKeySlice(), uk);
+        return it.second;
+    }
+
+    bool Manifest::RemoveUserKeyFromFlushedKeyHashMap(const KeySlice& key) {
+        return flushed_key_hashmap_->erase(key);
+    }
+#endif
+
+    void Manifest::FlushedKeyHashMapFindAndMergeUserKey(UserKey* new_uk) {
+        UserKey *exist_uk = NULL;
+        if(!(exist_uk = LookupUserKeyFromFlushedKeyHashMap(new_uk->GetKeySlice()))){
+            // note that the new key could be inserted after its sktable is evicted.
+            if (!flushed_key_hashmap_->insert(new_uk->GetKeySlice(), new_uk).second)
+                abort();
+        }else{
+            exist_uk->UserKeyMerge(new_uk, true/*Merge to front*/);
+        }
+        return;
+    }
+
+    void Manifest::FlushUserKey(std::queue<KeyBlockPrimaryMeta*> &in_log_KBM_queue, std::list<KeyBlockPrimaryMeta*> &kbpm_list){
+        SimpleLinkedList* col_list = nullptr;
+        ColumnNode* col_node = NULL;
+        bool iter = false;
+        bool dirty = false;
+        uint64_t ikey = 0;
+        std::vector<SnapInfo> snapinfo_list;
+        GetSnapshotInfo(&snapinfo_list);
+        int32_t nr_snap = snapinfo_list.size(); 
+        if (!flushed_key_hashmap_->empty()) {
+            for (auto it = flushed_key_hashmap_->cbegin(); it != flushed_key_hashmap_->cend();) {
+                UserKey *uk = it->second;
+                assert(uk); 
+                for( uint8_t col_id = 0 ; col_id < kMaxColumnCount ; col_id++){
+                    int32_t snap_index = 0;
+                    /*
+                     * ColumnLock may not be needed 
+                     * dfb_info->ukey->ColumnLock(col_id);
                      */
-                    key_cache_mu_.Lock();
-                    uint64_t start_time = env_->NowMicros();
-                    key_cache_cv_.TimedWait(start_time + 500000/*Wake up every 0.5 second*/);
-                    key_cache_mu_.Unlock();
+                    uk->ColumnLock(col_id);
+                    col_list = uk->GetColumnList(col_id);
+
+                    col_node = NULL;
+                    for(SimpleLinkedNode* col_list_node = col_list->newest(); col_list_node ; ) {
+                        ColumnNode* valid_col_node = NULL;
+
+                        col_node = uk->GetColumnNodeContainerOf(col_list_node);
+                        /*
+                           assert(valid_col_nodes.empty());
+                         * col_node can be deleted.(col_list_node exists in col_node ).
+                         * Therefore, keep next col_list_node first.
+                         */
+                        col_list_node = col_list->next(col_list_node);
+
+                        /////////////////////////// Check Iterator /////////////////////////// 
+                        iter = false;
+                        while(snap_index < nr_snap && col_node->GetBeginSequenceNumber() <= snapinfo_list[snap_index].cseq ){
+                            if(col_node->GetEndSequenceNumber() > snapinfo_list[snap_index].cseq && col_node->GetRequestType() == kPutType){
+                                iter  = true;
+                            }
+                            ++snap_index;
+                        }
+                        ////////////////////////////////////////////////////////////////////// 
+                        /* 
+                         * It does nothing if the col node belongs to an iterator.
+                         * We have a col info table which is a sort of command log.
+                         * We can replay a list of commands in the col info table.
+                         */
+                        if(iter || col_node->ColGetpin()){
+                            dirty = true;
+                            continue;
+                        }
+                        ////////////////////////////////////////////////////////////////////// 
+
+                        ////////////////////////////////////////////////////////////////////// 
+                        /*
+                         * If col_node has been overwrite merged, just delete the col node.
+                         * It was alive because of the iterator.
+                         */
+                        if(col_node->IsOverwritten()){
+                            col_list->Delete(col_node->GetColumnNodeNode());
+                            col_node->InvalidateUserValue(this);
+                            if(uk->GetLatestColumnNode(col_id) == col_node)
+                                uk->SetLatestColumnNode(col_id, col_list_node ? uk->GetColumnNodeContainerOf(col_list_node): NULL);
+#ifndef NDEBUG
+                            if(col_node->GetRequestNode()) {
+                                assert(col_node->GetRequestNode()->GetRequestNodeLatestColumnNode() != col_node);
+                            }
+#endif
+                            col_node->SetRequestNode(nullptr);
+                            FreeColumnNode(col_node);
+                            continue;
+                        }
+                        ////////////////////////////////////////////////////////////////////// 
+
+                        ///////////////// Check whether col_node has been submitted or not ///////////////// 
+                        /* it can be droped before submission */
+                        ikey = col_node->GetInSDBKeySeqNum();
+                        assert(ikey);
+                        KeyBlockPrimaryMeta* kbpm = col_node->GetKeyBlockMeta();
+                        assert(kbpm); // kbpm must exist becuase it was prefetched in InsertUserKeyToKeyMapFromInactiveKeyQueue()->InsertColumnNodes()
+
+                        if(kbpm->IsDummy()){
+                            while(kbpm->SetWriteProtection());
+
+                            char kbm_buf[kOutLogKBMSize] = {0,};
+                            int kbm_buf_size = kOutLogKBMSize;
+                            kbpm->SetInSDBKeySeqNum(ikey);
+                            if(kbpm->IsKBMPrefetched()){
+                                if(!kbpm->LoadKBPMDeviceFormat(this, kbm_buf, kbm_buf_size)){
+                                    /*non blocking read has been fail(the data is not ready in the readahead buffer in device driver)*/
+                                    dirty = true;
+                                    kbpm->ClearWriteProtection();
+                                    kbpm->ClearKBMPrefetched();
+                                    //kbpm->PrefetchKBPM(this);
+                                    continue;
+                                }
+                            }else{
+                                kbpm->LoadKBPMDeviceFormat(this, kbm_buf, kbm_buf_size, false);
+                            }
+                            kbpm->InitWithDeviceFormat(this, kbm_buf, (uint16_t)kbm_buf_size);
+                            // KBML should not be created for normal dummy state KBM.
+
+                            kbpm->ClearWriteProtection();
+                        }
+
+                        if(col_node->IsTRXNCommitted()){
+
+                            assert(col_node->GetRequestType() == kPutType);
+                            /* update bitmap */
+                            assert(kbpm);
+                            while(kbpm->SetWriteProtection());
+                            kbpm->IncPendingUpdatedValueCnt();
+                            kbpm->ClearKeyBlockBitmap(col_node->GetKeyBlockOffset());
+                            kbpm->ClearWriteProtection();
+                            /*
+                             * There is possiblity that previous sktdf node has set reference for those.
+                             * To remove dangling reference, clear reference bit here.
+                             */
+#ifdef CODE_TRACE
+                            printf("[%d :: %s]push KBM : 0x%p [iKey : %ld] (offset : %u)\n", __LINE__, __func__, kbpm, kbpm->GetiKeySequenceNumber(), col_node->GetKeyBlockOffset());
+#endif
+                            kbpm_list.push_back(kbpm);
+
+                            /////////////////////// End Spinlock for Write Protection /////////////////////// 
+#ifdef CODE_TRACE
+                            printf("[%d :: %s];Not inserted to Inlog;|;KBPM;%p;|;iKey;%ld;|;offset;%d;|\n", __LINE__, __func__,col_node->GetKeyBlockMeta(), col_node->GetInSDBKeySeqNum(), col_node->GetKeyBlockOffset());
+#endif
+
+                            col_list->Delete(col_node->GetColumnNodeNode());
+                            col_node->InvalidateUserValue(this);
+
+                            if(uk->GetLatestColumnNode(col_id) == col_node)
+                                uk->SetLatestColumnNode(col_id, col_list_node ? uk->GetColumnNodeContainerOf(col_list_node): NULL);
+#ifndef NDEBUG
+                            if(col_node->GetRequestNode()) {
+                                assert(col_node->GetRequestNode()->GetRequestNodeLatestColumnNode() != col_node);
+                            }
+#endif
+                            col_node->SetRequestNode(nullptr);
+                            FreeColumnNode(col_node);
+
+                        }else if(!col_node->GetTGID() || IsTrxnGroupCompleted(col_node->GetTGID())){
+                            ColumnStatus col_stat;
+                            /* update bitmap */
+                            if(col_node->GetRequestType() == kPutType){
+                                assert(kbpm);
+                                while(kbpm->SetWriteProtection());
+                                kbpm->ClearKeyBlockBitmap(col_node->GetKeyBlockOffset());
+                                /* It may not needed for in-log KBPM because the last column will be inserted to the pending update queue*/
+                                //kbpm->IncPendingUpdatedValueCnt();
+                                kbpm->ClearWriteProtection();
+                                /*
+                                 * There is possiblity that previous sktdf node has set reference for those.
+                                 * To remove dangling reference, clear reference bit here.
+                                 */
+                                //kbpm->ClearRefBitmap(col_node->GetKeyBlockOffset());
+                            }
+                            /* It may not needed for in-log KBPM because the last column will be inserted to the pending update queue*/
+                            //kbpm_list.push_back(kbpm);
+
+                            /////////////////////// End Spinlock for Write Protection /////////////////////// 
+#ifdef CODE_TRACE
+                            printf("[%d :: %s];Inserted to Inlog;|;KBPM;%p;|;iKey;%ld;|;offset;%d;|\n", __LINE__, __func__,col_node->GetKeyBlockMeta(), col_node->GetInSDBKeySeqNum(), col_node->GetKeyBlockOffset());
+#endif
+
+                            col_list->Delete(col_node->GetColumnNodeNode());
+                            col_node->InvalidateUserValue(this);
+                            if(uk->GetLatestColumnNode(col_id) == col_node)
+                                uk->SetLatestColumnNode(col_id, col_list_node ? uk->GetColumnNodeContainerOf(col_list_node): NULL);
+#ifndef NDEBUG
+                            if(col_node->GetRequestNode()) {
+                                assert(col_node->GetRequestNode()->GetRequestNodeLatestColumnNode() != col_node);
+                            }
+#endif
+                            col_node->SetRequestNode(nullptr);
+                            FreeColumnNode(col_node);
+
+
+                            /* in_log_KBM_queue is for DecNRSCount() after write updatedKBMList & SKTs*/
+                            in_log_KBM_queue.push(kbpm);
+                        }else{
+                            /*
+                             * KeyBlock has been flushed but the TRXN Group is not completed yet!
+                             */
+                            dirty = true;
+                        }
+                    }
+
+                    /**
+                     * The invalid list in a Column is not empty
+                     */
+                    uk->ColumnUnlock(col_id);
+                }
+                if(!dirty){
+                    it = flushed_key_hashmap_->erase(it);
+                    assert(!uk->GetReferenceCount());
+                    FreeUserKey(uk);
+                }else{
+                    ++it;
                 }
             }
         }
-        sem_post(&key_cache_shutdown_sem_);
-        free(begin_key_buffer);
-        free(end_key_buffer);
     }
+
+
+    void Manifest::FlushSingleSKTableMem(SKTableMem* sktable, std::string &col_info_table, Slice &comp_col_info_table){
+
+        std::list<KeyBlockPrimaryMeta*> kbpm_list;
+        std::queue<KeyBlockPrimaryMeta*> in_log_KBM_queue;
+
+        if(!sktable->IsKeymapLoaded()){
+            if(!sktable->LoadSKTableDeviceFormat(this, kSyncGet))
+                abort();
+        }
+        sktable->FlushSKTableMem(this, col_info_table, comp_col_info_table, in_log_KBM_queue, kbpm_list);
+
+        bool log_stat_change = false;
+        KeyBlockPrimaryMeta *in_log_kbm = NULL;
+        while(!in_log_KBM_queue.empty()) {
+            in_log_kbm = in_log_KBM_queue.front();
+#ifdef CODE_TRACE
+            printf("[%d :: %s];Before decrease NRS;%d;|;KBPM;%p;|;iKey;%ld;|\n", __LINE__, __func__,in_log_kbm->GetNRSCount(), in_log_kbm, in_log_kbm->GetiKeySequenceNumber());
+#endif
+            if(in_log_kbm->DecNRSCount() == 1){
+                kbpm_list.push_back(in_log_kbm);
+                log_stat_change= true;
+                /*Use extra NRS count in order to prevent log cleaning*/
+                in_log_kbm->DecNRSCount();
+                /* 
+                 * Increase Cleanupable count 
+                 * If the count reaches a treshold, wake LogCleanupThread up 
+                 */
+            }
+            in_log_KBM_queue.pop();
+        }
+        if(log_stat_change){
+            SetLogCleanupRequest();
+        }
+
+        if(!kbpm_list.empty())
+            SpliceKBPMCacheList(kbpm_list);
+
+
+        assert(!sktable->IsDeletedSKT());
+        if(sktable->IsSKTDirty(this)){
+            /* Don't need to change status */
+            this->InsertSKTableMemCache(sktable, kDirtySKTCache); 
+        }else{
+            sktable->ChangeStatus(SKTableMem::flags_in_dirty_cache/*From*/, SKTableMem::flags_in_clean_cache/*To*/);
+            this->InsertSKTableMemCache(sktable, kCleanSKTCache); 
+        }
+#if 0
+        /*For deleted SKTable. but new flush function never delete skt even if skt has no keys*/
+        else{
+            assert(sktable->IsCached());
+            sktable->ClearInDirtyCache();
+            mf_->SignalSKTEvictionThread(true);
+            assert(!sktable->IsCached());
+        }
+#endif
+        DecOffloadFlushCount();
+    }
+
+    void Manifest::WorkerThreadFlushSKTableMem(std::string &col_info_table, Slice &comp_col_info_table){
+        SKTableMem* sktable = NULL;
+        while(sktable = GetFlushOffloadSKTable())
+            FlushSingleSKTableMem(sktable, col_info_table, comp_col_info_table);
+    }
+
+
+    void Manifest::DoCongestionControl() {
+#if 1
+        if(congestion_control_ || uk_count_.load(std::memory_order_relaxed) > kCongestionControl ){
+            SKTableMem *sktable = NULL;
+            MutexLock l(&congestion_control_mu_);
+            congestion_control_ = true;
+            congestion_control_cv_.Wait();
+#if 0
+            char* dev_buffer = (char*)malloc(kDeviceRquestMaxSize);
+            std::string col_info_table;
+            col_info_table.reserve(kDeviceRquestMaxSize);
+            Slice comp_col_info_table(dev_buffer, kDeviceRquestMaxSize);
+            while(congestion_control_){
+                if(sktable = GetFlushOffloadSKTable()){
+                    FlushSingleSKTableMem(sktable, col_info_table, comp_col_info_table);
+                }
+            }
+            free(dev_buffer);
+#endif
+
+        }
+#endif
+    }
+
+
+    void Manifest::ReleaseCongestionControl(){
+        if( congestion_control_  && uk_count_.load(std::memory_order_relaxed) < (kCongestionControl  - (kCongestionControl>>2))/* 25% */){
+            MutexLock l(&congestion_control_mu_);
+            congestion_control_= false;
+            congestion_control_cv_.SignalAll();
+        }
+    }
+        
+
+
+    bool Manifest::InsertKBPMToHashMap(KeyBlockPrimaryMeta *kbpm) {
+        assert(kbpm->GetiKeySequenceNumber());
+        auto it = kbpm_hashmap_->insert(kbpm->GetiKeySequenceNumber(), kbpm);
+        return it.second;
+    }
+
+    /*Reture UserKey with increased referenced count*/
+    KeyBlockPrimaryMeta* Manifest::FindKBPMFromHashMap(SequenceNumber ikey) {
+        auto it = kbpm_hashmap_->find(ikey);
+
+        if (it != kbpm_hashmap_->end()) {
+            return it->second;
+        }else
+            return NULL;
+    }
+
+    void Manifest::RemoveKBPMFromHashMap(SequenceNumber ikey) {
+        kbpm_hashmap_->erase(ikey);
+    }
+
+    bool Manifest::KeyHashMapFindOrInsertUserKey(UserKey*& uk, const KeySlice& key, const uint8_t col_id ) {
+#ifdef USE_HOTSCOTCH
+        while(!(uk = FindUserKeyFromHopscotchHashMap(const_cast<KeySlice& >(key))))
+#else
+        while(!(uk = FindUserKeyFromHashMap(const_cast<KeySlice& >(key))))
+#endif
+        {
+            // note that the new key could be inserted after its sktable is evicted.
+            uk = AllocUserKey(key.size());
+            uk->InitUserKey(key);
+            uk->ColumnLock(col_id);/* Lock the column */
+#ifdef USE_HOTSCOTCH
+            if(InsertUserKeyToHopscotchHashMap(uk)){
+                return true;// New UK has been successfully inserted.
+            }
+#else
+            if (InsertUserKeyToHashMap(uk)) {
+                return true;// New UK has been successfully inserted.
+            }
+#endif
+            uk->ColumnUnlock(col_id);/* Unlock and Free the UK */
+            FreeUserKey(uk);
+        }
+#ifdef USE_HOTSCOTCH
+#if 0
+        while(uk != FindUserKeyFromHopscotchHashMap(const_cast<KeySlice& >(key))){
+            printf("[%d :: %s]UK does not exist in hopscotch\n", __LINE__, __func__);
+        //    abort();
+        }
+#endif
+#endif
+        /*We found the key in the HashMap*/
+        uk->ColumnLock(col_id);/* Lock the column */
+        return false;//Don't need to insert the uk to unsorted key queue(skt->key_queue_[active])
+    }
+#endif
+
+    UserKey* Manifest::GetFirstUserKey(){
+        printf("Not implemented %s\n", __func__); 
+        return nullptr;
+    }
+
+    UserKey* Manifest::GetLastUserKey(){ 
+        return nullptr;
+    }
+
+    UserKey* Manifest::SearchUserKey(const Slice& tkey){ 
+        printf("Not implemented %s\n", __func__); 
+        return nullptr;
+    }
+
+    UserKey* Manifest::SearchLessThanEqualUserKey(const Slice& tkey){ 
+        printf("Not implemented %s\n", __func__); 
+        return nullptr;
+    }
+
+    bool Manifest::InsertUserKey(UserKey* ukey, bool begin_key) {
+        printf("Not implemented %s\n", __func__); 
+        return false;
+    }
+
+    /* 
+     * Iterator call this function with ref_cnt_inc == false.
+     * EvictUserKeys can not selete the SKTable to which KBPM belongs.
+     */
+    KeyBlockPrimaryMeta* Manifest::GetKBPMWithiKey(SequenceNumber seq, uint8_t offset) {
+        KeyBlockPrimaryMeta* kbpm = NULL;
+retry:
+        /* search from hash table */
+        kbpm = FindKBPMFromHashMap(seq);
+        if (!kbpm) {
+            /* create dummy and insert to hash table */
+            kbpm = AllocKBPM();
+            kbpm->DummyKBPMInit(seq);
+            kbpm->SetDummy();
+            kbpm->SetOutLog();
+            kbpm->SetRefBitmap(offset);
+#ifdef CODE_TRACE
+            printf("[%d :: %s]Alloc (kbpm : 0x%p), ikey = %ld\n", __LINE__, __func__, kbpm, kbpm->GetiKeySequenceNumber());
+#endif
+            if(!InsertKBPMToHashMap(kbpm)) {
+#ifdef CODE_TRACE
+                printf("[%d :: %s]Free (kbpm : 0x%p), ikey = %ld\n", __LINE__, __func__, kbpm, kbpm->GetiKeySequenceNumber());
+#endif
+                FreeKBPM(kbpm);
+                goto retry;
+            }
+            IncreaseMemoryUsage(sizeof(KeyBlockPrimaryMeta));
+#ifdef MEM_TRACE
+            IncKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
+#endif
+
+        }else{
+            /* It can already exist if con info has ref bit */
+            //assert(!IsRefBitmapSet(offset));
+            kbpm->SetRefBitmap(offset);
+            if(kbpm->IsEvicting()){
+#ifdef CODE_TRACE
+                printf("[%d :: %s] evicting is set(kbpm : %p)\n", __LINE__, __func__, kbpm);
+#endif
+                kbpm->ClearRefBitmap(offset);
+                goto retry;
+            }
+        }
+        return kbpm;
+    }
+
+    SequenceNumber Manifest::GetLatestSequenceFromKeymap(const KeySlice& key, uint8_t col_id, bool &deleted)
+    { 
+        SKTableMem* table = NULL;
+        SequenceNumber seq_num = 0;
+
+retry:
+        table = FindSKTableMem(key);
+        table->IncSKTRefCnt(this);
+
+        if(Next(table) && (GetComparator()->Compare(Next(table)->GetBeginKeySlice(), key) <= 0)){
+            /*The key belongs to next(or beyond) SKTable. */
+            table->DecSKTRefCnt();
+            goto retry;
+        }
+        /* Reference count prevents eviction */
+        seq_num = table->GetLatestSequenceNumberFromSKTableMem(this, key, col_id, deleted);
+        table->DecSKTRefCnt();
+        return seq_num;
+    }
+
+    Status Manifest::GetValueFromKeymap(const KeySlice& key, std::string* value, PinnableSlice* pin_slice, uint8_t col_id, SequenceNumber seq_num, uint64_t cur_time)
+    { 
+        bool ra_rahit = false;
+        KeyBlock* kb = NULL;
+        ColumnScratchPad column = {nullptr, 0,0,0};
+        SKTableMem* table = NULL;
+
+
+        while(true){
+            table = FindSKTableMem(key);
+            table->IncSKTRefCnt(this);
+            /* Reference count prevents eviction */
+            if(table->GetColumnInfo(this, key, col_id, seq_num, cur_time, column))
+                break;
+            table->DecSKTRefCnt();
+        }
+
+        if (column.uv) {
+            if (value) {
+                value->assign(column.uv->GetBuffer(), column.uv->GetValueSize());
+            } else {
+                column.uv->Pin();
+                pin_slice->PinSlice(column.uv->ReadValue(), PinnableSlice_UserValue_CleanupFunction, column.uv, this);
+            }
+            table->DecSKTRefCnt();
+            return Status::OK();
+        }
+
+        if(!column.ikey_seq_num) {
+            table->DecSKTRefCnt();
+            return Status::NotFound("Key does not exist"); /*No column exists*/
+        }
+
+        KeyBlockPrimaryMeta* kbpm = GetKBPMWithiKey(column.ikey_seq_num, column.offset);
+        assert(kbpm);
+#if 0
+retry:
+#endif
+        if (!(kb = kbpm->GetKeyBlockAddr())) {
+            kb = kbpm->LoadKeyBlock(this, column.ikey_seq_num, column.ivalue_size, &ra_rahit);
+        }
+#if 0
+        if (kbpm->GetKeyBlockAddr() != kb) {
+            kbpm->ClearRefBitmap(col_node->GetKeyBlockOffset());
+            goto retry;
+        }
+#endif
+        /* get value from kb */
+        Slice value_slice = kb->GetValueFromKeyBlock(this, column.offset);
+        if (value) {
+            value->assign(value_slice.data(), value_slice.size());
+            table->DecSKTRefCnt();
+        } else {
+            /*
+             * SKTable ref cnt has been increased and it will be decreased in pinnable cleanup function 
+             * if SKTable has ref cnt, any key(KBPM & KB) in this SKT can not be evicted.
+             */
+            pin_slice->PinSlice(value_slice, PinnableSlice_SKTable_CleanupFunction, table, this);
+        }
+        return Status::OK();
+    }
+    /////////////////////////////////////////// END  : UserKey/KBPM/KBML Manageement ///////////////////////////////////////////
+
+    /////////////////////////////////////////// START: Transaction(Group) Management ///////////////////////////////////////////
+
+    bool Manifest::IsTrxnGroupCompleted(TrxnGroupID tgid){
+        bool ret  = false;
+        uctrxn_group_lock_.Lock();
+        /* Find TRXN Group */
+        std::unordered_map<TrxnGroupID, uint32_t>::iterator it = uncompleted_trxn_group_.find(tgid);
+        if(it==uncompleted_trxn_group_.end()) 
+            ret = true;
+        uctrxn_group_lock_.Unlock();
+        return ret;
+    }
+
+    TransactionID Manifest::GetTrxnID(uint32_t count){
+        TransactionID trxn_id;
+        uctrxn_group_lock_.Lock();
+        /* Allocate TRXN ID */
+        trxn_id = next_trxn_id_; 
+        if(count > 4096){
+            next_trxn_id_ = ((trxn_id >> TGID_SHIFT)+ 1) << TGID_SHIFT; // Move to next TRXN Group.
+        }else
+            next_trxn_id_++; 
+
+        /* Add to TRXN Group */
+        std::unordered_map<TrxnGroupID, uint32_t>::iterator it = uncompleted_trxn_group_.find(trxn_id >> TGID_SHIFT);
+        if(it==uncompleted_trxn_group_.end()) 
+            uncompleted_trxn_group_.insert({(trxn_id >> TGID_SHIFT), count});
+        else 
+            it->second += count;
+
+        uctrxn_group_lock_.Unlock();
+        return trxn_id;
+    }
+
+    /* It can be called from FlushSKTableMem() or Store() 
+     * FlushSKTableMem() : call this function after Device Flush
+     *                     But the ColumnNode is not recorded in the SKTable
+     *                     This means the ColumnNode is still in Worker's Log.
+     *                     If all trxns in the TRXN group are flushed, 
+     *                     The trxn group node will be deleted from uncompleted_trxn_group_.
+     *                     In this case, the ColumnNode will be recored in the SKTable during the next FlushSKTable
+     *  Store() : If "delete command" is canceled in Store(), the "count" should be decremented by 1.
+     *
+     *  tgid is Transaction Group ID calculated by "trxn ID >> TGID_SHIFT"
+     *  caller must use TRXN Group ID instead of TRXN ID.
+     *
+     *  return true if the TRXN Group is completed.(All TRXNs in the Group has been flushed)
+     *  return false if the TRXN Group is NOT completed.
+     */
+    void Manifest::DecTrxnGroup(TrxnGroupID tgid, uint32_t cnt){
+        bool result = false;
+        uctrxn_group_lock_.Lock();
+
+        std::unordered_map<TrxnGroupID, uint32_t>::iterator it = uncompleted_trxn_group_.find(tgid);
+#ifdef ENABLE_SANITYCHECK
+        if(it == uncompleted_trxn_group_.end()) abort();//The transaction group must exist.
+#else
+        if(it == uncompleted_trxn_group_.end()) { uctrxn_group_lock_.Unlock(); return; }
+#endif
+        else it->second -= cnt;
+        if(!it->second){
+            /* In this case, the trxn group is not fully used. 
+             * This can occur when trxn requests rarely occur while there are many non-trxn requests.
+             * For this, we don't have to wait for the Group to be completed.
+             * We just make Group complete.
+             */
+            if(tgid  == (next_trxn_id_ >> TGID_SHIFT))
+                next_trxn_id_ = (tgid + 1) << TGID_SHIFT; // Move to next TRXN Group.
+            uncompleted_trxn_group_.erase(it);
+            result = true;
+
+        }
+        uctrxn_group_lock_.Unlock();
+        if(result) AddCompletedTrxnGroupRange(tgid);
+        return;
+    }
+
+    bool Manifest::IsCompletedTrxnGroupRange(std::list<TrxnGroupRange> &completed_trxn_group_list, TrxnGroupID tgid){
+        bool completed = false;
+        for(auto it = completed_trxn_group_list.begin() ; it != completed_trxn_group_list.end() ; it++){
+            if( it->start <= tgid &&  tgid <= it->end ) {
+                completed = true;
+                break;
+            }
+        }
+        return completed;
+    }
+
+#if 0
+    bool Manifest::IsCompletedTrxnGroupRange(TrxnGroupID tgid){
+        bool completed = false;
+        ctrxn_group_lock_.Lock();
+        int i = 0; 
+
+        for(auto it = completed_trxn_group_list_.begin() ; it != completed_trxn_group_list_.end() ; it++, i++){
+            if( it->start <= tgid &&  tgid <= it->end ) {
+                completed = true;
+                break;
+            }
+        } 
+        ctrxn_group_lock_.Unlock();
+        return completed;
+    }
+#endif
+
+    void Manifest::AddCompletedTrxnGroupRange(TrxnGroupID tgid){
+        ctrxn_group_lock_.Lock();
+        for(auto it = completed_trxn_group_list_.begin() ; it != completed_trxn_group_list_.end() ; it++){
+            if(tgid == it->start - 1){//It means previous range cannot merge the range with this range 
+                it->start = tgid; 
+                break;
+            }else if(tgid < it->start){ // last element has max value
+                completed_trxn_group_list_.insert(it, TrxnGroupRange(tgid)); 
+                break;
+            }else if(it->end + 1 == tgid){
+                /**
+                 * Can not reach the end because end has maximum TRXN number(0xffff ffff)
+                 */
+                std::list<TrxnGroupRange>::iterator cur = it; 
+                it++; 
+
+                if( tgid == it->start - 1 ){ // Merge the range
+                    cur->end = it->end;
+                    completed_trxn_group_list_.erase(it);
+                }else{ 
+                    cur->end = tgid; 
+                }
+                break;
+            }  
+        } 
+        ctrxn_group_lock_.Unlock();
+    }
+
+    void Manifest::CopyCompletedTrxnGroupRange(std::list<TrxnGroupRange> &completed_trxn_groups) {
+        ctrxn_group_lock_.Lock();
+        for(auto completed_trxn_group : completed_trxn_group_list_)
+            completed_trxn_groups.push_back(completed_trxn_group);
+        ctrxn_group_lock_.Unlock();
+    }
+    /////////////////////////////////////////// END  : Transaction(Group) Management ///////////////////////////////////////////
+
 
     // Compress, align size, and add CRC
     void LogRecordKey::BuildIOBuffer() {
@@ -2866,864 +4916,13 @@ exit:
 
         return true;
     }
-
-    // Collect key block delete candidates for a worker
-    void Manifest::WorkerLogCleanupInternal(WorkerData &logcleanup_data, std::list<SequenceNumber> &worker_next_ikey_seq, std::queue<KeyBlockMetaLog*> &kbml_cleanup, SequenceNumber &smallest_ikey)
-    {
-        bool first = true;
-        std::queue<KeyBlockMetaLog*> * logQ = logcleanup_data.GetInActiveQueue();
-        KeyBlockMetaLog* kbml, *last_cleanup_kbml=NULL;
-scan:
-        // iterate each KBML
-        Spinlock *logLock = logcleanup_data.GetInActiveLock();
-        logLock->Lock();
-        while(!logQ->empty()){
-            kbml = logQ->front();
-            if(kbml->GetNRSCount()) {
-                logLock->Unlock();
-                goto finish_this_worker;
-            }
-            // append the ikey seq num to the device format
-            logQ->pop();
-            // append kbml to delete candidate list
-            if(kbml->GetiKeySequenceNumber() < smallest_ikey)
-                smallest_ikey = kbml->GetiKeySequenceNumber();
-            kbml_cleanup.push(kbml);
-            // collect KBMLs up to the max to prevent IO size overflow.
-            // 2MB / 9 bytes
-            if (kbml_cleanup.size() > 450000) {
-                logLock->Unlock();
-                goto finish_this_worker;
-            }
-            // store the last added ikey to determine worker's next ikey seq
-            last_cleanup_kbml = kbml;
-        }
-        // switch active queue when the inactive queue is drained.
-        if(logQ->empty() && first){
-            logLock->Unlock();
-            // switch only once
-            first = false;
-            // switch
-            logcleanup_data.ChangeActive();
-            goto scan;
-        }
-        logLock->Unlock();
-finish_this_worker:
-        // add the worker's next ikey sequence
-        if (last_cleanup_kbml) {
-            worker_next_ikey_seq.push_back(last_cleanup_kbml->GetNextIKeySeqNum());
-            logcleanup_data.SetLastWorkerNextIKeySeq(last_cleanup_kbml->GetNextIKeySeqNum());
-        } else {
-            worker_next_ikey_seq.push_back(logcleanup_data.GetLastWorkerNextIKeySeq());
-        }
-    }
-
-    void Manifest::WorkerLogCleanupDelete(LogRecordKey &logkey, std::queue<KeyBlockMetaLog*> kbml_cleanup, SequenceNumber &smallest_ikey)
-    {
-        KeyBlockMetaLog *kbml;
-        KeyBlockPrimaryMeta *kbpm;
-        KeyBlock *kb;
-        std::list<SequenceNumber> deleteSeqList;
-        std::vector<InSDBKey> deleteList;
-
-        deleteSeqList.push_back(smallest_ikey);
-        // Free KB, KBM, and KBML memory, and construct key names
-        while(!kbml_cleanup.empty()) {
-            kbml = kbml_cleanup.front();
-            kbml_cleanup.pop();
-            kbpm = kbml->GetKBPM();
-            if (kbpm->IsDummy()) abort();
-            // acquire submit protection
-            while(kbpm->SetSubmitInProgress());
-            kbpm->SetKBML(nullptr);
-
-            if(!kbpm->GetKeyBlockBitmap() && kbpm->GetRefCnt() == 0 ) {
-                kbpm->SetOutLogAndCheckEvicable();
-                kbpm->ClearDeleteOnly();
-                assert(kbml->GetValidTrxnCount(kPutType) == 0);
-                assert(kbml->GetValidTrxnCount(kDelType) == 0);
-                // release submit protection
-                kbpm->ClearSubmitInProgress();
-
-                kb = kbpm->GetKeyBlockAddr();
-
-                // add to to-be-deleted key list
-                deleteSeqList.push_back(kbpm->GetiKeySequenceNumber() - smallest_ikey);
-
-#ifdef CODE_TRACE    
-                printf("[%d :: %s]Delete Meta ikey : %ld\n", __LINE__, __func__, kbpm->GetiKeySequenceNumber());
-#endif
-                deleteList.push_back(GetKBKey(dbhash_, kKBMeta, kbpm->GetiKeySequenceNumber()));
-                deleteList.push_back(GetKBKey(dbhash_, kKBlock, kbpm->GetiKeySequenceNumber()));
-                // kbpm and kb are removed from hash and cache in flush sktable
-                RemoveKBPMFromHashMap(kbpm->GetiKeySequenceNumber());
-                if(kb){
-                    DecreaseMemoryUsage(kb->GetSize());
-#ifdef CODE_TRACE
-                    printf("[%d :: %s]Free KeyBlock size(%d)\n", __LINE__, __func__, kb->GetSize());
-#endif
-                    FreeKB(kb);
-                    kbpm->ClearKeyBlockAddr();
-                }
-                //else if (!kbpm->IsDeleteOnly()) abort();
-                FreeKBPM(kbpm);
-            } else {
-                // release submit protection
-                kbpm->ClearSubmitInProgress();
-                if(kbpm->SetOutLogAndCheckEvicable() && CheckKeyEvictionThreshold()) {
-                    if(!kbpm->SetEvicting()){
-                        if(!kbpm->GetRefCnt() && !kbpm->CheckRefBitmap()) {
-                            RemoveKBPMFromHashMap(kbpm->GetiKeySequenceNumber());
-                            while(kbpm->GetRefCnt() || kbpm->CheckRefBitmap());/* Wait until deref */
-                            kb = kbpm->GetKeyBlockAddr();
-                            if(kb){
-                                DecreaseMemoryUsage(kb->GetSize());
-                                FreeKB(kb);
-                                kbpm->ClearKeyBlockAddr();
-                            }
-                            //else abort();
-                            FreeKBPM(kbpm);
-                        }else
-                            kbpm->ClearEvicting();
-                    }
-                }
-            }
-            FreeKBML(kbml);
-        }
-
-        if(deleteSeqList.size() == 1)
-            return;
-
-        // Set the number of deleted ikey sequence number
-        logkey.AppendIKeySeqList(deleteSeqList);
-
-        // Build IO buffer. Compress if possible.
-        logkey.BuildIOBuffer();
-
-        // write the log record key
-        const Slice io_buffer( logkey.GetIOBuffer() );
-
-        // buffer limit is same as max sktable size
-        if(io_buffer.size() > kDeviceRquestMaxSize) {
-            port::Crash(__FILE__,__LINE__);
-        }
-
-        // write the log record key to the device
-        env_->Put(logkey.GetInSDBKey() , io_buffer, false);
-
-        // Delete the keys from the device
-        if(deleteList.size()) {
-            InSDBKey null_insdbkey = { 0 };
-            std::vector<Env::DevStatus> status;
-            env_->MultiDel(deleteList, null_insdbkey, false, status);
-        }
-    }
-
-    void Manifest::LogCleanupInternal(LogRecordKey &LogRecordkey)
-    {
-        std::queue<KeyBlockMetaLog*> kbml_cleanup;
-        std::list<TrxnGroupRange> completed_trxn_groups;
-        std::list<SequenceNumber> worker_next_ikey_seq;
-        SequenceNumber smallest_ikey = ULONG_MAX;
-
-        // Get completed transaction group
-        CopyCompletedTrxnGroupRange(completed_trxn_groups);
-
-        // Append zeroed header and the number of ikeys
-        LogRecordkey.AppendHeaderSpace();
-
-        // collect deleted ikeys in each worker queue
-        for(int worker_idx = 0; worker_idx < kWriteWorkerCount; worker_idx++){
-            WorkerLogCleanupInternal(logcleanup_data_[worker_idx], worker_next_ikey_seq, kbml_cleanup, smallest_ikey);
-        }
-        // skip writing log record key if no key is deleted.
-        if(!kbml_cleanup.size()) {
-            LogRecordkey.Reset();
-            return;
-        }
-
-        // Append worker next ikey seq
-        LogRecordkey.AppendIKeySeqList(worker_next_ikey_seq);
-
-        // Append completed transaction groups
-        LogRecordkey.AppendTrxnGroupList(completed_trxn_groups);
-
-        // delete the internal keys
-        WorkerLogCleanupDelete(LogRecordkey, kbml_cleanup, smallest_ikey);
-
-        // reset the log record key object
-        LogRecordkey.Reset();
-    }
-
-    bool Manifest::IsWorkerLogCleanupQueueEmpty()
-    {
-        for(int worker_id = 0; worker_id < kWriteWorkerCount; worker_id++){
-            WorkerData *logcleanup_queue = logcleanup_data_ + worker_id;
-            if(!logcleanup_queue->IsEmpty(0) || !logcleanup_queue->IsEmpty(1))
-                return false;
-        }
-        return true;
-    }
-
-    // Signal log cleanup
-    void Manifest::LogCleanupSignal()
-    {
-        if(!SetLogCleanupRequested())
-        {
-#ifdef CODE_TRACE
-            printf("[%d :: %s]Wake Log Cleanup Thread up\n", __LINE__, __func__);
-#endif
-            logcleanup_mu_.Lock();
-            logcleanup_cv_.Signal();
-            logcleanup_mu_.Unlock();
-        }
-    }
-
-    // log cleanup thread function
-    void Manifest::LogCleanupThreadFn()
-    {
-        LogRecordKey Logkey(dbhash_);
-        bool timeout;
-
-        while(true){
-            timeout = false;
-            // Signal loop
-            logcleanup_mu_.Lock();
-            while(!logcleanup_shutdown_ && !timeout && !ClearLogCleanupRequested()) {
-                timeout = logcleanup_cv_.TimedWait(env_->NowMicros() + 1000000/*Wake up every 1 second*/);
-            }
-#ifdef CODE_TRACE
-            printf("[%d :: %s]Run Log Cleanup Thread\n", __LINE__, __func__);
-#endif
-            logcleanup_mu_.Unlock();
-            // Exit only when all KBMLs are flushed.
-            if(logcleanup_shutdown_ && IsWorkerLogCleanupQueueEmpty())
-                break;
-            // Process requests
-            LogCleanupInternal(Logkey);
-        }
-        /*
-           for(int i=0; i<2; i++) {
-           LogCleanupInternal(Logkey);
-           }
-           */
-        if(!IsWorkerLogCleanupQueueEmpty())
-            port::Crash(__FILE__,__LINE__);
-    }
-
-    void Manifest::TerminateLogCleanupThread(){
-        // Shut down Cache thread
-        logcleanup_shutdown_= true;
-        logcleanup_cv_.SignalAll();
-        if (logcleanup_tid_)
-            Env::Default()->ThreadJoin(logcleanup_tid_);
-    }
-
-    Status Manifest::GetSnapshotInfo(std::vector<SnapInfo> *snapinfo_list) {
-        SnapshotImpl* snapshot = NULL;
-        SimpleLinkedNode* snapshot_node = NULL;
-        SnapInfo snap_info;
-        snapshot_simplelist_lock_.Lock();
-        for(snapshot_node = snapshot_simplelist_.newest(); snapshot_node ; snapshot_node = snapshot_simplelist_.next(snapshot_node)) {
-            snapshot = GetSnapshotImpl(snapshot_node);
-            snap_info.cseq = snapshot->GetCurrentSequenceNumber();
-            snap_info.exp = snapshot->GetCurrentTime();
-            snapinfo_list->push_back(snap_info); 
-        }
-        snapshot_simplelist_lock_.Unlock();
-        return Status::OK();
-    }
-
-    SequenceNumber Manifest::GetOldestSnapshotSequenceNumber() {
-        SequenceNumber seq = 0;
-        if (!snapshot_simplelist_.empty()) {
-            SimpleLinkedNode* snapshot_node = NULL;
-            snapshot_simplelist_lock_.Lock();
-            if ((snapshot_node = snapshot_simplelist_.oldest())) 
-                seq = GetSnapshotImpl(snapshot_node)->GetCurrentSequenceNumber();
-            snapshot_simplelist_lock_.Unlock();
-        }
-        return seq;
-    }
-
-
-
-    SequenceNumber Manifest::GetLatestSnapshotSequenceNumber() {
-        SequenceNumber seq = 0;
-        if (!snapshot_simplelist_.empty()) {
-            SimpleLinkedNode* snapshot_node = NULL;
-            snapshot_simplelist_lock_.Lock();
-            if ((snapshot_node = snapshot_simplelist_.newest())) 
-                seq = GetSnapshotImpl(snapshot_node)->GetCurrentSequenceNumber();
-            snapshot_simplelist_lock_.Unlock();
-        }
-        return seq;
-
-    }
-
-    KeyBlock* Manifest::LoadValue(uint64_t insdb_key_seq, uint32_t ivalue_size, bool *from_readahead, KeyBlockPrimaryMeta* kbpm)
-    {
-        Status s;
-        int buffer_size = SizeAlignment(ivalue_size);
-        InSDBKey insdb_key = GetKBKey(dbhash_, kKBlock, insdb_key_seq);
-        KeyBlock* kb = AllocKB();
-
-        Slice *io_buf = GetIOBuffer(kDeviceRquestMaxSize);
-        assert(buffer_size <= io_buf->size());
-        Slice buffer = kb->GetRawData();
-
-        char *contents = const_cast<char*>(io_buf->data());
-
-        s = env_->Get(insdb_key, contents, &buffer_size, kSyncGet, from_readahead);
-        if (!s.ok()) {
-            fprintf(stderr, "keyblock does not exist(ikey seq: %ld)\n", insdb_key_seq);
-            abort();
-        }
-#ifdef CODE_TRACE
-        printf("[%d :: %s] key seq %lu size %u from_readahead %d\n", __LINE__, __func__, insdb_key_seq, buffer_size, *from_readahead);
-#endif
-        /////////////////
-        uint32_t orig_crc = crc32c::Unmask(DecodeFixed32(contents)); /* get crc */
-        uint32_t kb_keycnt_size_loc = *((uint32_t*)(contents + 4));
-        char* kb_buffer = (char*)(contents + 8)/*CRC(4B) + # of Keys(1B) + Size of compressed KB(3B)*/;
-        uint32_t actual_crc = crc32c::Value((contents + 4), (kb_keycnt_size_loc & KEYBLOCK_KB_SIZE_MASK) + 4/* 4 is for "kb_keycnt_size_loc" */);
-
-        if (orig_crc != actual_crc) {
-            printf("[%d :: %s]crc mismatch check this orig (%d) actual(%d)\n", __LINE__, __func__, orig_crc, actual_crc);
-            abort();
-        }
-        /////////////
-
-        if(kb_keycnt_size_loc & KEYBLOCK_COMP_MASK){
-            /*It was compressed.*/
-            size_t ulength = 0;
-            if (!port::Snappy_GetUncompressedLength(kb_buffer, kb_keycnt_size_loc & KEYBLOCK_KB_SIZE_MASK, &ulength)) {
-                fprintf(stderr, "corrupted compressed data\n");
-                abort();
-            } else {
-                kb->Init(ulength);  /* initially set aligned size */
-                if (!port::Snappy_Uncompress(kb_buffer, kb_keycnt_size_loc & KEYBLOCK_KB_SIZE_MASK, const_cast<char*>(kb->GetRawData().data()))) {
-                    fprintf(stderr, "corrupted compressed data\n");
-                    abort();
-                }
-            }
-        }else{
-            kb->Init(ivalue_size);  /* initially set aligned size */
-            memcpy(const_cast<char*>(kb->GetRawData().data()), kb_buffer, ivalue_size);
-        }
-        /////////////
-        kbpm->ClearKBPrefetched();
-        IncreaseMemoryUsage(kb->GetSize());
-        return kb;
-
-    }
-
-    UserKey* Manifest::IncreaseUserKeyReference(UserKey* uk){
-
-        if(uk->IsEvictionPrepared()){  
-            return NULL;
-        }
-        uk->IncreaseReferenceCount();
-        return uk;
-    }
-#ifdef INSDB_USE_HASHMAP
-    bool Manifest::InsertUserKeyToHashMap(UserKey* uk) {
-        auto it = key_hashmap_->insert(uk->GetKeySlice(), uk);
-        return it.second;
-    }
-
-    /*Reture UserKey with increased referenced count*/
-    UserKey* Manifest::FindUserKeyFromHashMap(KeySlice& key) {
-        UserKey* uk = NULL;
-        while(!uk){
-            auto it = key_hashmap_->find(key);
-            if (it != key_hashmap_->end()) {
-                uk = IncreaseUserKeyReference(it->second);
-                if(uk) uk = uk->IsSKTableEvictionInProgress();
-            }else
-                return NULL;
-        }
-        return uk;
-    }
-    bool Manifest::RemoveUserKeyFromHashMap(KeySlice& key) {
-        return key_hashmap_->erase(key);
-    }
-    bool Manifest::KeyHashMapFindOrInsertUserKey(UserKey*& uk, const KeySlice& key, const uint16_t col_id ) {
-        bool new_uk = false;
-        while(!(uk = FindUserKeyFromHashMap(const_cast<KeySlice& >(key)))){
-            // note that the new key could be inserted after its sktable is evicted.
-            uk = AllocUserKey(key.size());
-            uk->InitUserKey(key);
-
-            uk->ColumnLock(col_id);/* Lock the column */
-            if (InsertUserKeyToHashMap(uk)){
-                new_uk = true;
-                break;
-            }
-            uk->ColumnUnlock(col_id);/* Lock the column */
-            uk->UserKeyCleanup(this);
-            FreeUserKey(uk);
-        }
-        if(!new_uk)
-            uk->ColumnLock(col_id);/* Lock the column */
-        return new_uk;
-    }
-
-    bool Manifest::InsertKBPMToHashMap(KeyBlockPrimaryMeta *kbpm) {
-        assert(kbpm->GetiKeySequenceNumber());
-        auto it = kbpm_hashmap_->insert(kbpm->GetiKeySequenceNumber(), kbpm);
-        return it.second;
-    }
-
-    /*Reture UserKey with increased referenced count*/
-    KeyBlockPrimaryMeta* Manifest::FindKBPMFromHashMap(SequenceNumber ikey) {
-        auto it = kbpm_hashmap_->find(ikey);
-
-        if (it != kbpm_hashmap_->end()) {
-            return it->second;
-        }else
-            return NULL;
-    }
-    void Manifest::RemoveKBPMFromHashMap(SequenceNumber ikey) {
-        kbpm_hashmap_->erase(ikey);
-    }
-
-
-
-#endif
-
-
-
-    UserKey* Manifest::GetFirstUserKey(){
-        printf("Not implemented %s\n", __func__); 
-        return nullptr;
-    }
-
-    UserKey* Manifest::GetLastUserKey(){ 
-        return nullptr;
-    }
-
-    UserKey* Manifest::SearchUserKey(const Slice& tkey){ 
-        printf("Not implemented %s\n", __func__); 
-        return nullptr;
-    }
-
-    UserKey* Manifest::SearchLessThanEqualUserKey(const Slice& tkey){ 
-        printf("Not implemented %s\n", __func__); 
-        return nullptr;
-    }
-
-
-    bool Manifest::InsertUserKey(UserKey* ukey, bool begin_key) {
-        printf("Not implemented %s\n", __func__); 
-        return false;
-    }
-
-
-
-
-
-#if 0
-    UserKey* Manifest::GetFirstUserKey(){ 
-
-        UserKey* uk = NULL;
-
-        /* The first SKTable is never evicted */ 
-        while(!uk){
-            /*First must exist even if it is First key(dummy) */
-            uk = IncreaseUserKeyReference(keymap_.First());
-            if(uk) uk = uk->IsSKTableEvictionInProgress();
-        }
-        return uk;
-    }
-
-    UserKey* Manifest::GetLastUserKey(){ 
-
-        /* The last SKTable is never evicted */ 
-        UserKey* uk = NULL;
-        while(!uk){
-            /*Last must exist even if it is First key(dummy) */
-            uk = IncreaseUserKeyReference(keymap_.Last());
-            if(uk) uk = uk->IsSKTableEvictionInProgress();
-        }
-        return uk;
-    }
-
-    UserKey* Manifest::SearchUserKey(const Slice& tkey){ 
-        UserKey* uk = NULL;
-        KeySlice key(tkey);
-        /* Check Hash first */
-        uk = GetKeyMap()->Search(key);
-        if(uk) uk = IncreaseUserKeyReference(uk);
-        if(uk) uk = uk->IsSKTableEvictionInProgress();
-        if(uk && uk->IsFetched()) return uk;
-        /* if the key does not exist, fetch first and then find the key */
-        SKTableMem *skt = FindSKTableMem(key);
-        //skt->IncSKTRefCnt();
-        skt->LoadSKTable(this);
-        while(!uk){
-            /* FindSKTableMem & fecth function may need to be relocated to here in case of burst deletion */
-            uk = keymap_.SearchGreaterOrEqual(key);
-            if(!uk) break;
-            uk = IncreaseUserKeyReference(uk);
-            if(uk) uk = uk->IsSKTableEvictionInProgress();
-        }
-        //skt->DecSKTRefCnt();
-#if 0
-        if(CheckKeyEvictionThreshold() && (GetCountSKTableCleanList() > GetCountSKTableDirtyList()) && (GetCountSKTableCleanList()/4))
-            SignalKeyCacheThread();//           EvictUserKeys(GetCountSKTableCleanList()/4);
-#endif
-        return uk;
-    }
-
-    UserKey* Manifest::SearchLessThanEqualUserKey(const Slice& tkey){ 
-        UserKey* uk = NULL;
-        KeySlice key(tkey);
-        /* Check Hash first */
-        uk = GetKeyMap()->Search(key);
-        if(uk) uk = IncreaseUserKeyReference(uk);
-        if(uk) uk = uk->IsSKTableEvictionInProgress();
-
-        if(uk && uk->IsFetched()) return uk;
-        /* if the key does not exist, fetch first and then find the key */
-        SKTableMem *skt = FindSKTableMem(key);
-        //skt->IncSKTRefCnt();
-        skt->LoadSKTable(this);
-        while(!uk){
-            /* FindSKTableMem & fecth function may need to be relocated to here in case of burst deletion */
-            uk = keymap_.SearchLessThanEqual(key);
-            if(!uk) break;
-            uk = IncreaseUserKeyReference(uk);
-            if(uk) uk = uk->IsSKTableEvictionInProgress();
-        }
-        //skt->DecSKTRefCnt();
-#if 0
-        if(CheckKeyEvictionThreshold() && (GetCountSKTableCleanList() > GetCountSKTableDirtyList()) && (GetCountSKTableCleanList()/4))
-            SignalKeyCacheThread();//           EvictUserKeys(GetCountSKTableCleanList()/4);
-#endif
-        return uk;
-    }
-
-
-    bool Manifest::InsertUserKey(UserKey* ukey, bool begin_key) {
-        if(!keymap_.Insert(ukey->GetKeySlice(), ukey))
-            return false;
-        return true;
-    }
-#endif
-
-    void Manifest::RemoveUserKeyFromHashMapWrapper(UserKey* ukey)
-    {
-        KeySlice key = ukey->GetKeySlice();
-        bool active = false;
-        if(!RemoveUserKeyFromHashMap(key))
-            abort();/*given key must exist*/
-        //Wait for Other access
-        while(ukey->GetReferenceCount());
-    }
-    /* 
-     * Iterator call this function with ref_cnt_inc == false.
-     * EvictUserKeys can not selete the SKTable to which KBPM belongs.
-     */
-    KeyBlockPrimaryMeta* Manifest::GetKBPM(SequenceNumber seq, uint32_t size,  bool ref_cnt_inc) {
-        KeyBlockPrimaryMeta* kbpm = NULL;
-retry:
-        /* search from hash table */
-        kbpm = FindKBPMFromHashMap(seq);
-        if (!kbpm) {
-            /* create dummy and insert to hash table */
-            kbpm = AllocKBPM();
-            kbpm->Init(seq, size);
-            kbpm->ClearDeleteOnly();
-            kbpm->SetDummy();
-            kbpm->SetOutLog();
-            if(!InsertKBPMToHashMap(kbpm)) {
-                FreeKBPM(kbpm);
-                goto retry;
-            }
-        }
-        if(ref_cnt_inc){
-            kbpm->IncRefCnt();
-            if(kbpm->IsEvicting()){
-                kbpm->DecRefCnt();
-                goto retry;
-            }
-        }
-
-        return kbpm;
-    }
-
-
-    KeyBlockPrimaryMeta* Manifest::GetKBPM(ColumnNode* col_node) {
-        KeyBlockPrimaryMeta* kbpm = NULL;
-        KeyBlockMeta *kbm = col_node->GetKeyBlockMeta();
-        if (kbm) {
-            kbpm = kbm->GetKBPM();
-        } else {
-            /* search from hash table */
-            /* 
-             * The ref cnt is increased in GetKBPM(seq) for this ColumnNode 
-             * The ref cnt will be decreased when evicting UserKey
-             */
-            kbpm = GetKBPM(col_node->GetInSDBKeySeqNum(), col_node->GetiValueSize());
-            col_node->SetKeyBlockMeta(kbpm);
-        }
-        /* The caller should decrease the ref cnt. */
-        kbpm->IncRefCnt();
-        return kbpm;
-    }
-
-    /* return KBPM in order to decrease ref count*/
-    KeyBlockPrimaryMeta* Manifest::GetValueUsingColumn(ColumnNode* col_node, Slice& value)
-    { 
-        UserValue *uv = NULL;
-        bool ra_rahit = false;
-        KeyBlock* kb = NULL;
-
-        /**
-          Search kbpm or create dummy kbpm.
-          - ColumnNode can point kbpm/kbml during write process or it can be point null loading process.
-          - During read operation, we check kbpm to get kb in cache. If it is not available, we need to
-          create dummy kbpm/kb and fill kb from device and insert it to cache.
-          */
-        /* check and get kbm from ColumnNode */
-        KeyBlockPrimaryMeta* kbpm = GetKBPM(col_node);
-        /*KBPM is accessed using ColumnNode. In this case we do not SetRefBitmap(). SetRefBitmap() is set by columns in SKTDF */
-        assert(kbpm);
-#if 0
-retry:
-#endif
-        if (!(kb = kbpm->GetKeyBlockAddr())) {
-            kbpm->Lock();
-            if (!(kb = kbpm->GetKeyBlockAddr())) {
-                kb = LoadValue(col_node->GetInSDBKeySeqNum(), col_node->GetiValueSize(), &ra_rahit, kbpm);
-                kbpm->SetKeyBlockAddr(kb);
-            }
-            kbpm->Unlock();
-        }
-#if 0
-        /* Do we need this code?? */
-        if (kbpm->GetKeyBlockAddr() != kb) {
-            goto retry;
-        }
-#endif
-        /* get value from kb */
-        value = kb->GetValueFromKeyBlock(this, col_node->GetKeyBlockOffset());
-        return kbpm;
-    }
-
-    bool Manifest::GetLatestSequenceUsingSKTDF(const KeySlice& key, uint8_t col_id, SequenceNumber* seq_num, uint64_t cur_time)
-    { 
-        SKTableMem* table = NULL;
-
-        while(true){
-            table = FindSKTableMem(key);
-            /* Reference count prevents eviction */
-            if(table->GetLatestSequenceNumber(this, key, col_id, seq_num, cur_time))
-                break;
-            table->DecSKTRefCnt();
-        }
-        table->DecSKTRefCnt();
-        if(*seq_num == kMaxSequenceNumber)
-            return false; /*No column exists*/
-        return true;
-    }
-
-    KeyBlockPrimaryMeta* Manifest::GetValueUsingSKTDF(const KeySlice& key, Slice& value, uint8_t col_id, SequenceNumber seq_num, uint64_t cur_time)
-    { 
-        bool ra_rahit = false;
-        KeyBlock* kb = NULL;
-        ColumnScratchPad column = {0,0,0};
-        SKTableMem* table = NULL;
-
-
-        while(true){
-            table = FindSKTableMem(key);
-            /* Reference count prevents eviction */
-            if(table->GetColumnInfo(this, key, col_id, seq_num, cur_time, column))
-                break;
-        }
-        if(!column.ikey_seq_num) {
-            return NULL; /*No column exists*/
-        }
-
-        KeyBlockPrimaryMeta* kbpm = GetKBPM(column.ikey_seq_num, column.ivalue_size);
-        assert(kbpm);
-        /* SKTDF eviction thread will call the ClearRefBitmap() if one of 2 bits of column entry's ref bit(non-atomic) is set */
-        kbpm->SetRefBitmap(column.offset);
-        //kbpm->ClearRefBitmap(column.offset);
-
-#if 0
-retry:
-#endif
-        if (!(kb = kbpm->GetKeyBlockAddr())) {
-            kbpm->Lock();
-            if (!(kb = kbpm->GetKeyBlockAddr())) {
-                kb = LoadValue(column.ikey_seq_num, column.ivalue_size, &ra_rahit, kbpm);
-                kbpm->SetKeyBlockAddr(kb);
-            }
-            kbpm->Unlock();
-        }
-#if 0
-        if (kbpm->GetKeyBlockAddr() != kb) {
-            kbpm->ClearRefBitmap(col_node->GetKeyBlockOffset());
-            goto retry;
-        }
-#endif
-        /* get value from kb */
-        value = kb->GetValueFromKeyBlock(this, column.offset);
-        //table->DecSKTRefCnt();
-        return kbpm;
-    }
-
-    bool Manifest::CheckKeyEvictionThreshold(void){
-        return (MemoryUsage() > kMaxCacheSize);
-    }
-
-    bool Manifest::IsTrxnGroupCompleted(TrxnGroupID tgid){
-        bool ret  = false;
-        uctrxn_group_lock_.Lock();
-        /* Find TRXN Group */
-        std::unordered_map<TrxnGroupID, uint32_t>::iterator it = uncompleted_trxn_group_.find(tgid);
-        if(it==uncompleted_trxn_group_.end()) 
-            ret = true;
-        uctrxn_group_lock_.Unlock();
-        return ret;
-    }
-
-
-    TransactionID Manifest::GetTrxnID(uint32_t count){
-        TransactionID trxn_id;
-        uctrxn_group_lock_.Lock();
-        /* Allocate TRXN ID */
-        trxn_id = next_trxn_id_; 
-        if(count > 4096){
-                next_trxn_id_ = ((trxn_id >> TGID_SHIFT)+ 1) << TGID_SHIFT; // Move to next TRXN Group.
-        }else
-            next_trxn_id_++; 
-
-        /* Add to TRXN Group */
-        std::unordered_map<TrxnGroupID, uint32_t>::iterator it = uncompleted_trxn_group_.find(trxn_id >> TGID_SHIFT);
-        if(it==uncompleted_trxn_group_.end()) 
-            uncompleted_trxn_group_.insert({(trxn_id >> TGID_SHIFT), count});
-        else 
-            it->second += count;
-
-        uctrxn_group_lock_.Unlock();
-        return trxn_id;
-    }
-
-    /* It can be called from FlushSKTableMem() or Store() 
-     * FlushSKTableMem() : call this function after Device Flush
-     *                     But the ColumnNode is not recorded in the SKTable
-     *                     This means the ColumnNode is still in Worker's Log.
-     *                     If all trxns in the TRXN group are flushed, 
-     *                     The trxn group node will be deleted from uncompleted_trxn_group_.
-     *                     In this case, the ColumnNode will be recored in the SKTable during the next FlushSKTable
-     *  Store() : If "delete command" is canceled in Store(), the "count" should be decremented by 1.
-     *
-     *  tgid is Transaction Group ID calculated by "trxn ID >> TGID_SHIFT"
-     *  caller must use TRXN Group ID instead of TRXN ID.
-     *
-     *  return true if the TRXN Group is completed.(All TRXNs in the Group has been flushed)
-     *  return false if the TRXN Group is NOT completed.
-     */
-    void Manifest::DecTrxnGroup(TrxnGroupID tgid, uint32_t cnt){
-        bool result = false;
-        uctrxn_group_lock_.Lock();
-
-        std::unordered_map<TrxnGroupID, uint32_t>::iterator it = uncompleted_trxn_group_.find(tgid);
-#ifdef ENABLE_SANITYCHECK
-        if(it == uncompleted_trxn_group_.end()) abort();//The transaction group must exist.
-#else
-        if(it == uncompleted_trxn_group_.end()) { uctrxn_group_lock_.Unlock(); return; }
-#endif
-        else it->second -= cnt;
-        if(!it->second){
-            /* In this case, the trxn group is not fully used. 
-             * This can occur when trxn requests rarely occur while there are many non-trxn requests.
-             * For this, we don't have to wait for the Group to be completed.
-             * We just make Group complete.
-             */
-            if(tgid  == (next_trxn_id_ >> TGID_SHIFT))
-                next_trxn_id_ = (tgid + 1) << TGID_SHIFT; // Move to next TRXN Group.
-            uncompleted_trxn_group_.erase(it);
-            result = true;
-
-        }
-        uctrxn_group_lock_.Unlock();
-        if(result)
-            AddCompletedTrxnGroupRange(tgid);
-        return;
-    }
-
-    bool Manifest::IsCompletedTrxnGroupRange(std::list<TrxnGroupRange> &completed_trxn_group_list, TrxnGroupID tgid){
-        bool completed = false;
-        for(auto it = completed_trxn_group_list.begin() ; it != completed_trxn_group_list.end() ; it++){
-            if( it->start <= tgid &&  tgid <= it->end ) {
-                completed = true;
-                break;
-            }
-        }
-        return completed;
-    }
-
-    /*bool Manifest::IsCompletedTrxnGroupRange(TrxnGroupID tgid){
-        bool completed = false;
-        ctrxn_group_lock_.Lock();
-        int i = 0; 
-
-        for(auto it = completed_trxn_group_list_.begin() ; it != completed_trxn_group_list_.end() ; it++, i++){
-            if( it->start <= tgid &&  tgid <= it->end ) {
-                completed = true;
-                break;
-            }
-        } 
-        ctrxn_group_lock_.Unlock();
-        return completed;
-    }*/
-
-
-    void Manifest::AddCompletedTrxnGroupRange(TrxnGroupID tgid){
-        ctrxn_group_lock_.Lock();
-        for(auto it = completed_trxn_group_list_.begin() ; it != completed_trxn_group_list_.end() ; it++){
-            if(tgid == it->start - 1){//It means previous range cannot merge the range with this range 
-                it->start = tgid; 
-                break;
-            }else if(tgid < it->start){ // last element has max value
-                completed_trxn_group_list_.insert(it, TrxnGroupRange(tgid)); 
-                break;
-            }else if(it->end + 1 == tgid){
-                /**
-                 * Can not reach the end because end has maximum TRXN number(0xffff ffff)
-                 */
-                std::list<TrxnGroupRange>::iterator cur = it; 
-                it++; 
-
-                if( tgid == it->start - 1 ){ // Merge the range
-                    cur->end = it->end;
-                    completed_trxn_group_list_.erase(it);
-                }else{ 
-                    cur->end = tgid; 
-                }
-                break;
-            }  
-        } 
-        ctrxn_group_lock_.Unlock();
-    }
-
-    void Manifest::CopyCompletedTrxnGroupRange(std::list<TrxnGroupRange> &completed_trxn_groups) {
-        ctrxn_group_lock_.Lock();
-        for(auto completed_trxn_group : completed_trxn_group_list_)
-            completed_trxn_groups.push_back(completed_trxn_group);
-        ctrxn_group_lock_.Unlock();
-    }
+ 
 
     void Manifest::PrintParam() {
 #ifdef TRACE_MEM
-        printf("#LF_skt_cache[%ld] #LF_skt_dirty[%ld]\n",
-                skt_cache_[kCleanSKTCache].cache.size(),
+        printf("#LF_skt_dirty[%ld] #LF_skt_kbm_clean[%ld]\n",
                 skt_cache_[kDirtySKTCache].cache.size(),
+                skt_cache_[kCleanSKTCache].cache.size()
               );
         printf("#Evicted Key[%lu] SKT[%lu] : Eviction Call[%lu] Dirty Cancelled[%lu] skt busy Canceled[%lu], next skt deleted Canceled[%lu] Prefetch SKT after evict[%lu] \n",
                 g_evicted_key.load(),
@@ -3736,11 +4935,11 @@ retry:
         printf("#sktable loading[%lu] flushing[%lu]\n",
                 g_skt_loading.load(),
                 g_skt_flushing.load());
-        printf("#Device Format SKT status : hit[%lu] miss[%lu] Insert[%lu] evict[%lu] current cnt[%ld]\n",
+        printf("#Device Format SKT status : hit[%lu] miss[%lu] Insert[%lu] evict[%lu]\n",
                 g_hit_df_skt.load(),
                 g_miss_df_skt.load(),
                 g_insert_df_skt.load(),
-                g_evict_df_skt.load(),
+                g_evict_df_skt.load()
               );
 #ifdef KV_TIME_MEASURE
         printf("#EvictUserKey call[%lu] cum time[%llu usec] max time[%llu usec]\n",
@@ -3755,104 +4954,6 @@ retry:
 #endif
 
 
-    }
-
-    void Manifest::InsertSKTableMemCache(SKTableMem* sktm, SKTCacheType type, bool clear_stat, bool  wakeup) {
-        skt_cache_[type].Lock();
-        if(clear_stat){
-            assert(sktm->GetLocation() == GetSKTCleanCache()->end());
-            sktm->ClearFlushAndEvicting();
-        }else if(sktm->GetLocation() != GetSKTCleanCache()->end() || sktm->IsFlushOrEvicting()){
-            skt_cache_[type].Unlock();
-            return;
-        }
-#ifdef CODE_TRACE
-        printf("[%d :: %s]%p(ID : %d)\n", __LINE__, __func__, sktm, sktm->GetSKTableID());
-#endif
-        skt_cache_[type].PushItem(sktm, false);
-        if(type == kDirtySKTCache) sktm->SetInDirtyCache();
-        skt_cache_[type].Unlock();
-        if(wakeup){
-            assert(type == kCleanSKTCache);
-            SignalKeyCacheThread();
-        }
-    }
-
-    bool Manifest::RemoveFromSKTableMemDirtyCache(SKTableMem* sktm) {
-
-        // set clean cache as defaul to acquire the lock
-        // clean and dirty cache share one lock, it's ok to lock with clean cache and unlock with dirty cache.
-        // SKTCache<SKTableMem> *skt_cache = &skt_cache_[kDirtySKTCache];
-
-        skt_cache_lock_.Lock();
-        if(/*sktm->GetLocation() == GetSKTCleanCache()->end() || */!sktm->IsInDirtyCache()) {
-            /*If the sktm is in Clean Cache, it means the sktm has been flushed by the other thread already */
-            skt_cache_lock_.Unlock();
-            return false;
-        }
-#ifndef NDEBUG
-        assert(!sktm->SetFlushing());
-        assert(sktm->ClearInDirtyCache());
-#else
-        sktm->SetFlushing();
-        sktm->ClearInDirtyCache();
-#endif
-#ifdef CODE_TRACE
-        printf("[%d :: %s]%p(%d)\n", __LINE__, __func__, sktm, sktm->GetSKTableID());
-#endif
-        skt_cache_[kDirtySKTCache].DeleteItem(sktm); 
-        sktm->SetLocation(GetSKTCleanCache()->end());
-        skt_cache_lock_.Unlock();
-        return true;
-    }
-
-    void Manifest::MigrateSKTableMemCache(SKTableMem* sktm) {
-        skt_cache_lock_.Lock();
-        if(sktm->GetLocation() != GetSKTCleanCache()->end()){
-            if(!sktm->SetInDirtyCache()){ 
-                /* If it was in the clean cache not in dirty cache */
-                assert(!sktm->IsFlushOrEvicting());
-                skt_cache_[kCleanSKTCache].DeleteItem(sktm);
-#ifdef CODE_TRACE
-                printf("[%d :: %s]%p(%d)\n", __LINE__, __func__, sktm, sktm->GetSKTableID());
-#endif
-                skt_cache_[kDirtySKTCache].PushItem(sktm, false);
-            }
-
-        }/*else{ The other thread already get this }*/
-        skt_cache_lock_.Unlock();
-#ifdef CODE_TRACE
-        printf("[%d :: %s]sktm addr : %p || cache loc : 0x%lx\n", __LINE__, __func__, sktm, sktm->GetLocation());
-#endif
-    }
-
-    size_t Manifest::SKTCountInSKTableMemCache(SKTCacheType type) {
-        return skt_cache_[type].GetCacheSize();
-    }
-
-    SKTableMem* Manifest::PopSKTableMem(SKTCacheType type) {
-        skt_cache_lock_.Lock();
-        SKTableMem* sktm = skt_cache_[type].NextItem();
-        if (sktm){
-#ifdef CODE_TRACE
-            printf("[%d :: %s]%p(ID : %d)\n", __LINE__, __func__, sktm, sktm->GetSKTableID());
-#endif
-            if(type == kDirtySKTCache){
-                assert(!sktm->IsEvictingSKT());
-                assert(!sktm->IsFlushing());
-                sktm->SetFlushing();
-                sktm->ClearInDirtyCache();
-            }else{
-                assert(!sktm->IsEvictingSKT());
-                assert(!sktm->IsFlushing());
-                assert(!sktm->IsInDirtyCache());
-                sktm->SetEvictingSKT();
-            }
-            skt_cache_[type].PopNextItem(sktm->GetSize());
-            sktm->SetLocation(GetSKTCleanCache()->end());
-        }
-        skt_cache_lock_.Unlock();
-        return sktm;
     }
 
     Slice KeyBlock::GetValueFromKeyBlock(Manifest* mf, uint8_t index) {
@@ -3896,7 +4997,7 @@ retry:
     }
 
 
-    bool KeyBlock::DecodeAllKeyMeta(KeyBlockMetaLog *kbml, std::list<ColumnInfo> &key_list) {
+    bool KeyBlock::DecodeAllKeyMeta(KeyBlockPrimaryMeta *kbpm, std::list<ColumnInfo> &key_list) {
         uint16_t nr_key = *(reinterpret_cast<uint16_t *>(raw_data_));
         uint32_t* offset = reinterpret_cast<uint32_t *>(raw_data_+2);/* The # of keys (2B) */
 
@@ -3912,117 +5013,61 @@ retry:
             data_offset &= KEYBLOCK_OFFSET_MASK;
 
             ColumnInfo colinfo = { 0 };
-            colinfo.kbml = kbml;
             colinfo.kb_index = index;
             colinfo.kb_size = data_size_;
-            colinfo.kbpm = kbml->GetKBPM();
+            colinfo.kbpm = kbpm;
             key_list.push_back(colinfo);
         }
 
         return true;
     }
 
-    uint32_t KeyBlockPrimaryMeta::GetEstimatedBufferSize(){
-        assert(!IsDummy());
-        if(kbml_) return kbml_->GetEstimatedBufferSize();
-        return KBPM_HEADER_SIZE;
-    }
-    uint32_t KeyBlockPrimaryMeta::BuildDeviceFormatKeyBlockMeta(char* kbm_buffer){
-        assert(!IsDummy());
-        char* buf = kbm_buffer;
-        uint32_t size = 0;
-        if (kbml_) size = kbml_->BuildDeviceFormatKeyBlockMeta(kbm_buffer);
-        else {
-            size = BuildDeviceFormatKeyBlockMetaInternal(buf);
-            *(buf+size++) = (uint8_t)0; //Trxn count of Put 
-            *(buf+size++) = (uint8_t)0; //Trxn count of Del
-        }
-        return size;
-    }
-
-    bool KeyBlockPrimaryMeta::InitWithDeviceFormat(Manifest  *mf, const char *buffer, uint32_t buffer_size, KeyBlockMetaLog* &kbml, bool outlog) {
+    void KeyBlockPrimaryMeta::InitWithDeviceFormat(Manifest  *mf, const char *buffer, uint32_t buffer_size) {
 
         assert(IsDummy());
-        Slice df(buffer, buffer_size);
-        uint8_t count[kNrRequestType] = {0}; // Max 32
-        uint16_t merge_trxn_cnt[kNrRequestType][kMaxRequestPerKeyBlock] = {0};
-        uint64_t next_ikey_seq_num = 0;
-        uint32_t nr_trxns = 0;
-
-        kbml = nullptr;
-
+        org_key_cnt_ = *buffer;
+        /* The KBM must be out-log*/
+        assert(!(org_key_cnt_ & KBM_INLOG_FLAG));
+        buffer+=KB_BITMAP_LOC;
         // bitmap
-        uint32_t bitmap = DecodeFixed32(buffer);
-        df.remove_prefix(sizeof(uint32_t));
-        // original key count
-        uint8_t orig_keycnt = df.data()[0];
-        df.remove_prefix(sizeof(uint8_t));
+        OverrideKeyBlockBitmap(DecodeFixed64(buffer));
+        dev_data_ = NULL; 
+        dev_data_size_ = 0; 
+        ClearDummy();
+        ClearKBMPrefetched();
+        return;
 
-        // create KBPM
-        // note that KBPM is initialized by original key count to keep key offset intact.
-        assert(orig_keycnt);
-        InitInDummyState(orig_keycnt);
-        OverrideKeyBlockBitmap(bitmap);
-        if(outlog)
-            return true;
+    }
+    Slice KeyBlockPrimaryMeta::BuildDeviceFormatKeyBlockMeta(char* kbm_buffer){
 
-        // Put transaction list
-        std::list<TrxnInfo*> trxn_list[2];
-        bool success = TrxnInfo::DecodePutTransactionList(df, trxn_list[kPutType]);
-        if(!success) goto error_out;
+        Slice ret;
+        if(kbm_buffer){
+            /* Build Out-Log KBM*/
+            assert(!dev_data_ && !dev_data_size_);
+            dev_data_ = kbm_buffer;
+            *dev_data_ = org_key_cnt_;
+            /*Skip 3 byte which is reserved for GC info(maybe?)*/
+            EncodeFixed64((dev_data_+KB_BITMAP_LOC), kb_bitmap_.load(std::memory_order_relaxed));
+            dev_data_size_ = kOutLogKBMSize ;//org_key_cnt_ + 3 byte(reserved) + kb_bitmap_
+            assert(dev_data_);
+            assert(dev_data_size_ == 12);
+            ret = Slice(dev_data_, SizeAlignment(dev_data_size_));
+            dev_data_ = NULL;
+            dev_data_size_ = 0;
+        }else{
+            /* Build In-Log KBM*/
+            /* Most of information has been added to the buffer*/
+            *((uint32_t*)(dev_data_ + kOutLogKBMSize)) = dev_data_size_;
+            assert(dev_data_);
+            assert(dev_data_size_ >= 12);
+            ret = Slice(dev_data_, SizeAlignment(dev_data_size_));
+            /* Store next ikey to dev_data */
+            dev_data_ = (char*)(*((uint64_t*)(dev_data_+ NEXT_IKEY_SEQ_LOC)));
+            dev_data_size_ = USE_DEV_DATA_FOR_NEXT_IKEY_SEQ;
 
-        // Del transaction list
-        success = TrxnInfo::DecodeDelTransactionList(df, trxn_list[kDelType]);
-        if(!success) goto error_out;
-
-        // next ikey seq
-        next_ikey_seq_num = DecodeFixed64(df.data());
-
-        for(int i=0; i<kNrRequestType; i++)
-            count[i] = trxn_list[i].size();
-
-        // create KBML
-        for(int i=0; i<kNrRequestType; i++) {
-            int j=0;
-            for(auto it : trxn_list[i]) {
-                merge_trxn_cnt[i][j] = it->GetNrMergedTrxnList();
-                j++;
-                nr_trxns++;
-            }
         }
 
-        // if no transaction is recorded, skip creating KBML.
-        if(!nr_trxns)
-            goto return_success;
-
-        kbml = mf->AllocKBML();
-        kbml->Init(next_ikey_seq_num, this, count, merge_trxn_cnt);
-        SetKBML(kbml);
-        // fill KBML transaction lists
-        for(int i=0; i<kNrRequestType; i++) {
-            int index=0;
-            for(auto it : trxn_list[i]) {
-                if(i == kPutType) index = it->GetKeyOffset();
-                Transaction trxn = it->GetTrxn();
-                kbml->SetHeadTrxn(it->GetKey(), it->GetColId(), (insdb::RequestType)i, index, trxn);
-                for(int merged_idx=0; merged_idx<it->GetNrMergedTrxnList(); merged_idx++)
-                    kbml->InsertMergedTrxn(index, (insdb::RequestType)i, it->GetMergedTrxnList()[merged_idx], merged_idx);
-                if( i != kPutType)
-                    index++;
-            }
-        }
-return_success:
-        return true;
-
-error_out:
-        for(int i=0; i<kNrRequestType; i++) {
-            for(auto it : trxn_list[i]) {
-                delete it;
-            }
-        }
-
-        if(kbml) mf->FreeKBML(kbml);
-        return false;
+        return ret;
     }
 
 } //namespace

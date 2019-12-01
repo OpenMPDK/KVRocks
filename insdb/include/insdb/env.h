@@ -116,9 +116,9 @@ namespace insdb {
               Current implementation just assume a single KV SSD.
 
               [Note]
-kv_dev : KV SSD device name.
+                kv_dev : KV SSD device name.
 */
-            virtual Status Open(const std::string& kv_ssd_name) = 0;
+            virtual Status Open(std::vector<std::string> &kv_ssd) = 0;
 
             /**
               Close a KV SSD device
@@ -168,7 +168,7 @@ kv_dev : KV SSD device name.
               kernel write buffer.
               Use internel DB handler which is Opened by Open() call.
               */
-            virtual Status Flush(FlushType type, InSDBKey key = {0, 0}) = 0;
+            virtual Status Flush(FlushType type, int dev_idx = -1, InSDBKey key = {0, 0}) = 0;
 
             /**
               @brief  retrieve key-value pair synchronously.
@@ -182,7 +182,11 @@ kv_dev : KV SSD device name.
               Value defined as Slice, it must provide pre-allocated buffer.
               Use internel DB handler which is Opened by Open() call.
               */
-            virtual Status Get(InSDBKey key, char *buf, int *size, GetType type = kSyncGet, bool *from_readahead = NULL) = 0;
+            static const uint8_t GetFlag_NoReturnedSize = 0x80;
+            static const uint8_t GetFlag_PrefetchLevel_1 = 0x20;
+            static const uint8_t GetFlag_PrefetchLevel_2 = 0x40;
+            static const uint8_t GetFlag_PrefetchLevel_3 = 0x60;
+            virtual Status Get(InSDBKey key, char *buf, int *size, GetType type = kSyncGet, uint8_t flags = 0, bool *from_readahead = NULL) = 0;
 
             enum DevStatus {
                 Success = 0,
@@ -192,7 +196,7 @@ kv_dev : KV SSD device name.
             };
 
             virtual Status MultiPut(std::vector<InSDBKey> &key, std::vector<char*> &buf, std::vector<int> &size, InSDBKey blocking_key, bool async) = 0;
-            virtual Status MultiGet(std::vector<InSDBKey> &key, std::vector<char*> &buf, std::vector<int> &size, InSDBKey blocking_key, bool readahead, std::vector<DevStatus> &status) = 0;
+            virtual Status MultiGet(std::vector<InSDBKey> &key, std::vector<char*> &buf, std::vector<int> &size, InSDBKey blocking_key, bool readahead, uint8_t flags, std::vector<DevStatus> &status) = 0;
             virtual Status MultiDel(std::vector<InSDBKey> &key, InSDBKey blocking_key, bool async, std::vector<DevStatus> &status) = 0;
             /**
               @brief ask discard a single key in kernel buffer
@@ -225,9 +229,9 @@ kv_dev : KV SSD device name.
               */
             virtual bool KeyExist(InSDBKey key) = 0;
 
-            virtual Status IterReq(uint32_t mask, uint32_t iter_val, unsigned char *iter_handle, bool open = false, bool rm = false) = 0;
-            virtual Status IterRead(char* buf, int *size, unsigned char iter_handle) = 0;
-            virtual Status GetLog(char pagecode, char* buf, int bufflen) = 0;
+            virtual Status IterReq(uint32_t mask, uint32_t iter_val, unsigned char *iter_handle, int dev_idx, bool open = false, bool rm = false) = 0;
+            virtual Status IterRead(char* buf, int *size, unsigned char iter_handle, int dev_idx) = 0;
+            virtual Status GetLog(char pagecode, char* buf, int bufflen, int dev_idx) = 0;
             // Arrange to run "(*function)(arg)" once in a background thread.
             //
             // "function" may run in an unspecified thread.  Multiple functions
@@ -298,29 +302,29 @@ kv_dev : KV SSD device name.
             Env* target() const { return target_; }
 
             // The following text is boilerplate that forwards all methods to target()
-            Status Open(const std::string& kv_ssd_name) { return target_->Open(kv_ssd_name); }
+            Status Open(std::vector<std::string>& kv_ssd_name) { return target_->Open(kv_ssd_name); }
             void Close() { return target_->Close(); }
             bool AcquireDBLock(const uint16_t db_name) { return target_->AcquireDBLock(db_name); }
             void ReleaseDBLock(const uint16_t db_name) { return target_->ReleaseDBLock(db_name); }
             Status Put(InSDBKey key, const Slice& value, bool async = false) { return target_->Put(key, value, async); }
-            Status Flush(FlushType type, InSDBKey key = {0,0}) { return target_->Flush(type, key); }
-            Status Get(InSDBKey key, char *buf, int *size, GetType type = kSyncGet, bool *from_readahead = NULL) { return target_->Get(key, buf, size, type, from_readahead); }
+            Status Flush(FlushType type, int dev_idx = -1, InSDBKey key = {0,0}) { return target_->Flush(type, dev_idx, key); }
+            Status Get(InSDBKey key, char *buf, int *size, GetType type = kSyncGet, uint8_t flags = 0, bool *from_readahead = NULL) { return target_->Get(key, buf, size, type, flags, from_readahead); }
             Status MultiPut(std::vector<InSDBKey> &key, std::vector<char*> &buf, std::vector<int> &size, InSDBKey blocking_key, bool async) { return target_->MultiPut(key, buf, size, blocking_key, async); }
-            Status MultiGet(std::vector<InSDBKey> &key, std::vector<char*> &buf, std::vector<int> &size, InSDBKey blocking_key, bool readahead, std::vector<DevStatus> &status) { return target_->MultiGet(key, buf, size, blocking_key, readahead, status); }
+            Status MultiGet(std::vector<InSDBKey> &key, std::vector<char*> &buf, std::vector<int> &size, InSDBKey blocking_key, bool readahead, uint8_t flags, std::vector<DevStatus> &status) { return target_->MultiGet(key, buf, size, blocking_key, readahead, flags, status); }
             Status MultiDel(std::vector<InSDBKey> &key, InSDBKey blocking_key, bool async, std::vector<DevStatus> &status) { return target_->MultiDel(key, blocking_key, async, status); }
             Status DiscardPrefetch(InSDBKey key = {0,0}) {return target_->DiscardPrefetch(key); }
             Status Delete(InSDBKey key, bool async = true) { return target_->Delete(key, async); }
             bool KeyExist(InSDBKey key) { return target_->KeyExist(key); }
 
 
-            virtual Status IterReq(uint32_t mask, uint32_t iter_val, unsigned char *iter_handle, bool open = false, bool rm = false) {
-                return target_->IterReq(mask, iter_val, iter_handle, open, rm);
+            virtual Status IterReq(uint32_t mask, uint32_t iter_val, unsigned char *iter_handle, int dev_idx, bool open = false, bool rm = false) {
+                return target_->IterReq(mask, iter_val, iter_handle, open, rm, dev_idx);
             }
-            virtual Status IterRead(char* buf, int *size, unsigned char iter_handle) {
-                return target_->IterRead(buf, size, iter_handle);
+            virtual Status IterRead(char* buf, int *size, unsigned char iter_handle, int dev_idx) {
+                return target_->IterRead(buf, size, iter_handle, dev_idx);
             }
-            virtual Status GetLog(char pagecode, char* buf, int bufflen) {
-                return target_->GetLog(pagecode, buf, bufflen);
+            virtual Status GetLog(char pagecode, char* buf, int bufflen, int dev_idx) {
+                return target_->GetLog(pagecode, buf, bufflen, dev_idx);
             }
             uint64_t StartThread(void (*f)(void*), void* a) {
                 return target_->StartThread(f, a);

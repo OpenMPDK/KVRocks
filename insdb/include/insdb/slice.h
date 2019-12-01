@@ -278,7 +278,9 @@ namespace insdb {
 
     struct UKHash {
         inline uint32_t operator() (const KeySlice& a) const {
-            if(a.HasHash()) return a.GetHashValue();
+            if(a.HasHash()){
+                return a.GetHashValue();
+            }
             return InSDBUKHash (a.data(), a.size());
         }
     };

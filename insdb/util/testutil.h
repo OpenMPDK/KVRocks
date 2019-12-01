@@ -65,7 +65,7 @@ class ErrorEnv : public EnvWrapper {
       ++num_writable_data_errors_;
       return Status::IOError("fake Flush error");
     }
-    return target()->Flush(kWriteFlush, key);
+    return target()->Flush(kWriteFlush, -1, key);
   }
 };
 

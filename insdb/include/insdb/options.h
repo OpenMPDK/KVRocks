@@ -25,6 +25,7 @@
 #include <stddef.h>
 #include "insdb/export.h"
 #include "insdb/status.h"
+#include <vector>
 
 namespace insdb {
 
@@ -202,6 +203,21 @@ namespace insdb {
         // Prefix detection
         bool prefix_detection;
 
+        // disable cache
+        bool disable_cache;
+
+        // disable IO size check
+        bool disable_io_size_check;
+
+        // share iterator pad
+        bool iterpad_share;
+
+        // keep written key blocks in memory
+        bool keep_written_keyblock;
+
+        // allow table eviction
+        bool table_eviction;
+
         // If non-NULL, use the specified filter policy to reduce disk reads.
         // Many applications will benefit from passing the result of
         // NewBloomFilterPolicy() here.
@@ -274,7 +290,7 @@ Default: 4.
         /**
          KV SSD device name
          */
-        const char *kv_ssd;
+        std::vector<std::string> kv_ssd;
 
         /**
           Average approximate key size
@@ -285,6 +301,11 @@ Default: 4.
           Average approximate value size
          */
         size_t approx_val_size;
+
+        /**
+          Average approximate table encoding effectiveness
+         */
+        uint16_t approx_table_encoding_factor;
 
         /**
           iterator prefetch hint
@@ -321,6 +342,7 @@ Default: 4.
         /**
           callback for user key operations
          */
+        bool use_compact_key;
         AddUserKeyCallback AddUserKey;
         void *AddUserKeyContext;
         FlushCallback Flush;

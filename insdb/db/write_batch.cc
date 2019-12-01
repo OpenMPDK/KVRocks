@@ -338,7 +338,7 @@ namespace insdb {
         Store(key_with_hash, merged_value, col_id, kPutType);
         return Status::OK();
     }
-    inline void WriteBatchInternal::Delete(const Slice& key, const uint16_t col_id){ 
+    inline void WriteBatchInternal::Delete(const Slice& key, const uint16_t col_id){
 #ifdef INSDB_GLOBAL_STATS
         g_api_delete_cnt++;
 #endif
@@ -356,11 +356,8 @@ namespace insdb {
        Status s;
        UserKey *uk = NULL; 
        UserValue *uv = NULL;
-       SKTableMem *skt = NULL;
-
-       /*SequenceNumber must be assigned after having ColumnLock in order to prevent sequence number inversion */
-       //SequenceNumber seq_number = mf_->GenerateSequenceNumber();
-       ColumnNode *col_node = new ColumnNode(type, (mf_->TtlIsEnabled(col_id)?ttl_:0));
+       /*SequenceNumber must be assigned after acquiring ColumnLock in order to prevent sequence number inversion */
+       ColumnNode *col_node = mf_->AllocColumnNode();
        /*
         * The UserValue->buffer will be used for source of compression in BuildKeyBlock()
         * So we need to add "key + columnID + ttl(if exist)"
@@ -369,131 +366,119 @@ namespace insdb {
            uv = mf_->AllocUserValue(value.size() + key.size() + 1/*Column ID*/ + sizeof(ttl_));
            uv->InitUserValue(value, key, col_id, (mf_->TtlIsEnabled(col_id)?ttl_:0));
            col_node->InsertUserValue(uv);
+#ifdef MEASURE_WAF
+           g_acc_appwrite_keyvalue_size += value.size() + key.size();
+           if (g_acc_appwrite_keyvalue_size && (g_acc_appwrite_keyvalue_size%(10*1024*1024)) == 0) {
+               printf("app write %lu dev write %lu\n", g_acc_appwrite_keyvalue_size.load(std::memory_order_relaxed), g_acc_devwrite_keyvalue_size.load(std::memory_order_relaxed));
+           }
+#endif
        }
+      /*
+        * We don't need to increase ref count of SKT.
+        * If SKTable is being evicted, BuildKeyBlock(Meta)() will prefetch the SKTable 
+        */
        if(mf_->KeyHashMapFindOrInsertUserKey(uk, key, col_id)){
-           skt = mf_->FindSKTableMem(key);
-           assert(skt);
+           SKTableMem *skt = mf_->FindSKTableMem(key);
            skt->PushUserKeyToActiveKeyQueue(uk);
-           if(!skt->GetSKTableDeviceFormatNode() && !skt->IsFetchInProgress()) 
+           if(!skt->IsKeymapLoaded() && !skt->IsFetchInProgress()) 
                skt->PrefetchSKTable(mf_, true);
-#ifdef INSDB_GLOBAL_STATS
-           g_new_ikey_cnt++;
-#endif
        }
-#ifndef NDEBUG
-       else{
-           mf_->SKTableCacheMemLock();
-           skt = mf_->FindSKTableMem(key);
-           assert((skt->GetSKTableDeviceFormatNode()) || skt->SetFetchInProgress());
-           assert(skt->IsInSKTableCache(mf_) || skt->IsFlushOrEvicting());
-           mf_->SKTableCacheMemUnlock();
-           skt = NULL;
-       }
-#endif
+
+       /* 
+        * KBM will be prefetched in FlushSKTableMem()
+        * And the KBM will be loaded by non-blocking-read
+        */
        assert(uk);
        assert(uk->GetReferenceCount());
 
-       /* Do not check whether the given key exists or not in new design(hashmap insertion only version) */
-       /*In this case, don't need to check sktable whether is fetched because UserKey exists*/
-#if 0
-       if( type == kDelType && uk->IsColumnEmpty(col_id) && (trxn_.count == 1 || trxn_.seq_number < trxn_.count - 1)
-               /* The request must not be a part of TRXN or not the last request of TRXN */){
-           /* SKTableMem has been fetched but the column does not exist or the previous command is delete.*/
-           uk->ColumnUnlock(col_id); /*uk->col_lock[col_id].Unlock();*/
-           uk->DecreaseReferenceCount();
-           if(trxn_.id) mf_->DecTrxnGroup(trxn_.id >> TGID_SHIFT, 1);
-           --trxn_.count;
-           delete col_node;
-           return; 
+       col_node->NewColumnInit(uk, type, col_id, (mf_->TtlIsEnabled(col_id)?ttl_:0), mf_->GenerateSequenceNumber(), (value.size() + key.size() + 1/*Col id*/)/*To estimate col info size*/);
+
+#ifdef CODE_TRACE
+       if (type == kPutType) {
+           printf("PUT: key size(%ld) sequence(%ld) : uk(%p) key(%s) : key:(%s)\tvalue:%s\n",
+                   key.size(), col_node->GetBeginSequenceNumber(),
+                   uk, EscapeString(uk->GetKeySlice()).c_str(),
+                   EscapeString(key).c_str(),
+                   EscapeString(value).c_str());
+       } else {
+           printf("DEL: key size(%ld) sequence(%ld) : uk(%p) key(%s):  key:(%s)\n",
+                   key.size(), col_node->GetBeginSequenceNumber(),
+                   uk, EscapeString(uk->GetKeySlice()).c_str(),
+                   EscapeString(key).c_str());
        }
 #endif
 
-       SequenceNumber seq_number = mf_->GenerateSequenceNumber();
-       col_node->UpdateSequenceNumber(seq_number);
        /* 
         * Last request in a TRXN should be written to the device regardless of its status 
-        * The last arguemnt is for this.
         */
-       InsertColumnNodeStatus sched_stat = uk->UpdateColumn(col_node, col_id, (trxn_.count > 1 && trxn_.seq_number == trxn_.count - 1), mf_);
+       RequestNode *req_node = NULL;
+       TrxnGroupID old_tgid = 0;
        /* 
         * If return value is kHasBeenScheduled, it means the previous ColumnNode can be merged to this ColumnNode.
         * So, we need to save its Trxn Group ID. If it is different from its TGID, inc uk->col_data_->unsubmitted_trxn_group_cnt_++;
         */
-       if(sched_stat  == kFailInsert){
+       if(!uk->UpdateColumn(mf_, req_node, col_node, col_id, (trxn_.count > 1 && trxn_.seq_number == trxn_.count - 1)/*If this is the last request of the TRXN*/, old_tgid)){
            /* The previous & current col_node is a delete request */
            /* Now we lost one seq #.*/
            /* Check User Key whether it needs to be deleted */
-           uk->ColumnUnlock(col_id); /*uk->col_lock[col_id].Unlock();*/
            uk->DecreaseReferenceCount();
-           if(trxn_.id)
-               mf_->DecTrxnGroup(trxn_.id >> TGID_SHIFT, 1);
+           uk->ColumnUnlock(col_id); /*uk->col_lock[col_id].Unlock();*/
+           if(trxn_.id) mf_->DecTrxnGroup(trxn_.id >> TGID_SHIFT, 1);
            --trxn_.count;//if it is not a part of trxn, it can be 0xFFFFFFFF. but there is no more request in WriteBatchInternal. 
-           delete col_node;
-           return; 
+#ifndef NDEBUG
+           if(col_node->GetRequestNode()) {
+               assert(col_node->GetRequestNode()->GetRequestNodeLatestColumnNode() != col_node);
+           }
+#endif
+           col_node->SetRequestNode(nullptr);
+           mf_->FreeColumnNode(col_node);
+           return;
        }
 
-       if(trxn_.count > 1 && !trxn_.id){
+       if(trxn_.count > 1 && !trxn_.id) 
            trxn_.id = mf_->GetTrxnID(trxn_.count); 
-       }
-
-       // Call AddUserKey callback
        /*
-          if(dbimpl_->CallbackAvailable())
-          {
-          dbimpl_->CallAddUserKey(uk, uv, type, trxn_.seq_number, col_id, new_uk);
-          }
-          */
+        * The TGID of priv col is different to that of current col 
+        * So, we need to allocate new req_node for this col
+        */
+       if(req_node && old_tgid != (trxn_.id >> TGID_SHIFT))
+           req_node = NULL;
+#if 0
+       // Call AddUserKey callback
+       if(dbimpl_->CallbackAvailable())
+           dbimpl_->CallAddUserKey(uk, uv, type, trxn_.seq_number, col_id, new_uk);
+#endif
 
        /*
         * Main purpose of following logic is ..
-        * If keys have different TGID, then we are not gonna vertically merge them.
+        * If keys have different TGID, then we are not gonna overwrite merge them.
         * If trxn_.id is zero(non-trxn), We consider Trxn Group 0. and It is always considered as Completed  
         */
 
-       RequestNode *req_node = NULL;
-       if(sched_stat == kNeedToSchedule){
+       bool new_req_node = false;
+       if(!req_node){
            /*
             * This is first one(no vertical merge if no more rq is comming)
-            * If this s non-trxn request, set unsubmitted_trxn_group_cnt_ to 0 
+            * If this is non-trxn request, set unsubmitted_trxn_group_cnt_ to 0
             * and the non-trxn request is considerted to have "0" Group ID.
             */
-           assert(!uk->GetRequestNode(col_id));
            req_node = mf_->AllocRequestNode();
-           req_node->Init(uk, col_id, trxn_);
-           if(trxn_.id)
-               col_node->SetTransaction();
-           uk->SetLastTGID(col_id, trxn_.id >> TGID_SHIFT);
-           uk->SetRequestNode(col_id, req_node);
-           assert(uk->GetReferenceCount());
-       }else if((trxn_.id >> TGID_SHIFT) != uk->SetLastTGID(col_id, trxn_.id >> TGID_SHIFT)){
-           uk->GetRequestNode(col_id)->SetRequestNodeLatestColumnNode(uk->GetLatestColumnNode(col_id));
-           uk->GetLatestColumnNode(col_id)->SetTGIDSplit();//For processing recently inserted RequestNode first
-           req_node = mf_->AllocRequestNode();
-           req_node->Init(uk, col_id, trxn_);
-           if(trxn_.id)
-               col_node->SetTransaction();
-           uk->SetRequestNode(col_id, req_node);
-           assert(uk->GetReferenceCount());
+           req_node->RequestNodeInit(col_id);
+           new_req_node = true;//Insert req_node to pending request queue after unlock the column.
+       }
+       if(trxn_.id){
+           col_node->SetTGID(trxn_.id >> TGID_SHIFT);
+           req_node->InsertTrxn(trxn_, type);
+       }
+       req_node->SetRequestNodeLatestColumnNode(col_node);
+       col_node->SetRequestNode(req_node);
+       assert(uk->GetReferenceCount());
+       uk->ColumnUnlock(col_id); /*uk->col_lock[col_id].Unlock();*/
+       if(new_req_node){
+           dbimpl_->PutColumnNodeToRequestQueue(req_node/*, skt*/);
+       }
 
-       }else{
-           assert(sched_stat == kHasBeenScheduled);
-           if(trxn_.id){
-               uk->GetRequestNode(col_id)->InsertTrxn(trxn_);
-               col_node->SetTransaction();
-           }
-           /* 
-            * Decrease reference count for merged column 
-            * The header increased the ref count. So, it can not evicted until submitting the header
-            */
-           uk->DecreaseReferenceCount();
-           uk->SetLatestColumnNode(col_id, col_node);
-           uk->ColumnUnlock(col_id); /*uk->col_lock[col_id].Unlock();*/
-       }
-       if(req_node/*sched_stat == kNeedToSchedule*/){
-           uk->SetLatestColumnNode(col_id, col_node);
-           uk->ColumnUnlock(col_id); /*uk->col_lock[col_id].Unlock();*/
-           dbimpl_->PutColumnNodeToRequestQueue(req_node, skt);
-       }
+       mf_->DoCongestionControl();
        trxn_.seq_number++;
        /** 
         * Decrease in the Worker after submitting the command 

@@ -202,7 +202,7 @@ struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
   // worth switching to kNoCompression.  Even if the input data is
   // incompressible, the kSnappyCompression implementation will
   // efficiently detect that and will switch to uncompressed mode.
-  CompressionType compression;
+  CompressionType compression = kSnappyCompression;
 
   // Compression algorithm that will be used for the bottommost level that
   // contain files. If level-compaction is used, this option will only affect
@@ -917,9 +917,24 @@ struct DBOptions {
   // insdb prefix detection
   bool prefix_detection = false;
 
+  // disable insdb cache
+  bool disable_cache = false;
+
+  // disable IO size check
+  bool disable_io_size_check = false;
+
+  // share iterator pad
+  bool iterpad_share = true;
+
+  // free written key blocks
+  bool keep_written_keyblock = true;
+
+  // allow table eviction
+  bool table_eviction = false;
+
   // KV SSD device name
   // KVDB-specific option
-  std::string kv_ssd = "/dev/nvme0n1";
+  std::vector<std::string> kv_ssd {"/dev/nvme0n1"};
 
   // Low watermark of key count for table cache
   uint64_t tablecache_low = 1000000;

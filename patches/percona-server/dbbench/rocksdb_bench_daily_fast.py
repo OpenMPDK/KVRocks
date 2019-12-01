@@ -432,7 +432,7 @@ def get_db_bench_cmds(options):
             + " --tablecache_low=" + str(options.sktable_keycount_low) \
             + " --tablecache_high=" + str(options.sktable_keycount_high) \
             + " --max_table_size=524288" \
-            + " --max_cache_size=" + str(options.numkeys/16000*524288 + options.numkeys*(64+options.value_size)) \
+            + " --max_cache_size=" + str(options.numkeys/10000*524288 + options.numkeys*(96+options.value_size)) \
             + " --max_req_size=" + str(128*1024) \
             + " --num_write_worker=4" \
             + " --align_size=4" \

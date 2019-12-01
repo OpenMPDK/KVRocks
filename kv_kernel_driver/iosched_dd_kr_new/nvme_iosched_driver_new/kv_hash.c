@@ -447,7 +447,6 @@ restart:
             if(is_kv_retrieve_cmd(rq->c.common.opcode)){
                 set_bit(KV_async_invalid_rq, &rq->state);
                 hlist_del_init(&rq->hash);
-                spin_unlock(&hash->hash_lock[hash_key]);
                 atomic_dec(&hash->nr_rq);
             }
             if(atomic_dec_and_test(&rq->refcount)){

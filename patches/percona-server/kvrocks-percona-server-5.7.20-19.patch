@@ -149,7 +149,7 @@ index c281c57..e939fed 100644
  TARGET_LINK_LIBRARIES(mysql_ldb ${rocksdb_static_libs})
 +ENDIF()
 diff --git a/storage/rocksdb/get_kvdb_files.sh b/storage/rocksdb/get_kvdb_files.sh
-new file mode 100644
+new file mode 100755
 index 0000000..7a05da2
 --- /dev/null
 +++ b/storage/rocksdb/get_kvdb_files.sh
@@ -183,7 +183,7 @@ index 0000000..7a05da2
 +const char* rocksdb_build_compile_date = __DATE__;" > $bv
 +fi
 diff --git a/storage/rocksdb/ha_rocksdb.cc b/storage/rocksdb/ha_rocksdb.cc
-index 39d39cd..e8eeabe 100644
+index 39d39cd..4bbaf7c 100644
 --- a/storage/rocksdb/ha_rocksdb.cc
 +++ b/storage/rocksdb/ha_rocksdb.cc
 @@ -492,6 +492,28 @@ static long long rocksdb_compaction_sequential_deletes_window = 0l;
@@ -377,12 +377,31 @@ index 39d39cd..e8eeabe 100644
      MYSQL_SYSVAR(create_checkpoint),
  
      MYSQL_SYSVAR(checksums_pct),
-@@ -3619,6 +3789,27 @@ static int rocksdb_init_func(void *const p) {
+@@ -3516,6 +3686,18 @@ static rocksdb::Status check_rocksdb_options_compatibility(
+   return status;
+ }
+ 
++std::vector<std::string> split(const std::string& s, char delimiter)
++{
++   std::vector<std::string> tokens;
++   std::string token;
++   std::istringstream tokenStream(s);
++   while (std::getline(tokenStream, token, delimiter))
++   {
++      tokens.push_back(token);
++   }
++   return tokens;
++}
++
+ /*
+   Storage Engine initialization function, invoked when plugin is loaded.
+ */
+@@ -3619,6 +3801,27 @@ static int rocksdb_init_func(void *const p) {
        static_cast<rocksdb::Options::AccessHint>(
            rocksdb_access_hint_on_compaction_start);
  
 +  // Set target KV SSD
-+  rocksdb_db_options->kv_ssd.assign(rocksdb_kv_ssd);
++  rocksdb_db_options->kv_ssd = split(std::string(rocksdb_kv_ssd),',');
 +  rocksdb_db_options->num_write_worker = rocksdb_num_write_worker;
 +  rocksdb_db_options->max_request_size = rocksdb_max_request_size;
 +  rocksdb_db_options->max_table_size = rocksdb_max_table_size;
@@ -405,10 +424,3 @@ index 39d39cd..e8eeabe 100644
    if (rocksdb_db_options->allow_mmap_reads &&
        rocksdb_db_options->use_direct_reads) {
      // allow_mmap_reads implies !use_direct_reads and RocksDB will not open if
-diff --git a/storage/rocksdb/rocksdb b/storage/rocksdb/rocksdb
-deleted file mode 160000
-index ab0542f..0000000
---- a/storage/rocksdb/rocksdb
-+++ /dev/null
-@@ -1 +0,0 @@
--Subproject commit ab0542f5ec6e7c7e405267eaa2e2a603a77d570b

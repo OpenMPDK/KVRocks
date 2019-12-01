@@ -1,0 +1,272 @@
+--- linux_nvme.h	2019-10-21 17:19:14.215399000 -0700
++++ linux_nvme.h.patched	2019-10-21 17:06:12.053428000 -0700
+@@ -2,6 +2,10 @@
+  * Definitions for the NVM Express interface
+  * Copyright (c) 2011-2014, Intel Corporation.
+  *
++ * Modified by Heekwon Park from Samsung Electronics.
++ * See KV_NVME_SUPPORT to check modification.
++ * E-mail : heekwon.p@samsung.com
++ *
+  * This program is free software; you can redistribute it and/or modify it
+  * under the terms and conditions of the GNU General Public License,
+  * version 2, as published by the Free Software Foundation.
+@@ -15,6 +19,10 @@
+ #ifndef _LINUX_NVME_H
+ #define _LINUX_NVME_H
+ 
++#ifndef KV_NVME_SUPPORT
++#define KV_NVME_SUPPORT
++#endif
++
+ #include <linux/types.h>
+ #include <linux/uuid.h>
+ 
+@@ -372,8 +380,24 @@
+ 	nvme_cmd_resv_report	= 0x0e,
+ 	nvme_cmd_resv_acquire	= 0x11,
+ 	nvme_cmd_resv_release	= 0x15,
++#ifdef KV_NVME_SUPPORT
++	nvme_cmd_kv_store	= 0x81,
++	nvme_cmd_kv_append	= 0x83,
++	nvme_cmd_kv_retrieve	= 0x90,
++	nvme_cmd_kv_delete	= 0xA1,
++	nvme_cmd_kv_iter_req	= 0xB1,
++	nvme_cmd_kv_iter_read	= 0xB2,
++	nvme_cmd_kv_exist	= 0xB3,
++	//nvme_cmd_kv_iterate	= 0xB2,
++#endif
+ };
+ 
++#ifdef KV_NVME_SUPPORT
++#define KVCMD_INLINE_KEY_MAX	(16)
++#define KVCMD_MAX_KEY_SIZE		(255)
++#define KVCMD_MIN_KEY_SIZE		(4)
++#endif
++
+ /*
+  * Descriptor subtype - lower 4 bits of nvme_(keyed_)sgl_desc identifier
+  *
+@@ -534,6 +558,195 @@
+ 	__le64 entries[32];
+ };
+ 
++#ifdef KV_NVME_SUPPORT
++struct nvme_kv_store_command {
++	__u8			opcode;
++	__u8			flags;
++	__u16			command_id;
++	__le32			nsid;
++	__u64			rsvd;
++	__le32			offset;
++	__u32			rsvd2;
++	union nvme_data_ptr	dptr; /* value dptr prp1,2 */
++	__le32			value_len; /* size in word */
++    __u8           key_len; /* 0 ~ 255 (key len -1) */
++    __u8           option;
++    __u16          rsvd3;
++	union {
++		struct {
++			char	key[16];
++		};
++		struct {
++			__le64	key_prp;
++			__u64	rsvd4;
++		};
++	};
++};
++
++struct nvme_kv_append_command {
++	__u8			opcode;
++	__u8			flags;
++	__u16			command_id;
++	__le32			nsid;
++	__u64			rsvd;
++	__le32			offset;
++	__u32			rsvd2;
++	union nvme_data_ptr	dptr; /* value dptr prp1,2 */
++	__le32			value_len; /* size in word */
++    __u8           key_len; /* 0 ~ 255 (key len -1) */
++    __u8           option;
++    __u16          rsvd3;
++	union {
++		struct {
++			char	key[16];
++		};
++		struct {
++			__le64	key_prp;
++			__u64	rsvd4;
++		};
++	};
++};
++
++struct nvme_kv_retrieve_command {
++	__u8			opcode;
++	__u8			flags;
++	__u16			command_id;
++	__le32			nsid;
++	__u64			rsvd;
++	__le32			offset;
++	__u32			rsvd2;
++	union nvme_data_ptr	dptr; /* value dptr prp1,2 */
++	__le32			value_len; /* size in word */
++    __u8           key_len; /* 0 ~ 255 (key len -1) */
++    __u8           option;
++    __u16          rsvd3;
++	union {
++		struct {
++			char	key[16];
++		};
++		struct {
++			__le64	key_prp;
++			__u64	rsvd4;
++		};
++	};
++};
++
++struct nvme_kv_delete_command {
++	__u8			opcode;
++	__u8			flags;
++	__u16			command_id;
++	__le32			nsid;
++	__u64			rsvd;
++	__le32			offset;
++	__u32			rsvd2;
++	__u64			rsvd3[2];
++	__le32			value_len; /* should be zero*/
++    __u8            key_len; /* 0 ~ 255 (key len -1) */
++    __u8            option;
++    __u16           rsvd4;
++	union {
++		struct {
++			char	key[16];
++		};
++		struct {
++			__le64	key_prp;
++			__u64	rsvd5;
++		};
++	};
++};
++
++struct nvme_kv_exist_command {
++	__u8			opcode;
++	__u8			flags;
++	__u16			command_id;
++	__le32			nsid;
++	__u64			rsvd;
++	__le32			offset;
++	__u32			rsvd2;
++	__u64			rsvd3[2];
++	__le32			value_len; /* should be zero*/
++    __u8            key_len; /* 0 ~ 255 (key len -1) */
++    __u8            option;
++    __u16           rsvd4;
++	union {
++		struct {
++			char	key[16];
++		};
++		struct {
++			__le64	key_prp;
++			__u64	rsvd5;
++		};
++	};
++};
++
++
++struct nvme_kv_iter_req_command {
++	__u8			opcode;
++	__u8			flags;
++	__u16			command_id;
++	__le32			nsid;
++	__u64			rsvd[4];
++	__le32			value_len; /* should be zero*/
++    __u8           iter_handle;
++    __u8           option;
++    __u16           rsvd2;
++    __le32          iter_val;
++    __le32          iter_bitmask;
++    __u64           rsvd3;
++};
++
++
++struct nvme_kv_iter_read_command {
++	__u8			opcode;
++	__u8			flags;
++	__u16			command_id;
++	__le32			nsid;
++	__u64			rsvd[2];
++	union nvme_data_ptr	dptr; /* value dptr prp1,2 */
++	__le32			value_len; /* size in word */
++    __u8           iter_handle; /* 0 ~ 255 (key len -1) */
++    __u8           option;
++    __u16           rsvd2;
++    __u64           rsvd3[2];
++};
++#if 0
++struct nvme_kv_exist_command {
++	__u8			opcode;
++	__u8			flags;
++	__u16			command_id;
++	__le32			nsid;
++	__u64			rsvd;
++	__u32			rsvd2;
++	__le32			key_len_flag; /* 0 fixed, 1 variable */
++	union nvme_data_ptr	dptr; /* key array dptr prp1,2 */
++	__le64			result_addr;
++	__le32			rsvd3;
++	__le32			num_keys;
++	__le32			key_len; /* 0 ~ 255 (key len -1) */
++	__le32			result_len; /* size in bytes */
++};
++
++struct nvme_kv_iterate_command {
++	__u8			opcode;
++	__u8			flags;
++	__u16			command_id;
++	__le32			nsid;
++	__u64			rsvd;
++	__u32			rsvd2;
++	__le32			key_len_flag; /* 0 fixed, 1 variable */
++	union nvme_data_ptr	dptr; /* return key array dptr prp1,2 */
++	struct {
++		__u32		iterator;
++		__u32		start;
++	};
++	__le64			rsvd6;
++	__u32			bitmask;
++	__le32			result_len; /* size in bytes */
++};
++#endif
++#endif
++
++
+ /* Admin commands */
+ 
+ enum nvme_admin_opcode {
+@@ -852,6 +1065,15 @@
+ 		struct nvmf_connect_command connect;
+ 		struct nvmf_property_set_command prop_set;
+ 		struct nvmf_property_get_command prop_get;
++#ifdef KV_NVME_SUPPORT
++		struct nvme_kv_store_command kv_store;
++		struct nvme_kv_retrieve_command kv_retrieve;
++		struct nvme_kv_delete_command kv_delete;
++        struct nvme_kv_append_command kv_append;
++        struct nvme_kv_iter_req_command kv_iter_req;
++        struct nvme_kv_iter_read_command kv_iter_read;
++		struct nvme_kv_exist_command kv_exist;
++#endif
+ 	};
+ };
+ 
+@@ -862,8 +1084,10 @@
+ 	 *
+ 	 * Why can't we simply have a Fabrics In and Fabrics out command?
+ 	 */
++#ifndef KV_NVME_SUPPORT
+ 	if (unlikely(cmd->common.opcode == nvme_fabrics_command))
+ 		return cmd->fabrics.opcode & 1;
++#endif
+ 	return cmd->common.opcode & 1;
+ }
+ 

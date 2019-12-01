@@ -91,11 +91,11 @@ namespace insdb {
     // Max SKTable Size 
     extern int kMaxSKTableSize;
     // The max number of request per Key Block
-    // The value must be 32 or less.
+    // The value must be 64 or less.
     // Ues less count for large Value(ex: "4" for 4KB value (4*4KB = kMaxInternalValueSize)
-    static const uint32_t kMaxRequestPerKeyBlock = 32;
+    static const uint32_t kMaxRequestPerKeyBlock = 64;
     // Max Internal Value(Key Block) Size
-    static const uint32_t kMaxInternalValueSize = 0x100000; // 16KB
+    static const uint32_t kMaxInternalValueSize = 0x4000; // 16KB
     // Max Column Family count
     extern int kMaxColumnCount;
     // Write Worker count
@@ -108,14 +108,16 @@ namespace insdb {
     extern uint64_t kMaxCacheSize;
     extern uint64_t kCacheSizeLowWatermark;
 
-    extern uint32_t kMaxFlushThreshold;
-    extern uint32_t kForceFlushThreshold;
     extern uint32_t kMinUpdateCntForTableFlush;
-    extern uint32_t kUpdateCntForForceTableFlush;
+    extern uint32_t kSKTableFlushWatermark;
     extern uint32_t  kFlushCheckKeyCount;
     // Max sktables cached in device format
     // KeyPrefixSize
     extern int kPrefixIdentifierSize;
+    // Share IterPad
+    extern bool kIterPadShare;
+    // Keep Written Block
+    extern bool kKeepWrittenKeyBlock;
 }  // namespace insdb
 
 #endif  // STORAGE_INSDB_DB_DBFORMAT_H_

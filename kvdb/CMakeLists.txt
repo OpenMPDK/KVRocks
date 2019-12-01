@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.9)
-project (kvdb C CXX)
+project (kvdb)
 
 
 # output detailed command
@@ -119,6 +119,7 @@ set(COMMON_LIB -fPIC -Wall)
 
 set(LINK_LIBS -pthread -Wl,--no-as-needed -fPIC -lrt -L. -lkvdb -l -L${KVROCKS_DIR}/insdb/out-shared -linsdb -march=native ${LINK_FOLLY} ${LINK_ASAN} ${LINK_THIRDPARTY_MALLOC})
 set(LINK_LIBS_STATIC -pthread -Wl,--no-as-needed -fPIC -lrt -L. -lkvdb_static -L${KVROCKS_DIR}/insdb/out-static -linsdb -L${KVROCKS_DIR}/snappy/google-snappy-b02bfa7/build -lsnappy ${LINK_FOLLY} -march=native ${LINK_ASAN} ${LINK_THIRDPARTY_MALLOC})
+set(LINK_INSDB_STATIC -pthread -Wl,--no-as-needed -fPIC -lrt -L. -L${KVROCKS_DIR}/insdb/out-static -linsdb -L${KVROCKS_DIR}/snappy/google-snappy-b02bfa7/build -lsnappy ${LINK_FOLLY} -march=native ${LINK_ASAN} ${LINK_THIRDPARTY_MALLOC})
 
 ## add "-O2" back for release
 set(kvdb_CFLAGS "-MMD -MP -DLINUX -D_FILE_OFFSET_BITS=64 -fPIC -march=native")
@@ -167,6 +168,7 @@ include_directories (${KVROCKS_DIR}/gflags-v2.2.1/build/include)
 # SOURCE CODE
 SET(SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/db/builder.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/db/c.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/db/column_family.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/db/compaction.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/db/compaction_iterator.cc
@@ -246,6 +248,8 @@ SET(SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/table/sst_file_writer.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/table/table_properties.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/table/two_level_iterator.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/ldb_cmd.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/ldb_tool.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/options/cf_options.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/options/db_options.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/options/options.cc
@@ -329,6 +333,12 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${kvdb_CXXFLAGS}")
 add_library(kvdb_static STATIC ${SOURCES} ${HEADERS})
 add_library(kvdb SHARED ${SOURCES} ${HEADERS})
 
+#
+# build kvdb & insdb
+#
+set(LINK_KVDB kvdb)
+set(LINK_INSDB_STATIC -pthread -Wl,--no-as-needed -fPIC -lrt -L. -L${KVROCKS_DIR}/insdb/out-static -linsdb -L${KVROCKS_DIR}/snappy/google-snappy-b02bfa7/build -lsnappy ${LINK_FOLLY} -march=native ${LINK_ASAN} ${LINK_THIRDPARTY_MALLOC})
+
 #configure_file(${CMAKE_CURRENT_SOURCE_DIR}/xx.conf ${CMAKE_CURRENT_BINARY_DIR}/xx.conf COPYONLY)
 
 #
@@ -341,6 +351,10 @@ add_dependencies(test_kvdb kvdb_static)
 add_executable(db_bench ${CMAKE_CURRENT_SOURCE_DIR}/tools/db_bench.cc ${CMAKE_CURRENT_SOURCE_DIR}/tools/db_bench_tool.cc  ${HEADERS})
 target_link_libraries(db_bench ${LINK_LIBS_STATIC} ${KVROCKS_DIR}/gflags-v2.2.1/build/lib/libgflags.a)
 add_dependencies(db_bench kvdb_static)
+
+add_executable(c_test ${CMAKE_CURRENT_SOURCE_DIR}/db/c_test.c ${HEADERS})
+target_link_libraries(c_test ${LINK_LIBS_STATIC} stdc++ m)
+add_dependencies(c_test kvdb_static)
 
 
 set(CMAKE_INSTALL_PREFIX release)
@@ -373,3 +387,5 @@ ADD_CUSTOM_TARGET(debug
   #COMMAND ${CMAKE_COMMAND} --build . --target all
   COMMENT "Switch CMAKE_BUILD_TYPE to Debug"
 )
+
+add_subdirectory(tools)

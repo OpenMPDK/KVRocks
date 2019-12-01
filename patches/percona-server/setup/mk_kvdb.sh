@@ -17,7 +17,7 @@ set -e
 kernel=`uname -a |awk '{print $3}' | awk -F "." '{printf "%s.%s", $1,$2}'`
 if [[ "${kernel}" == "4.9" ]]
 then
-    cd ${SRCTOP}/insdb/kv_kernel_driver/iosched_dd_kr_new/nvme_iosched_driver_new
+    cd ${SRCTOP}/KVRocks/kv_kernel_driver/iosched_dd_kr_new/nvme_iosched_driver_new
     make clean
     make -j $(nproc)
 
@@ -30,7 +30,7 @@ then
     sudo insmod nvme.ko
 elif [[ "${kernel}" == "4.4" ]]
 then
-    cd ${SRCTOP}/insdb/kv_kernel_driver/iosched_dd_kr_new/nvme_iosched_driver_new_v4_4_0
+    cd ${SRCTOP}/KVRocks/kv_kernel_driver/iosched_dd_kr_new/nvme_iosched_driver_new_v4_4_0
 
     make clean
     make -j $(nproc)
@@ -45,7 +45,7 @@ sudo cp 99-kv-nvme-dev.rules /etc/udev/rules.d/
 sleep 20
 sudo chmod 0666 /dev/nvme0n1
 
-cd ${SRCTOP}/insdb/snappy/google-snappy-b02bfa7
+cd ${SRCTOP}/KVRocks/snappy/google-snappy-b02bfa7
 set +e
 mkdir build
 cd build
@@ -53,24 +53,24 @@ cmake ..
 make -j $(nproc)
 set -e
 
-cd ${SRCTOP}/insdb/insdb/insdb-master
+cd ${SRCTOP}/KVRocks/insdb
 make clean
 make -j $(nproc)
 
-sudo nvme format /dev/nvme0n1 -n1 -s0
+sudo nvme format /dev/nvme0n1 -n1 -s1
 #sudo nvme format /dev/nvme1n1 -n1 -s0
 out-static/c_test 
-out-static/db_test
+#out-static/db_test
 
 ## kvdb
-cd ${SRCTOP}/kvdb/gflags-v2.2.1
+cd ${SRCTOP}/KVRocks/gflags-v2.2.1
 set +e
 mkdir build
 cd build
 cmake ..
 make
 
-cd ${SRCTOP}/kvdb
+cd ${SRCTOP}/KVRocks/kvdb
 set +e
 mkdir build
 cd build

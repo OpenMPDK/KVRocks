@@ -193,6 +193,15 @@ class LDBCommand {
     return (std::find(flags.begin(), flags.end(), flag) != flags.end());
   }
 
+  /**
+   * Returns the value of the specified option as a boolean.
+   * default_val is used if the option is not found in options.
+   * Throws an exception if the value of the option is not
+   * "true" or "false" (case insensitive).
+   */
+  bool ParseBooleanOption(const std::map<std::string, std::string>& options,
+                          const std::string& option, bool default_val);
+
   static std::string HelpRangeCmdArgs();
 
   /**
@@ -228,15 +237,6 @@ class LDBCommand {
    */
   bool IsValueHex(const std::map<std::string, std::string>& options,
                   const std::vector<std::string>& flags);
-
-  /**
-   * Returns the value of the specified option as a boolean.
-   * default_val is used if the option is not found in options.
-   * Throws an exception if the value of the option is not
-   * "true" or "false" (case insensitive).
-   */
-  bool ParseBooleanOption(const std::map<std::string, std::string>& options,
-                          const std::string& option, bool default_val);
 
   /**
    * Converts val to a boolean.
