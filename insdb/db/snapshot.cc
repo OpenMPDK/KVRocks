@@ -44,18 +44,29 @@ namespace insdb {
         mu_.Unlock();
     }
 
-    Iterator* SnapshotImpl::CreateNewIterator(uint16_t col_id) {
-        SnapshotIterator* iter = new SnapshotIterator(mf_, this, col_id);
+    Iterator* SnapshotImpl::CreateNewIterator(uint16_t col_id, const ReadOptions options) {
+        SnapshotIterator* iter;
+        if (options.iterator_upper_bound != NULL) {
+            Slice target(options.iterator_upper_bound->data(),
+                          options.iterator_upper_bound->size());
+            iter = new SnapshotIterator(mf_, this, col_id, options.read_tier == kBlockCacheTier, target);
+        } else {
+            iter = new SnapshotIterator(mf_, this, col_id, options.read_tier == kBlockCacheTier);
+        }
         mu_.Lock();
         iterators_.push_back(iter);
         mu_.Unlock();
-        return reinterpret_cast<Iterator*>(iter); 
+        return reinterpret_cast<Iterator*>(iter);
     }
 
     SnapshotIterator::~SnapshotIterator() {
+        if (kb_) {
+            mf_->FreeKB(kb_);
+            kb_ = NULL;
+        }
         DestroyPrefetch();
         snap_->RemoveIterator(this);
-        if(mf_->__DisconnectSnapshot(snap_))
+        if (mf_->__DisconnectSnapshot(snap_))
             delete snap_;
         mf_->DecIteratorCount();
         cur_.Cleanup(mf_);
@@ -66,6 +77,8 @@ namespace insdb {
     }
 
     bool SnapshotIterator::IsValidKeyRange(const Slice& key) {
+        if (start_key_.size() && Compare(key, start_key_) < 0) return false;
+        if (last_key_.size() && Compare(key, last_key_) >= 0) return false;
         return true;
     }
 
@@ -73,13 +86,13 @@ namespace insdb {
         return (cur_.keyhandle != 0);
     }
 
-    void SnapshotIterator::PrefetchSktable(uint8_t dir, SKTableMem *prefetching_skt, uint8_t count){
+    void SnapshotIterator::PrefetchSktable(uint8_t dir, SKTableMem *prefetching_skt, uint8_t count) {
         if (dir == kPrev) return;
 
         uint32_t prefetched_cnt = 0;
         // skip already prefetched skt
         if (/* pf_hit_history_!= flags_pf_hit_none &&*/ prefetched_skt_ && prefetching_skt) {
-            while(prefetching_skt!=prefetched_skt_) {
+            while (prefetching_skt != prefetched_skt_) {
                 prefetching_skt = prefetching_skt->Next(mf_);
                 prefetched_cnt++;
                 if (prefetched_cnt > count)
@@ -89,25 +102,23 @@ namespace insdb {
         // prefetch
         while (prefetching_skt) {
             prefetching_skt = prefetching_skt->Next(mf_);
-            if (prefetching_skt)
-            {
-                if(prefetching_skt != prefetched_skt_) {
+            if (prefetching_skt) {
+                if (prefetching_skt != prefetched_skt_) {
                     // Stop prefecting next prefetch target if prefix does not match
-                    if(prefix_ && prefix_size_)
-                    {
+                    if (prefix_ && prefix_size_) {
                         Slice next_pf_target_keyname = prefetching_skt->GetBeginKeySlice();
-                        if(next_pf_target_keyname.size() <= prefix_size_ || memcmp(next_pf_target_keyname.data(), prefix_, prefix_size_) != 0) {
+                        if (next_pf_target_keyname.size() <= prefix_size_ || memcmp(next_pf_target_keyname.data(), prefix_, prefix_size_) != 0) {
                             break;
                         }
                     }
 
-                    prefetching_skt->PrefetchSKTable(mf_, false);
+                    prefetching_skt->PrefetchSKTable(mf_, false, non_blocking_);
                     prefetched_skt_ = prefetching_skt;
                 }
             } else {
                 break;
             }
-            prefetched_cnt ++;
+            prefetched_cnt++;
             if (prefetched_cnt > count)
                 break;
         }
@@ -130,15 +141,14 @@ namespace insdb {
                 break;
 
             // Stop prefecting next prefetch target if prefix does not match
-            if(prefix && prefix_size)
-            {
-                if(iterkey.userkey_buff.size() <= prefix_size || memcmp(iterkey.userkey_buff.data(), prefix, prefix_size) != 0) {
+            if (prefix && prefix_size) {
+                if (iterkey.userkey_buff.size() <= prefix_size || memcmp(iterkey.userkey_buff.data(), prefix, prefix_size) != 0) {
                     stop = true;
                     break;
                 }
             }
             // validate range
-            if (!IsValidKeyRange(iterkey.userkey_buff)){
+            if (!IsValidKeyRange(iterkey.userkey_buff)) {
                 stop = true;
                 break;
             }
@@ -159,9 +169,9 @@ namespace insdb {
             prefetch_scanned_queue_.push(scanned);
 
             // prefetch KB
-            if(!scanned->is_uv){
+            if (!scanned->is_uv) {
                 KeyBlockPrimaryMeta* kbpm = NULL;
-                if(!scanned->uv_or_kbpm){
+                if (!scanned->uv_or_kbpm) {
                     if (last_kb_ikey_seq_ != scanned->kb_ikey_seq) {
                         last_kbpm_ = kbpm = mf_->GetKBPMWithiKey(scanned->kb_ikey_seq, scanned->kb_index);
                         last_kb_ikey_seq_ = scanned->kb_ikey_seq;
@@ -169,14 +179,15 @@ namespace insdb {
                         kbpm = last_kbpm_;
                         kbpm->SetRefBitmap(scanned->kb_index);
                     }
-                    //kbpm->SetRefBitmap(iterkey.kb_index);
+                    // kbpm->SetRefBitmap(iterkey.kb_index);
                     assert(kbpm->IsRefBitmapSet(scanned->kb_index));
 
-                    scanned->uv_or_kbpm = (void*)kbpm;
-                }else
-                    kbpm = (KeyBlockPrimaryMeta*)scanned->uv_or_kbpm;
+                    scanned->uv_or_kbpm = reinterpret_cast<void*>(kbpm);
+                } else {
+                    kbpm = reinterpret_cast<KeyBlockPrimaryMeta*>(scanned->uv_or_kbpm);
+				}
                     assert(kbpm->IsRefBitmapSet(scanned->kb_index));
-                    //kbpm->SetRefBitmap();
+                    // kbpm->SetRefBitmap();
 
                 if (!kbpm->GetKeyBlockAddr()) {
                     if (!kbpm->SetKBPrefetched()) {
@@ -207,13 +218,13 @@ namespace insdb {
             prefetch_scanned_queue_.pop();
             pnode->CleanupSkt();
             pnode->CleanupUserkeyBuff();
-            //mf_->KBMDecPrefetchRefCount(pnode->GetColumnNode(), pnode->GetUserKey(), pnode->IsKBPMPrefetched());
+            // mf_->KBMDecPrefetchRefCount(pnode->GetColumnNode(), pnode->GetUserKey(), pnode->IsKBPMPrefetched());
             assert(pnode);
             FreeIterKey(pnode);
         }
     }
 
-    void SnapshotIterator::ResetPrefetch(){
+    void SnapshotIterator::ResetPrefetch() {
         iter_history_ = flags_iter_none;
         pf_hit_history_ = flags_pf_hit_none;
         prefetch_window_shift_ = flags_pf_shift_none;
@@ -236,16 +247,20 @@ namespace insdb {
                 skt->KeyMapGuardLock();
                 // increase skt, keymap reference count
                 skt->IncSKTRefCnt(mf_);
+                keymap = skt->GetKeyMap();
+                keymap->IncRefCnt();
                 // load keymap
                 if (!skt->IsKeymapLoaded()) {
-                    skt->LoadSKTableDeviceFormat(mf_, kSyncGet);
+                    if (!non_blocking_) {
+                        skt->LoadSKTableDeviceFormat(mf_);
+                    }
                 }
                 /*
                  * uint32_t old_size = skt->GetKeyMap()->GetAllocatedSize();
                  */
                 // check pending keys and keymap availability
-                skt->InsertUserKeyToKeyMapFromInactiveKeyQueue(mf_, true, false);
-                skt->InsertUserKeyToKeyMapFromInactiveKeyQueue(mf_, false, false);
+                skt->InsertUserKeyToKeyMapFromInactiveKeyQueue(mf_, true, snap_->GetSequenceNumber(), false);
+                skt->InsertUserKeyToKeyMapFromInactiveKeyQueue(mf_, false, snap_->GetSequenceNumber(), false);
 
                 /*
                  * account keymap size
@@ -259,10 +274,9 @@ namespace insdb {
                  */
 
                 skt->KeyMapGuardUnLock();
+            } else {
+                keymap = skt->GetKeyMap();
             }
-
-            keymap = skt->GetKeyMap();
-            keymap->IncRefCnt();
 
             // shared lock
             skt->KeyMapRandomReadSharedLock();
@@ -270,7 +284,7 @@ namespace insdb {
     move_to_another_key:
             // Check shift iterator history and set direction
             // keymap lock
-            switch(dir) {
+            switch (dir) {
             case kSeekNext:
                 if (!keyhandle)
                     keyhandle = keymap->SearchGreaterOrEqual(*key);
@@ -322,7 +336,7 @@ namespace insdb {
                         skt->KeyMapRandomReadSharedUnLock();
                         return;
                     }
-                   if(dir == kNext) // Next
+                   if (dir == kNext) // Next
                         keyhandle = keymap->Next(keyhandle);
                    else // Prev
                         keyhandle = keymap->Prev(keyhandle);
@@ -331,9 +345,16 @@ namespace insdb {
             default:
                 abort();
             }
-
+            // Feat: iter upper bound function
+            if (keyhandle && last_key_.size() && !IsValidKeyRange(keymap->GetKeySlice(keyhandle))) {
+                if (dir == kNext)
+                    keyhandle = 0;
+                else
+                    goto move_to_another_key;
+            }
+            // end
             // get another skt if a key is not found
-            if(!keyhandle){
+            if (!keyhandle) {
 another_skt:
                 skt->KeyMapRandomReadSharedUnLock();
                 SKTableMem *another_skt = nullptr;
@@ -358,7 +379,7 @@ another_skt:
                         delete keymap;
                 }
 
-                if(another_skt){
+                if (another_skt) {
                     skt_move = true;
                     skt = another_skt;
                     continue;
@@ -373,15 +394,17 @@ another_skt:
             }
             // find keynode belonging to the iterator(check seqnum, old key or next/prev key)
             void* col_uk = nullptr;
-            Slice col_info_data = keymap->GetColumnData(keyhandle, column_id_, col_uk);
+            Slice key;
+            Slice col_info_data = keymap->GetColumnData(keyhandle, column_id_, col_uk, key);
 
             // UserKey
-            UserKey *userkey = (UserKey *)col_uk;
+            UserKey *userkey = reinterpret_cast<UserKey *>(col_uk);
             bool valid_col = (col_uk || col_info_data.size());
             // find column node
             if (!valid_col) {
+                if (key.size()) free((void*)key.data());
                 goto move_to_another_key;
-            } 
+            }
             // UserKey
             bool found = true;
             bool deleted = false;
@@ -399,21 +422,19 @@ another_skt:
                         // pin uservalue
                         uv->Pin();
                         iterkey.kb_ikey_seq = 0;
-                        iterkey.uv_or_kbpm = (void*)uv;
+                        iterkey.uv_or_kbpm = reinterpret_cast<void*>(uv);
                         iterkey.is_uv = 1;
-                    }
-                    else
-                    {
+                    } else {
                         KeyBlockPrimaryMeta *kbpm = col_node->GetKeyBlockMeta();
                         // reference kbpm
-                        //kbpm->SetRefBitmap(iterkey.kb_index);
+                        // kbpm->SetRefBitmap(iterkey.kb_index);
                         assert(kbpm->IsRefBitmapSet(iterkey.kb_index));
                         iterkey.kb_ikey_seq = col_node->GetInSDBKeySeqNum();
-                        iterkey.uv_or_kbpm = (void*)kbpm;
+                        iterkey.uv_or_kbpm = reinterpret_cast<void*>(kbpm);
                         iterkey.is_uv = 0;
                     }
                     iterkey.kb_ivalue_size = col_node->GetiValueSize();
-                    iterkey.userkey_buff = keymap->GetKeySlice(keyhandle);
+                    iterkey.userkey_buff = key;
                 } else {
                     if (!deleted && !b_final) need_lookup_colinfo = true;
                     found = false;
@@ -424,7 +445,7 @@ another_skt:
                 iterkey.is_uv = 0;
                 ColumnData col_data;
                 col_data.init();
-                ColMeta* colmeta = (ColMeta*)(const_cast<char*> (col_info_data.data()));
+                ColMeta* colmeta = reinterpret_cast<ColMeta*>(const_cast<char*> (col_info_data.data()));
                 colmeta->ColInfo(col_data);
                 // device format
                 if (col_data.iter_sequence <= snap_->GetSequenceNumber() &&
@@ -434,10 +455,11 @@ another_skt:
                         iterkey.kb_index = col_data.kb_offset;
                         iterkey.kb_ikey_seq = col_data.ikey_sequence;
                         iterkey.kb_ivalue_size = col_data.ikey_size;
-                        iterkey.userkey_buff = keymap->GetKeySlice(keyhandle);
+                        iterkey.userkey_buff = key;
                         colmeta->SetReference();
-                    } else
+                    } else {
                         deleted = true;
+					}
                 } else {
                     // reset keyhandle to fall through to old UserKey map
                     if (!deleted) need_lookup_colinfo = true;
@@ -447,27 +469,28 @@ another_skt:
             }
             // if deleted, skip to another.
             if (deleted) {
+                if (key.size()) free((void*)key.data());
                 goto move_to_another_key;
             }
             // look up SKTable hash table if key is not found in the keymap
             if (!found) {
                 if (need_lookup_colinfo) {
-                    Slice key_buff = keymap->GetKeySlice(keyhandle);
-                    userkey = mf_->LookupUserKeyFromFlushedKeyHashMap(key_buff);
+                    userkey = mf_->LookupUserKeyFromFlushedKeyHashMap(key);
                     if (!userkey) {
-                        free((void*)key_buff.data());
-                        key_buff.clear();
+                        free(reinterpret_cast<void*>(const_cast<char*>(key.data())));
+                        key.clear();
                         goto move_to_another_key;
-                    } else {
-                        b_final = true;
-                        goto lookup_column_node;
                     }
-                } 
+                    b_final = true;
+                    found = true;
+                    goto lookup_column_node;
+                }
+                if (key.size()) free((void*)key.data());
             }
 
             skt->KeyMapRandomReadSharedUnLock();
             if (found) break;
-        } while(true);
+        } while (true);
 exit:
         // decrease iterkey sktable reference count if it's being replaced.
         if (skt != iterkey.skt) {
@@ -481,7 +504,7 @@ exit:
         iterkey.keyhandle = keyhandle;
     }
 
-    void SnapshotIterator::SetIterKey(SKTableMem *skt, const Slice *key, SeekDirection dir, IterKey& iterkey){
+    void SnapshotIterator::SetIterKey(SKTableMem *skt, const Slice *key, SeekDirection dir, IterKey& iterkey) {
         UserValue *prior_uv = nullptr;
 
         // clean up current userkey and value
@@ -511,7 +534,8 @@ exit:
         KeyMapHandle keymaphandle = 0;
 
         // prefetch sktable
-        PrefetchSktable(dir, skt, 8);
+        if (skt != iterkey.skt)
+            PrefetchSktable(dir, skt, 8);
 
         // Get Next/Prev KV information.
         // If prefetch_scanned_queue_ exist, first entry is Next/Prev KV information.
@@ -532,40 +556,50 @@ exit:
         }
     }
 
-    void SnapshotIterator::SetIterKeyForPrefetch(SKTableMem *skt, const Slice *key, SeekDirection dir, IterKey& iterkey){
+    void SnapshotIterator::SetIterKeyForPrefetch(SKTableMem *skt, const Slice *key, SeekDirection dir, IterKey& iterkey) {
         // Set current iterator context by Keymap
         SetIterKeyKeymap(skt, key, dir, iterkey);
     }
 
     void SnapshotIterator::Seek(const Slice& key) {
+        Slice target_key(key);
+        if (!IsValidKeyRange(key)) {
+            target_key = Slice(last_key_);
+        }
         ResetPrefetch();
         SKTableMem* skt = NULL;
-        while(1) {
-            skt = mf_->FindSKTableMem(key);
+        while (1) {
+            skt = mf_->FindSKTableMem(target_key);
             if (!skt)
                 skt = mf_->GetFirstSKTable();
             // Lock down SKTable
             skt->IncSKTRefCnt(mf_);
             if (skt->IsDeletedSKT()) skt->DecSKTRefCnt();
-            else break;
+            else
+                break;
         }
-        SetIterKey(skt, &key, kSeekNext, cur_);
+        SetIterKey(skt, &target_key, kSeekNext, cur_);
         skt->DecSKTRefCnt();
     }
 
     void SnapshotIterator::SeekForPrev(const Slice& key) {
+        Slice target_key(key);
+        if (!IsValidKeyRange(key)) {
+            target_key = Slice(last_key_);
+        }
         ResetPrefetch();
         SKTableMem* skt = NULL;
-        while(1) {
-            skt = mf_->FindSKTableMem(key);
+        while (1) {
+            skt = mf_->FindSKTableMem(target_key);
             if (!skt)
                 skt = mf_->GetFirstSKTable();
             // Lock down SKTable
             skt->IncSKTRefCnt(mf_);
             if (skt->IsDeletedSKT()) skt->DecSKTRefCnt();
-            else break;
+            else
+                break;
         }
-        SetIterKey(skt, &key, kSeekPrev, cur_);
+        SetIterKey(skt, &target_key, kSeekPrev, cur_);
         skt->DecSKTRefCnt();
     }
 
@@ -574,8 +608,8 @@ exit:
         SKTableMem *skt = NULL;
         KeySlice key_slice = KeySlice(GetStartKey());
         KeySlice *key = &key_slice;
-        while(1) {
-            if(key->size())
+        while (1) {
+            if (key->size())
                 skt = mf_->FindSKTableMem(key->GetSlice());
             else
                 key = NULL;
@@ -584,7 +618,8 @@ exit:
             // Lock down SKTable
             skt->IncSKTRefCnt(mf_);
             if (skt->IsDeletedSKT()) skt->DecSKTRefCnt();
-            else break;
+            else
+                break;
         }
         SetIterKey(skt, key, kSeekFirst, cur_);
         skt->DecSKTRefCnt();
@@ -595,8 +630,8 @@ exit:
         SKTableMem *skt = NULL;
         KeySlice key_slice = KeySlice(GetLastKey());
         KeySlice *key = &key_slice;
-        while(1) {
-            if(key->size())
+        while (1) {
+            if (key->size())
                 skt = mf_->FindSKTableMem(key->GetSlice());
             else
                 key = NULL;
@@ -605,7 +640,8 @@ exit:
             // Lock down SKTable
             skt->IncSKTRefCnt(mf_);
             if (skt->IsDeletedSKT()) skt->DecSKTRefCnt();
-            else break;
+            else
+               break;
         }
         SetIterKey(skt, key, kSeekLast, cur_);
         skt->DecSKTRefCnt();
@@ -636,12 +672,12 @@ exit:
         if (cur_.uv_or_kbpm) {
             if (cur_.is_uv) {
                 // user value
-                UserValue *uv = (UserValue *)cur_.uv_or_kbpm;
+                UserValue *uv = reinterpret_cast<UserValue *>(cur_.uv_or_kbpm);
                 assert(uv);
                 return uv->ReadValue();
             } else {
                 // kbpm
-                kbpm = (KeyBlockPrimaryMeta *)cur_.uv_or_kbpm;
+                kbpm = reinterpret_cast<KeyBlockPrimaryMeta *>(cur_.uv_or_kbpm);
             }
         } else {
             // avoid lookup if it's same ikey seq as last.
@@ -654,12 +690,12 @@ exit:
             }
         }
 
-        KeyBlock* kb = NULL;
         bool cache_hit = true;
         bool ra_hit = false;
-        if (!(kb = kbpm->GetKeyBlockAddr())) {
+        KeyBlock *kb = kbpm->GetKeyBlockAddr();
+        if (!kb) {
             kbpm->KBPMLock();
-            if (!(kb = kbpm->GetKeyBlockAddr())){
+            if (!(kb = kbpm->GetKeyBlockAddr())) {
                 cache_hit = false;
 #ifdef TRACE_READ_IO
                 if (kbpm->IsKBPrefetched()) {
@@ -673,61 +709,59 @@ exit:
             }
             kbpm->KBPMUnlock();
         }
+        // replace the current KB
+        if (kb_!= kb) {
+            kb->IncKBRefCnt();
+            if (kb_) mf_->FreeKB(kb_);
+            kb_ = kb;
+        }
+
         Slice value =  kb->GetValueFromKeyBlock(mf_, cur_.kb_index);
 #ifdef BUILDITR_INCLUDE_DIRECTVALUE
         if (value.size() <= kKBDirectAllowMaxSize)
-            *((uint64_t*)mut_cur_iter->entry_info_buffer_ + cur_info_.offset) = (uint64_t)((((uint64_t)value.size()) << kKeySizeOffsetShift) | (uint64_t)value.data() | kKBDirectAccessType);
+            *(reinterpret_cast<uint64_t*>(mut_cur_iter)->entry_info_buffer_ + cur_info_.offset) = (uint64_t)((((uint64_t)value.size()) << kKeySizeOffsetShift) | (uint64_t)value.data() | kKBDirectAccessType);
 #endif
 
-        if(mf_->IsPrefixDetectionEnabled())
-        {
+        if (mf_->IsPrefixDetectionEnabled()) {
             // compare the prefix to hint prefetch
 #ifdef INSDB_TRACE_ITERATOR
             bool prefix_updated = false;
 #endif
-            if(prefix_size_)
-            {
-                while(prefix_size_)
-                {
-                    if(memcmp(cur_.userkey_buff.data(), prefix_, prefix_size_) != 0)
-                    {
+            if (prefix_size_) {
+                while (prefix_size_) {
+                    if (memcmp(cur_.userkey_buff.data(), prefix_, prefix_size_) != 0) {
                         prefix_size_--;
 #ifdef INSDB_TRACE_ITERATOR
                         prefix_updated = true;
 #endif
                         continue;
-                    }
-                    else
+                    } else {
                         break;
+					}
                 }
             }
 #ifdef INSDB_TRACE_ITERATOR
-            if(prefix_updated)
-            {
-                dumpHex((void*)this, "cur_ukey", cur_uk_->GetKey().data(), cur_uk_->GetKey().size());
-                dumpHex((void*)this, "updated prefix", prefix_, prefix_size_);
+            if (prefix_updated) {
+                dumpHex(reinterpret_cast<void*>(this), "cur_ukey", cur_uk_->GetKey().data(), cur_uk_->GetKey().size());
+                dumpHex(reinterpret_cast<void*>(this), "updated prefix", prefix_, prefix_size_);
             }
 #endif
 
             // If no prefix exists, start with max prefix.
-            if(!prefix_size_)
-            {
-                prefix_size_ = cur_.userkey_buff.size()<16?cur_.userkey_buff.size():16;
-                if(prefix_size_>0)
+            if (!prefix_size_) {
+                prefix_size_ = cur_.userkey_buff.size() < 16?cur_.userkey_buff.size():16;
+                if (prefix_size_ > 0)
                     prefix_size_--;
-                if(prefix_size_)
-                {
+                if (prefix_size_) {
                     memcpy(prefix_, cur_.userkey_buff.data(), prefix_size_);
 #ifdef INSDB_TRACE_ITERATOR
-                    dumpHex((void*)this, "new prefix", prefix_, prefix_size_);
+                    dumpHex(reinterpret_cast<void*>(this), "new prefix", prefix_, prefix_size_);
 #endif
-                }
+                } else {
 #ifdef INSDB_TRACE_ITERATOR
-                else
-                {
                     printf("iter %p key name too short %lu\n", this, cur_uk_->GetKeySlice()->size());
-                }
 #endif
+                }
             }
         }
 
@@ -751,9 +785,8 @@ exit:
             pf_window = pthis->GetPFWindowSize(ra_hit, need_to_inc);
             if (pf_window > prefetch_scanned_queue_.size())
                 pf_window -= prefetch_scanned_queue_.size();
-            else {
+            else
                 goto exit;
-            }
 
             /* get prefetch start information */
             IterKey start_iterkey;
@@ -773,5 +806,5 @@ exit:
         /* get value from kb */
         return value;
     }
-} //namespace insdb
+} // namespace insdb
 

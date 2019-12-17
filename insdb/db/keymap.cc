@@ -78,22 +78,20 @@ namespace insdb {
         assert(n >= 0 && n < height);
         next_addr[n] = next_offset;
     }
-    Slice Keymap::KeyNode::GetNodeKey(bool use_compact_key) {
+    Slice Keymap::KeyNode::GetNodeKey(bool use_compact_key, Slice &parse, bool advance) {
         /*
          * return node internal key
          * [shared:vint32|non shared:vint32|key:non shared]
          */
-        int height = 0;
-        uint32_t size = 0;
-        char* next_start = (char*) NextAddrInfo(&height, &size);
-        next_start += height*sizeof(uint32_t); //move key start position
-        size -= (next_start - rep_); //remain size
-        Slice parse(next_start, size);
+        uint32_t size = parse.size();
+        const char* next_start = parse.data();
         if (use_compact_key) {
             uint32_t shared = 0, non_shared = 0;
 #ifndef NDEBUG
             if (!GetVarint32(&parse, &shared)) abort();
             if (!GetVarint32(&parse, &non_shared)) abort();
+            // advance the pointer over key string
+            if (advance) parse.remove_prefix(non_shared);
 #else
             GetVarint32(&parse, &shared);
             GetVarint32(&parse, &non_shared);
@@ -111,8 +109,24 @@ namespace insdb {
 #else
         GetVarint32(&parse, &key_size);
 #endif
-        return Slice(parse.data(), key_size);
+        // advance the pointer over key string
+        const char *key_start = parse.data();
+        if (advance) parse.remove_prefix(key_size);
 
+        return Slice(key_start, key_size);
+    }
+    Slice Keymap::KeyNode::GetNodeKey(bool use_compact_key) {
+        /*
+         * return node internal key
+         * [shared:vint32|non shared:vint32|key:non shared]
+         */
+        int height = 0;
+        uint32_t size = 0;
+        char* next_start = (char*) NextAddrInfo(&height, &size);
+        next_start += height*sizeof(uint32_t); //move key start position
+        size -= (next_start - rep_); //remain size
+        Slice parse(next_start, size);
+        return GetNodeKey(use_compact_key, parse);
     }
     Slice Keymap::KeyNode::GetKeyInfo(bool use_compact_key) {
         int height = 0;
@@ -173,6 +187,17 @@ namespace insdb {
         }
         return parse;
     }
+    Slice Keymap::KeyNode::GetKeyInfoWithSize(bool use_compact_key, Slice &node_key) {
+        int height = 0;
+        uint32_t size = 0;
+        char* next_start = (char*) NextAddrInfo(&height, &size);
+        next_start += height*sizeof(uint32_t); //move key start position
+        size -= (next_start - rep_); //remain size
+        Slice parse(next_start, size);
+        node_key = GetNodeKey(use_compact_key, parse, true);
+
+        return parse;
+    }
     KeyMeta* Keymap::KeyNode::GetKeyMeta(char* base_addr, bool use_compact_key, uint32_t* new_meta_offset, uint32_t *new_meta_size) {
         /* get key info */
         Slice keyinfo = GetKeyInfoWithSize(use_compact_key);
@@ -183,6 +208,15 @@ namespace insdb {
         assert(addr);
         KeyMeta* key_meta = (KeyMeta*)addr;
         return key_meta->GetLatestKeyMeta(base_addr, new_meta_offset, new_meta_size);
+    }
+    KeyMeta* Keymap::KeyNode::GetKeyMeta(char* base_addr, bool use_compact_key, Slice &node_key) {
+        /* get key info */
+        Slice keyinfo = GetKeyInfoWithSize(use_compact_key, node_key);
+        uint32_t alloc_size = 0;
+        char* addr = const_cast<char*>(GetVarint32Ptr(keyinfo.data(), keyinfo.data() + 4, &alloc_size)); /* old keyinfo size */
+        assert(addr);
+        KeyMeta* key_meta = (KeyMeta*)addr;
+        return key_meta->GetLatestKeyMeta(base_addr, nullptr, nullptr);
     }
     void Keymap::KeyNode::Cleanup(char* base_addr, std::vector<uint32_t> &free_offset, bool use_compact_key) {
         /* get key info */
@@ -377,8 +411,9 @@ namespace insdb {
         if (!nr_col) return nullptr; /* no columne */
         ColMeta* col_array = ColMetaArray();
         assert(col_array);
-        char* col_addr = (char*)col_array;
+        char* col_addr;
         for (uint8_t i = 0; i < nr_col; i++) {
+            col_addr = (char*)col_array;
             if (col_array->ColumnID() == col_id) return col_array;
             col_array = (ColMeta*)(col_addr + col_array->GetColSize());
         }
@@ -565,6 +600,7 @@ namespace insdb {
     }
 
 
+#ifdef USE_HASHMAP_RANDOMREAD
     /* keymap function */
     Keymap::Keymap(KeySlice begin_key, const Comparator *cmp)
         : compare_nocompact_(cmp), compare_(cmp), rnd_(0xdeadbeef), hashmap_(new KeyMapHashMap(1024*32)), use_compact_key_(false), begin_key_offset_(0), begin_key_size_(0), ref_cnt_(1), op_count_(0), cmp_count_(0) {
@@ -604,17 +640,47 @@ namespace insdb {
         g_new_keymap_cnt++;
 #endif
     }
+#else
+/* keymap function */
+    Keymap::Keymap(KeySlice begin_key, const Comparator *cmp)
+        : compare_nocompact_(cmp), compare_(cmp), rnd_(0xdeadbeef), use_compact_key_(false), begin_key_offset_(0), begin_key_size_(0), ref_cnt_(1), op_count_(0), cmp_count_(0) {
+            key_str_.resize(0);
+            key_str_.append(begin_key.data(), begin_key.size());
+            key_hash_ = begin_key.GetHashValue();
+            arena_ = nullptr;
+#ifdef INSDB_GLOBAL_STATS
+        g_new_keymap_cnt++;
+#endif
+    }
+
+    Keymap::Keymap(Arena* arena, const Comparator *cmp)
+        : compare_nocompact_(cmp), compare_(cmp), rnd_(0xdeadbeef), use_compact_key_(false),  begin_key_offset_(0), begin_key_size_(0), ref_cnt_(1), op_count_(0), cmp_count_(0) {
+            arena_ = arena;
+            KeySlice begin_key = GetBeginKey();
+            key_str_.resize(0);
+            key_str_.append(begin_key.data(), begin_key.size());
+            key_hash_ = begin_key.GetHashValue();
+            KEYMAP_HDR *hdr = (KEYMAP_HDR*)(GetBaseAddr());
+            use_compact_key_ = (hdr->use_compact_key) ? true : false ;
+#ifdef INSDB_GLOBAL_STATS
+        g_new_keymap_cnt++;
+#endif
+    }
+#endif
 
 
 
     Keymap::~Keymap() {
         if (arena_) delete arena_;
+#ifdef USE_HASHMAP_RANDOMREAD
         CleanupHashMap();
+#endif
 #ifdef INSDB_GLOBAL_STATS
         g_del_keymap_cnt++;
 #endif
     }
 
+#ifdef USE_HASHMAP_RANDOMREAD
     void Keymap::CleanupHashMap() {
         if (!hashmap_) return;
         if (!hashmap_->empty()) {
@@ -626,7 +692,9 @@ namespace insdb {
         delete hashmap_;
         hashmap_ = nullptr;
     }
+#endif
 
+#ifdef USE_HASHMAP_RANDOMREAD
     void Keymap::InsertArena(Arena* arena, KeyMapHashMap *hashmap) {
             if (arena_) delete arena_;
             arena_ = arena;
@@ -649,6 +717,22 @@ namespace insdb {
             return;
     }
 
+#else
+    void Keymap::InsertArena(Arena* arena) {
+        if (arena_) delete arena_;
+        arena_ = arena;
+        if (arena_) {
+            Slice saved_beginkey = GetBeginKey();
+            Slice cur_beginkey = Slice(key_str_.data(), key_str_.size());
+            assert(!saved_beginkey.compare(cur_beginkey));
+            KEYMAP_HDR *hdr = (KEYMAP_HDR*)(GetBaseAddr());
+            use_compact_key_ = (hdr->use_compact_key) ? true : false ;
+        }
+        return;
+    }
+#endif
+
+#ifdef USE_HASHMAP_RANDOMREAD
     bool Keymap::BuildHashMapData(std::string &hash_data) {
         uint32_t total_count = 0;
         hash_data.resize(0);
@@ -702,6 +786,7 @@ namespace insdb {
         }
         return hashmap;
     }
+#endif
 
 
     /* used for initialize arean for key map */
@@ -731,7 +816,7 @@ namespace insdb {
         uint32_t est_size = 0;
         uint32_t addr_offset = 0;
         KeyNode* node = nullptr;
-        if (UseCompact()) {
+        if (use_compact_key) {
             est_size = sizeof(uint8_t)/*height*/ + sizeof(uint32_t)*height/*nexts */
                 + VarintLength(0)/*shared key size*/ + VarintLength(0) /*non shared key size*/ + 0/*encode key*/
                 + 0 /* keyinfo_size */ + VarintLength(0);
@@ -779,6 +864,14 @@ namespace insdb {
         uint32_t old = hdr->last_colinfo++;
         return old;
     }
+    void Keymap::ResetCurColInfoID(uint32_t prev_col_id, uint32_t next_col_id){
+        assert(HasArena());
+        KEYMAP_HDR *hdr = (KEYMAP_HDR*)(GetBaseAddr());
+        hdr->start_colinfo = prev_col_id;
+        hdr->last_colinfo = next_col_id;
+        return;
+    }
+
     void Keymap::SetPrevColInfoID(){
         assert(HasArena());
         KEYMAP_HDR *hdr = (KEYMAP_HDR*)(GetBaseAddr());
@@ -993,7 +1086,7 @@ namespace insdb {
 
     Slice Keymap::Insert(const KeySlice& key, uint32_t keyinfo_size, KeyMapHandle &node_offset) {
         Slice keyinfo = _Insert(key, keyinfo_size, node_offset);
-#ifdef USE_HASHMAP
+#ifdef USE_HASHMAP_RANDOMREAD
         if (!keyinfo.size()) return keyinfo;
         auto it = hashmap_->find(key.GetHashValue());
         if (it != hashmap_->end()) {
@@ -1050,7 +1143,7 @@ namespace insdb {
                     arena_->DeAllocate(free_offset[i]);
                 }
                 arena_->DeAllocate(orig_node_offset);
-#ifdef USE_HASHMAP
+#ifdef USE_HASHMAP_RANDOMREAD
                 if (orig_node_offset) {
                     auto it = hashmap_->find(key.GetHashValue());
                     if (it != hashmap_->end()) {
@@ -1097,7 +1190,7 @@ namespace insdb {
     Slice Keymap::ReplaceOrInsert(const KeySlice& key, uint32_t keyinfo_size, KeyMapHandle &node_offset) {
         bool existing = false;
         Slice keyinfo =_ReplaceOrInsert(key, keyinfo_size, node_offset, existing);
-#ifdef USE_HASHMAP
+#ifdef USE_HASHMAP_RANDOMREAD
         if (existing) return keyinfo;
 
         auto it = hashmap_->find(key.GetHashValue());
@@ -1148,7 +1241,7 @@ namespace insdb {
     bool Keymap::Remove(const KeySlice& key) {
         KeyMapHandle node_offset = 0;
         bool result = _Remove(key, &node_offset);
-#ifdef USE_HASHMAP
+#ifdef USE_HASHMAP_RANDOMREAD
         if (node_offset) {
             auto it = hashmap_->find(key.GetHashValue());
             if (it != hashmap_->end()) {
@@ -1184,7 +1277,7 @@ namespace insdb {
 #define SEARCH_SKIPLIST
     KeyMapHandle Keymap::Search(const KeySlice& key) {
         op_count_++;
-#ifdef USE_HASHMAP
+#ifdef USE_HASHMAP_RANDOMREAD
         auto it = hashmap_->find(key.GetHashValue());
         if (it != hashmap_->end()) {
             std::string *offset_str = it->second;
@@ -1200,7 +1293,7 @@ namespace insdb {
         KeyMapHandle handle = 0;
 #ifdef SEARCH_SKIPLIST
         handle = _Search(key);
-#ifdef USE_HASHMAP
+#ifdef USE_HASHMAP_RANDOMREAD
         if (handle) {
             std::string *offset_str = new std::string();
             uint32_t nr_count = 1;
@@ -1415,6 +1508,28 @@ namespace insdb {
     /*
      * Fill column info.
      */
+    Slice Keymap::GetColumnData(KeyMapHandle handle, uint8_t col_id, void* &uk, Slice &key) {
+        if (!HasArena()) return Slice(0);
+        uk = nullptr;
+        KeyNode *x = (KeyNode*)GetAddr(handle);
+        assert(x);
+        Slice node_key;
+        KeyMeta *meta = x->GetKeyMeta(GetBaseAddr(), UseCompact(), node_key); /* get latest KeyMeta */
+        key = GetKeySlice(node_key);
+
+        assert(meta);
+        if (meta->HasUserKey()) {
+            uk = (void*)meta->UserKeyAddr();
+            return Slice(0);
+        }
+        ColMeta* col = meta->GetColumn(col_id); /* get latest ColMeta */
+
+        if (!col) return Slice(0);
+        return Slice((char*)col, col->GetColSize());
+    }
+    /*
+     * Fill column info.
+     */
     Slice Keymap::GetColumnData(KeyMapHandle handle, uint8_t col_id, void* &uk) {
         if (!HasArena()) return Slice(0);
         uk = nullptr;
@@ -1479,10 +1594,7 @@ namespace insdb {
         return;
     }
 
-    Slice Keymap::GetKeySlice(uint32_t handle) {
-        assert(HasArena());
-        assert(handle);
-        Slice node_key = ((KeyNode*)GetAddr(handle))->GetNodeKey(UseCompact());
+    Slice Keymap::GetKeySlice(Slice &node_key) {
         if (UseCompact()) {
             Slice begin_key = GetBeginKey(); 
             uint32_t shared = 0, non_shared=0; 
@@ -1513,9 +1625,23 @@ namespace insdb {
         return Slice(0);
     }
 
-    Arena* Keymap::MemoryCleanup(Manifest* mf, KeyMapHashMap* hashmap) {
+    Slice Keymap::GetKeySlice(uint32_t handle) {
         assert(HasArena());
+        assert(handle);
+        Slice node_key = ((KeyNode*)GetAddr(handle))->GetNodeKey(UseCompact());
+        return GetKeySlice(node_key);
+    }
+
+#ifdef USE_HASHMAP_RANDOMREAD
+    Arena* Keymap::MemoryCleanup(Manifest* mf, KeyMapHashMap* hashmap)
+#else
+    Arena* Keymap::MemoryCleanup(Manifest* mf)
+#endif
+        {
+        assert(HasArena());
+#ifdef USE_HASHMAP_RANDOMREAD
         assert(hashmap);
+#endif
         std::vector<SnapInfo> snapinfo_list;
         if (mf) mf->GetSnapshotInfo(&snapinfo_list);
         /* step 1. create new arean */
@@ -1642,7 +1768,7 @@ namespace insdb {
                 prev[i] = new_offset;
             }
             new_arena->IncNodeCount();
-#ifdef USE_HASHMAP
+#ifdef USE_HASHMAP_RANDOMREAD
            /* update hashmap */
             auto it = hashmap->find(key.GetHashValue());
             if (it != hashmap->end()) {
@@ -1805,7 +1931,7 @@ namespace insdb {
                 ctx.prev[i] = new_offset;
             }
             new_arena->IncNodeCount();
-#ifdef USE_HASHMAP
+#ifdef USE_HASHMAP_RANDOMREAD
             /* update hashmap */
             auto it = ctx.hashmap->find(key.GetHashValue());
             if (it != ctx.hashmap->end()) {
@@ -1847,9 +1973,14 @@ namespace insdb {
         assert(GetAllocatedSize() >= GetFreedMemorySize()); 
         cur_memory_size = GetAllocatedSize() - GetFreedMemorySize();
         if (cur_memory_size < memory_size) {
+#ifdef USE_HASHMAP_RANDOMREAD
             KeyMapHashMap* new_hashmap = new KeyMapHashMap(1024*32);
             Arena* new_arena = MemoryCleanup(mf, new_hashmap); /* cleanup existing arena */
             Keymap *new_keymap = new Keymap(new_arena, compare_.keymap_comparator, new_hashmap);
+#else
+            Arena* new_arena = MemoryCleanup(mf); /* cleanup existing arena */
+            Keymap *new_keymap = new Keymap(new_arena, compare_.keymap_comparator);
+#endif
             assert(new_keymap);
             keymaps.push_back(new_keymap);
             return true;
@@ -1870,6 +2001,7 @@ namespace insdb {
         } else {
             ctx.max_arena_size = memory_size;
         }
+#ifdef USE_HASHMAP_RANDOMREAD
         ctx.hashmap = new KeyMapHashMap(1024*32);
 #ifndef NDEBUG
         if (!MemoryMigration(mf, first_arena, ctx)) abort();
@@ -1877,6 +2009,14 @@ namespace insdb {
         MemoryMigration(mf, first_arena, ctx);
 #endif
         Keymap *new_keymap = new Keymap(first_arena, compare_.keymap_comparator, ctx.hashmap);
+#else
+#ifndef NDEBUG
+        if (!MemoryMigration(mf, first_arena, ctx)) abort();
+#else
+        MemoryMigration(mf, first_arena, ctx);
+#endif
+        Keymap *new_keymap = new Keymap(first_arena, compare_.keymap_comparator);
+#endif
         assert(new_keymap);
         keymaps.push_back(new_keymap); 
         num_keymaps--;
@@ -1889,7 +2029,9 @@ namespace insdb {
             GetKeyString(ctx.next_start_offset, node_key_str);
             ctx.first = true;
             ctx.begin_key = Slice(node_key_str.data(), node_key_str.size());
+#ifdef USE_HASHMAP_RANDOMREAD
             ctx.hashmap = new KeyMapHashMap(1024*32);
+#endif
             if (cur_memory_size <= (cum_data_size + memory_size*2) || num_keymaps == 1) ctx.max_arena_size = 0;
             Arena* new_arena = new Arena();
             KEYMAP_HDR * hdr = (KEYMAP_HDR*)new_arena->GetBaseAddr();
@@ -1901,7 +2043,11 @@ namespace insdb {
 #endif
             cum_data_size +=  (ctx.cur_arena_size - 128); /* estimated header size */;
             /* create new key map */
+#ifdef USE_HASHMAP_RANDOMREAD
             Keymap *new_keymap = new Keymap(new_arena, compare_.keymap_comparator, ctx.hashmap);
+#else
+            Keymap *new_keymap = new Keymap(new_arena, compare_.keymap_comparator);
+#endif
             assert(new_keymap);
             keymaps.push_back(new_keymap);
             num_keymaps--;
@@ -1923,7 +2069,9 @@ namespace insdb {
         ctx.begin_key = GetBeginKey();
         ctx.max_arena_size = 0;
         ctx.next_start_offset = 0;
+#ifdef USE_HASHMAP_RANDOMREAD
         ctx.hashmap = new KeyMapHashMap(1024*32);
+#endif
 #ifndef NDEBUG
         if (!MemoryMigration(mf, new_arena, ctx)) abort();
 #else
@@ -1940,8 +2088,238 @@ namespace insdb {
 #endif
         }
 
+#ifdef USE_HASHMAP_RANDOMREAD
         Keymap *new_keymap = new Keymap(new_arena, compare_.keymap_comparator, ctx.hashmap);
+#else
+        Keymap *new_keymap = new Keymap(new_arena, compare_.keymap_comparator);
+#endif
         assert(new_keymap);
+        return new_keymap;
+    }
+
+    void Keymap::InitKeyMigrationCtx(KeyMigrationCtx &ctx) {
+        ctx.first = false;
+        ctx.begin_key = GetBeginKey();
+        ctx.next_start_offset = 0;
+        for(int i = 0; i < kMaxHeight; i++)
+           ctx.prev[i] = GetHeadNodeOffset();
+        ctx.max_arena_size = 0;
+        ctx.cur_arena_size = 0;
+#ifdef USE_HASHMAP_RANDOMREAD
+        KeyMapHashMap* hashmap = hashmap_; 
+#endif
+    }
+
+
+   void Keymap::AppendWithConext(const KeySlice& key, Slice key_info, KeyMigrationCtx &ctx) {
+        int height = RandomHeight();
+        if (height > GetMaxHeight()) SetMaxHeight(height);
+        Slice keyinfo(0);
+        uint32_t x_offset = 0;
+        KeyNode* x = nullptr;
+        x = NewNode(key, key_info.size(), height, x_offset, keyinfo);
+        uint32_t* next_addr =  x->NextAddrInfo();
+        for (int i = 0; i < height; i++) {
+            next_addr[i] = 0;
+            ((KeyNode*)GetAddr(ctx.prev[i]))->SetNextOffset(i, x_offset); /* update prev link */
+            ctx.prev[i] = x_offset;
+        }
+        IncCount();
+        assert(keyinfo.size() >= key_info.size());
+        memcpy(const_cast<char*>(keyinfo.data()), const_cast<char*>(key_info.data()), key_info.size());
+#ifdef USE_HASHMAP
+        std::string *offset_str = new std::string();
+        uint32_t nr_count = 1;
+        offset_str->append((char*)&nr_count, 4);
+        offset_str->append((char*)&node_offset, 4);
+        auto ret = hashmap_->insert(key.GetHashValue(), offset_str);
+        if (!ret.second) delete offset_str;
+#endif
+        return;
+    }
+
+#define KEYMAP_CHANGED                  (0x0)
+#define NO_KEYMAP_CHANGE_SAME_ORIG      (0x01)
+#define NO_KEYMAP_CHANGE_SAME_TARGET    (0x02)
+    Keymap* Keymap::ConvergeKeymap(Keymap* target_keymap, uint8_t &status) {
+        HasArena();
+        /*
+         * Assume sub keymap does not have overwapped key and is sorted.
+         */
+        KeyMapHandle handle = this->First();
+        KeyMapHandle cvg_handle = target_keymap->First();
+        if (!cvg_handle) {
+            status = NO_KEYMAP_CHANGE_SAME_ORIG;
+            return this;
+        } else if (!handle) {
+            status = NO_KEYMAP_CHANGE_SAME_TARGET;
+            return target_keymap;
+        }
+
+        status = KEYMAP_CHANGED;
+        Slice key = GetBeginKey(); 
+        Keymap *new_keymap = new Keymap(key, compare_.keymap_comparator); 
+        Arena* new_arena = new Arena();
+        new_keymap->InitArena(new_arena, use_compact_key_);
+        new_keymap->InsertArena(new_arena); 
+        KEYMAP_HDR * hdr = (KEYMAP_HDR*)new_arena->GetBaseAddr();
+        memcpy(new_arena->GetBaseAddr(), GetBaseAddr(), sizeof(KEYMAP_HDR));
+
+        KeyMigrationCtx ctx;
+        new_keymap->InitKeyMigrationCtx(ctx);
+
+        std::string orig_str;
+        std::string target_str;
+        orig_str.resize(0);
+        target_str.resize(0);
+        this->GetKeyString(handle, orig_str);
+        target_keymap->GetKeyString(cvg_handle, target_str);
+
+        while (handle && cvg_handle) {
+            KeySlice orig_key(orig_str);
+            KeySlice target_key(target_str);
+            int cmp_val = Compare(orig_key, target_key);
+            if (cmp_val < 0) {
+                /* insert orig_key */
+                KeyMapHandle node_offset = 0;
+                Slice key_info = this->GetKeyInfoLatest(handle);
+                assert(key_info.size());
+
+                new_keymap->AppendWithConext(orig_key, key_info, ctx);
+                handle = this->Next(handle);
+                if (handle) {
+                    orig_str.resize(0);
+                    this->GetKeyString(handle, orig_str);
+                }
+            } else if (cmp_val > 0) {
+                /* insert target_key */
+                KeyMapHandle node_offset = 0;
+                Slice key_info = target_keymap->GetKeyInfoLatest(cvg_handle);
+                assert(key_info.size());
+
+                new_keymap->AppendWithConext(target_key, key_info, ctx);
+                cvg_handle =  target_keymap->Next(cvg_handle);
+                if (cvg_handle) {
+                    target_str.resize(0);
+                    target_keymap->GetKeyString(cvg_handle, target_str);
+                }
+            } else {
+                ColumnData colms[kMaxColumnCount];
+                memset(colms, 0, sizeof(ColumnData)*kMaxColumnCount);
+                /* need to merge column info */
+                Slice orig_key_info = this->GetKeyInfoLatest(handle);
+                assert(orig_key_info.size());
+                /* parse orig key info */
+                char* data = const_cast<char*>(orig_key_info.data());
+                KeyMeta* meta = (KeyMeta*)data;
+                assert(!meta->HasUserKey());
+                int nr_col = meta->NRColumn();
+                if (nr_col) {
+                    ColMeta *col_meta = meta->ColMetaArray();
+                    char* col_addr = (char*) col_meta;
+                    for (int i = 0; i < nr_col; i++) {
+                        uint8_t col_id = col_meta->ColumnID();
+                        colms[col_id].init();
+                        col_meta->ColInfo(colms[col_id]);
+                        col_addr += col_meta->GetColSize();
+                        col_meta = (ColMeta *)col_addr;
+                    }
+                }
+                
+                /* parse target key info */
+                Slice target_key_info = target_keymap->GetKeyInfoLatest(cvg_handle);
+                assert(target_key_info.size());
+                data = const_cast<char*>(target_key_info.data());
+                meta = (KeyMeta*)data;
+                assert(!meta->HasUserKey());
+                nr_col = meta->NRColumn();
+                if (nr_col) {
+                    ColMeta *col_meta = meta->ColMetaArray();
+                    char* col_addr = (char*) col_meta;
+                    for (int i = 0; i < nr_col; i++) {
+                        uint8_t col_id = col_meta->ColumnID();
+                        colms[col_id].init();
+                        col_meta->ColInfo(colms[col_id]);
+                        col_addr += col_meta->GetColSize();
+                        col_meta = (ColMeta *)col_addr;
+                    }
+                }
+
+                /* rebuild column info */
+                std::string new_col_info;
+                new_col_info.resize(0);
+                new_col_info.append(1, 0x0); /* reserve for nr column */
+                nr_col = 0;
+                for (int i = 0; i < kMaxColumnCount; i++) {
+                    if (!colms[i].is_deleted && colms[i].col_size) {
+                        uint32_t start_offset = new_col_info.size();
+                        new_col_info.append(1, 0x0); /* reserve for column size */
+                        uint8_t colid = colms[i].column_id;
+                        if (colms[i].referenced) colid |= 0xC0;
+                        new_col_info.append(1, colid);
+                        uint8_t ttl_offset = colms[i].kb_offset;
+                        if (colms[i].has_ttl) ttl_offset |= 0x80;
+                        new_col_info.append(1, ttl_offset);
+                        PutVarint64(&new_col_info, colms[i].iter_sequence);
+                        if (colms[i].has_ttl) PutVarint64(&new_col_info, colms[i].ttl);
+                        PutVarint64(&new_col_info, colms[i].ikey_sequence);
+                        PutVarint32(&new_col_info, colms[i].ikey_size);
+                        uint32_t last_offset = new_col_info.size();
+                        uint8_t col_size = last_offset - start_offset;
+                        new_col_info[start_offset] = col_size;
+                        nr_col++;
+                    }
+                }
+                new_col_info[0] = nr_col -1;
+                KeyMapHandle node_offset = 0;
+                Slice new_col_info_slice(new_col_info);
+                new_keymap->AppendWithConext(orig_key, new_col_info_slice, ctx);
+
+                handle = this->Next(handle);
+                if (handle) {
+                    orig_str.resize(0);
+                    this->GetKeyString(handle, orig_str);
+                }
+                cvg_handle =  target_keymap->Next(cvg_handle);
+                if (cvg_handle) {
+                    target_str.resize(0);
+                    target_keymap->GetKeyString(cvg_handle, target_str);
+                }
+            }
+        } 
+        if (handle) {
+            /* process remaining key in orig keymap */
+            while(handle) {
+                KeySlice orig_key(orig_str);
+                /* insert org_key */
+                KeyMapHandle node_offset = 0;
+                Slice key_info = this->GetKeyInfoLatest(handle);
+                assert(key_info.size());
+
+                new_keymap->AppendWithConext(orig_key, key_info, ctx);
+                handle = this->Next(handle);
+                if (handle) {
+                    orig_str.resize(0);
+                    this->GetKeyString(handle, orig_str);
+                }
+            }
+        } else {
+            while(cvg_handle) {
+                /* process remaining key in target keymap */
+                KeySlice target_key(target_str);
+                /* insert target_key */
+                KeyMapHandle node_offset = 0;
+                Slice key_info = target_keymap->GetKeyInfoLatest(cvg_handle);
+                assert(key_info.size());
+
+                new_keymap->AppendWithConext(target_key, key_info, ctx);
+                cvg_handle =  target_keymap->Next(cvg_handle);
+                if (cvg_handle) {
+                    target_str.resize(0);
+                    target_keymap->GetKeyString(cvg_handle, target_str);
+                }
+            }
+        }
         return new_keymap;
     }
 } //namespace insdb

@@ -630,32 +630,27 @@ DBImpl::~DBImpl() {
 #endif
 
     // Clean up residual snapshots
-    while(!snapshots_.empty())
-    {
-        Snapshot *snapshot = snapshots_.newest();
+    while (!snapshots_.empty()) {
+        Snapshot* snapshot = snapshots_.newest();
         ReleaseSnapshot(snapshot);
     }
-	if(insdb_)
-		delete insdb_;
-    if(insdb_options_.comparator && insdb_options_.comparator != insdb::BytewiseComparator())
-        delete insdb_options_.comparator;
-    if(insdb_options_.merge_operator)
-        delete insdb_options_.merge_operator;
-    delete default_cf_handle_;
-    default_cf_handle_ = nullptr;
-    std::unordered_map<std::string, ColumnFamilyData*>::iterator i = column_families_.begin();
-    while(i != column_families_.end())
-        i = column_families_.erase(i);
 
-	std::unordered_map<uint32_t, ColumnFamilyData*>::iterator i2 = column_family_ids_.begin();
-    while(i2 != column_family_ids_.end())
-    {
-        ColumnFamilyData *cfd = i2->second;
-        i2 = column_family_ids_.erase(i2);
-        bool todelete = cfd->Unref();
-        assert(todelete);
-        if(todelete)
-            delete cfd;
+	if (insdb_)
+		delete insdb_;
+
+    if (insdb_options_.comparator && insdb_options_.comparator != insdb::BytewiseComparator())
+        delete insdb_options_.comparator;
+
+    if (insdb_options_.merge_operator)
+        delete insdb_options_.merge_operator;
+
+    delete default_cf_handle_;
+
+    // Conditionally delete all ColumnFamilyData elements in this collection and not in column_families_.
+    // column_families_ will be automatically cleared when its destructor is called
+    for (const auto& i : column_family_ids_) {
+        if (i.second->Unref())
+            delete i.second;
     }
 }
 
@@ -1035,9 +1030,7 @@ public:
 	InsDB_Comparator(const rocksdb::Comparator *comparator) : comparator_(comparator) { }
 
   int Compare(const insdb::Slice &a, const insdb::Slice &b) const override {
-	Slice slice_a(a.data(), a.size());
-	Slice slice_b(b.data(), b.size());
-    return comparator_->Compare(slice_a, slice_b);
+    return comparator_->Compare(Slice(a.data(), a.size()), Slice(b.data(), b.size()));
   }
   const char *Name() const override { return comparator_->Name(); }
   void FindShortestSeparator(std::string *start,
@@ -2330,10 +2323,14 @@ Status DestroyDB(const std::string& dbname, const Options& options) {
 	insdb_options.kv_ssd.resize(0);
     for (auto devname : options.kv_ssd)
         insdb_options.kv_ssd.push_back(devname.c_str());
+
     insdb_options.num_column_count = kInSDB_MaxNrColumnFamilies;
     insdb_options.disable_io_size_check = options.disable_io_size_check;
-    if(options.info_log)
+
+    if (options.info_log) {
         insdb_options.info_log = new InsDB_Logger(options.info_log);
+    }
+
 	insdb::Status insdb_status = insdb::DestroyDB(dbname, insdb_options);
 
 	if(!insdb_status.ok())
@@ -2349,6 +2346,7 @@ Status DestroyDB(const std::string& dbname, const Options& options) {
     if (!status.ok()) {
       return status;
     }
+
     for (auto& filename : filenames) {
         std::string full_path(dbname);
         full_path.append("/");

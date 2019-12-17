@@ -46,6 +46,243 @@ namespace insdb {
     } __attribute__((packed)); /* size minimum 24 */
 
 
+
+
+    TEST(KeymapTest ,Converge_test) {
+        char begin_key_buf[32];
+        sprintf(begin_key_buf, "%016d", 0);
+        KeySlice beginkey(begin_key_buf, 16);
+
+        Keymap table(beginkey, BytewiseComparator());
+        Arena* table_arena = new Arena();
+        table.InitArena(table_arena);
+        table.InsertArena(table_arena);
+
+        uint64_t start_time;
+        uint64_t finish_time;
+        uint64_t microsec;
+        int key_count = 1000000;
+        uint32_t insert = 0, insert_fail = 0;
+        int count = 0;
+
+        printf( "---------------------------------------\n");
+        printf( "write %d key to tabel\n", key_count);
+
+        start_time = Env::Default()->NowMicros();
+        for (int i = 0; i < key_count; i++) {
+            char key_str[32];
+            char keyinfo_str[64];
+            KeyCol *keycol = (KeyCol*)keyinfo_str;
+            keycol->nr_col = 0;
+            keycol->col[0].col_id = 0;
+            keycol->col[0].offset_in_kb =5;
+            uint32_t offset = 4;
+            char* addr = keyinfo_str + offset;
+            char* addr2 = EncodeVarint64(addr, i); /* iter sequence */
+            offset += (addr2 - addr);
+            addr = EncodeVarint64(addr2, i+2); /* ikey sequence */
+            offset += (addr - addr2);
+            addr2 = EncodeVarint64(addr, 2048); /* iter size */
+            offset += (addr2 - addr);
+            keycol->col[0].col_size = offset -1;
+            sprintf(key_str, "%016d", i);
+            KeySlice key(key_str, 16);
+            uint32_t est_size = offset;
+            KeyMapHandle new_handle;
+            Slice keyinfo = table.Insert(key, est_size, new_handle);
+            if (keyinfo.size()) {
+                if (keyinfo.size() < est_size) abort();
+                insert++;
+                char* addr = const_cast<char*>(keyinfo.data());
+                memcpy(addr, keyinfo_str, est_size); 
+            }
+            else insert_fail++;
+        }
+        finish_time = Env::Default()->NowMicros();
+        microsec = (finish_time - start_time);
+        printf( "insert result s(%lu) f(%lu) micros(%lu) insert(%d) insert_fail(%d) op_count(%ld) cmp_count(%ld)\n",
+                start_time, finish_time, microsec, insert, insert_fail, table.GetOpCnt(), table.GetCmpCnt());  
+        table.DumpState();
+
+        printf( "---------------------------------------\n");
+        printf( "search %d key to tabel\n", key_count);
+        KeyMapHandle result = 0;
+        uint32_t found = 0, not_found = 0;
+        start_time = Env::Default()->NowMicros();
+        for (int i = 0; i < key_count; i++) {
+            char key_str[32];
+            sprintf(key_str, "%016d", i);
+            KeySlice key(key_str, 16);
+            if (result =table.Search(key)) found++;
+            else not_found++;
+        }
+        finish_time = Env::Default()->NowMicros();
+        microsec = (finish_time - start_time);
+        printf( "search result s(%lu) f(%lu) micros(%lu) found(%d) not_found(%d) op_count(%ld), cmp_count(%ld)\n",
+                start_time, finish_time, microsec, found, not_found, table.GetOpCnt(), table.GetCmpCnt());  
+
+        printf( "---------------------------------------\n");
+        printf( "read 100 key column 1 to tabel\n");
+        char key_str[32];
+        result = table.First();
+        count = 0;
+        while(result) {
+            ColumnData coldata; 
+            if (table.GetKeyColumnData(result, 0, coldata)) {
+                if (coldata.key.size() > 16) abort();
+                memcpy(key_str, coldata.key.data(), coldata.key.size());
+                key_str[coldata.key.size()] = 0;
+                free(const_cast<char*>(coldata.key.data()));
+                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                        "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
+                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
+            }
+            result = table.Next(result);
+            if (++count > 100) break;
+        }
+
+        table.DumpState();
+
+
+
+
+
+        Keymap table2(beginkey, BytewiseComparator());
+        Arena* table2_arena = new Arena();
+        table2.InitArena(table2_arena);
+        table2.InsertArena(table2_arena);
+
+        start_time;
+        finish_time;
+        microsec;
+        key_count = 1000000;
+        insert = 0;
+        insert_fail = 0;
+        count = 0;
+
+        printf( "---------------------------------------\n");
+        printf( "write %d key to tabel2\n", key_count);
+
+        start_time = Env::Default()->NowMicros();
+        for (int i = 0; i < key_count; i++) {
+            char key_str[32];
+            char keyinfo_str[64];
+            KeyCol *keycol = (KeyCol*)keyinfo_str;
+            keycol->nr_col = 0;
+            keycol->col[0].col_id = 0;
+            keycol->col[0].offset_in_kb =5;
+            uint32_t offset = 4;
+            char* addr = keyinfo_str + offset;
+            char* addr2 = EncodeVarint64(addr, i + 1000000); /* iter sequence */
+            offset += (addr2 - addr);
+            addr = EncodeVarint64(addr2, i+2 + 1000000); /* ikey sequence */
+            offset += (addr - addr2);
+            addr2 = EncodeVarint64(addr, 2048); /* iter size */
+            offset += (addr2 - addr);
+            keycol->col[0].col_size = offset -1;
+            sprintf(key_str, "%016d", i);
+            KeySlice key(key_str, 16);
+            uint32_t est_size = offset;
+            KeyMapHandle new_handle;
+            Slice keyinfo = table2.Insert(key, est_size, new_handle);
+            if (keyinfo.size()) {
+                if (keyinfo.size() < est_size) abort();
+                insert++;
+                char* addr = const_cast<char*>(keyinfo.data());
+                memcpy(addr, keyinfo_str, est_size); 
+            }
+            else insert_fail++;
+        }
+        finish_time = Env::Default()->NowMicros();
+        microsec = (finish_time - start_time);
+        printf( "insert result s(%lu) f(%lu) micros(%lu) insert(%d) insert_fail(%d) op_count(%ld) cmp_count(%ld)\n",
+                start_time, finish_time, microsec, insert, insert_fail, table.GetOpCnt(), table.GetCmpCnt());  
+        table.DumpState();
+
+        printf( "---------------------------------------\n");
+        printf( "search %d key to tabel2\n", key_count);
+        result = 0;
+        found = 0;
+        not_found = 0;
+        start_time = Env::Default()->NowMicros();
+        for (int i = 0; i < key_count; i++) {
+            char key_str[32];
+            sprintf(key_str, "%016d", i);
+            KeySlice key(key_str, 16);
+            if (result =table2.Search(key)) found++;
+            else not_found++;
+        }
+        finish_time = Env::Default()->NowMicros();
+        microsec = (finish_time - start_time);
+        printf( "search result s(%lu) f(%lu) micros(%lu) found(%d) not_found(%d) op_count(%ld), cmp_count(%ld)\n",
+                start_time, finish_time, microsec, found, not_found, table.GetOpCnt(), table.GetCmpCnt());  
+
+        printf( "---------------------------------------\n");
+        printf( "read 100 key column 1 to tabel2\n");
+        result = table2.First();
+        count = 0;
+        while(result) {
+            ColumnData coldata; 
+            if (table2.GetKeyColumnData(result, 0, coldata)) {
+                if (coldata.key.size() > 16) abort();
+                memcpy(key_str, coldata.key.data(), coldata.key.size());
+                key_str[coldata.key.size()] = 0;
+                free(const_cast<char*>(coldata.key.data()));
+                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                        "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
+                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
+            }
+            result = table2.Next(result);
+            if (++count > 100) break;
+        }
+
+        table2.DumpState();
+        uint8_t status = 0;
+        Keymap* table3 = table.ConvergeKeymap(&table2, status);
+
+        printf( "---------------------------------------\n");
+        printf( "search %d key to tabel3\n", key_count);
+        result = 0;
+        found = 0;
+        not_found = 0;
+        start_time = Env::Default()->NowMicros();
+        for (int i = 0; i < key_count; i++) {
+            char key_str[32];
+            sprintf(key_str, "%016d", i);
+            KeySlice key(key_str, 16);
+            if (result =table3->Search(key)) found++;
+            else not_found++;
+        }
+        finish_time = Env::Default()->NowMicros();
+        microsec = (finish_time - start_time);
+        printf( "search result s(%lu) f(%lu) micros(%lu) found(%d) not_found(%d) op_count(%ld), cmp_count(%ld)\n",
+                start_time, finish_time, microsec, found, not_found, table.GetOpCnt(), table.GetCmpCnt());  
+
+        printf( "---------------------------------------\n");
+        printf( "read 100 key column 1 to tabel3\n");
+        result = table3->First();
+        count = 0;
+        while(result) {
+            ColumnData coldata; 
+            if (table3->GetKeyColumnData(result, 0, coldata)) {
+                if (coldata.key.size() > 16) abort();
+                memcpy(key_str, coldata.key.data(), coldata.key.size());
+                key_str[coldata.key.size()] = 0;
+                free(const_cast<char*>(coldata.key.data()));
+                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                        "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
+                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
+            }
+            result = table3->Next(result);
+            if (++count > 100) break;
+        }
+        delete table3;
+    }
+
+#if 0
     TEST(KeymapTest ,Insert_Replace_Test) {
         char begin_key_buf[32];
         sprintf(begin_key_buf, "%016d", 0);
@@ -474,9 +711,14 @@ namespace insdb {
 
         printf( "---------------------------------------\n");
         printf( "Memory Cleanup\n");
+#ifdef USE_HASHMAP_RANDOMREAD
         KeyMapHashMap* hashmap = new KeyMapHashMap(1024*32);
         Arena* new_arena = table.MemoryCleanup(nullptr, hashmap);
         table.InsertArena(new_arena, hashmap);
+#else
+        Arena* new_arena = table.MemoryCleanup(nullptr);
+        table.InsertArena(new_arena);
+#endif
         table.DumpState();
 
         printf( "---------------------------------------\n");
@@ -522,11 +764,16 @@ namespace insdb {
         printf( "Copy Arena and Create New table2 - Migration form device emulation\n");
         Arena *arena = new Arena(table.GetBufferSize());
         table.CopyMemory(arena->GetBaseAddr(), table.GetAllocatedSize());
+#ifdef USE_HASHMAP_RANDOMREAD
         std::string hash_data;
         table.BuildHashMapData(hash_data);
         hashmap = BuildKeymapHashmapWithString(hash_data);
         Keymap table2(beginkey, BytewiseComparator());
         table2.InsertArena(arena, hashmap);
+#else
+        Keymap table2(beginkey, BytewiseComparator());
+        table2.InsertArena(arena);
+#endif
 
         printf( "---------------------------------------\n");
         printf( "search %d key to tabel2\n", key_count);
@@ -754,10 +1001,16 @@ namespace insdb {
         ctx.first = true;
         ctx.begin_key = beginkey;
         ctx.max_arena_size = 0;
+#ifdef USE_HASHMAP_RANDOMREAD
         ctx.hashmap = new KeyMapHashMap(1024*32);
         table.MemoryMigration(nullptr, new_arena, ctx);
         Keymap table2(beginkey, BytewiseComparator());
         table2.InsertArena(new_arena, ctx.hashmap);
+#else
+        table.MemoryMigration(nullptr, new_arena, ctx);
+        Keymap table2(beginkey, BytewiseComparator());
+        table2.InsertArena(new_arena);
+#endif
 
         table2.DumpState();
 
@@ -828,10 +1081,16 @@ namespace insdb {
         ctx2.first = true;
         ctx2.begin_key = beginkey;
         ctx2.max_arena_size = 0x200000;
+#ifdef USE_HASHMAP_RANDOMREAD
         ctx2.hashmap = new KeyMapHashMap(1024*32);
         table.MemoryMigration(nullptr, new_arena2, ctx2);
         Keymap table3(beginkey, BytewiseComparator());
         table3.InsertArena(new_arena2, ctx2.hashmap);
+#else
+        table.MemoryMigration(nullptr, new_arena2, ctx2);
+        Keymap table3(beginkey, BytewiseComparator());
+        table3.InsertArena(new_arena2);
+#endif
 
         table3.DumpState();
 
@@ -1362,7 +1621,7 @@ namespace insdb {
         table.DumpState();
 
     }
-
+#endif
 
 
 }  // namespace insdb

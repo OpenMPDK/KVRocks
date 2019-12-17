@@ -42,12 +42,18 @@ class IteratorImpl : public Iterator {
       auto cfh = reinterpret_cast<ColumnFamilyHandleImpl*>(column_family);
       auto cfd = cfh->cfd();
       prefix_extractor_ = cfd->ioptions()->prefix_extractor;
+	  start_key_buf_ = NULL;
+	  last_key_buf_ = NULL;
     }
     // end
 
   ~IteratorImpl() {
     delete insdb_iterator;
     prefix_extractor_ = NULL;
+	if (start_key_buf_)
+		delete[] start_key_buf_;
+	if (last_key_buf_)
+		delete[] last_key_buf_;
   }
 
   virtual bool Valid() const override;
@@ -68,6 +74,8 @@ class IteratorImpl : public Iterator {
   const SliceTransform* prefix_extractor_;
   const bool prefix_same_as_start_;
   Slice prefix_start_key_;
+  char *start_key_buf_;
+  char *last_key_buf_;
   // end
 };
 

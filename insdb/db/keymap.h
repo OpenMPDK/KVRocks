@@ -35,9 +35,11 @@
 #include "util/random.h"
 #include "util/arena.h"
 #include "util/coding.h"
-#include <folly/concurrency/ConcurrentHashMap.h>
 
-//#define USE_HASHMAP
+#if 0
+#include <folly/concurrency/ConcurrentHashMap.h>
+#define USE_HASHMAP_RANDOMREAD
+#endif
 
 namespace insdb {
     typedef uint32_t KeyMapHandle;
@@ -45,12 +47,14 @@ namespace insdb {
     class Manifest;
     struct SnapInfo;
 
+#ifdef USE_HASHMAP_RANDOMREAD
     struct KeymapHash {
         inline uint32_t operator() (const uint32_t key_hash) noexcept {
             return key_hash;
         }
     };
     typedef folly::ConcurrentHashMap<uint32_t, std::string *, KeymapHash> KeyMapHashMap;
+#endif
 
     struct KEYMAP_HDR {
         uint32_t crc;
@@ -60,7 +64,9 @@ namespace insdb {
         uint32_t next_skt_id;
         uint32_t start_colinfo;
         uint32_t last_colinfo;
+#ifdef USE_HASHMAP_RANDOMREAD
         uint32_t hashmap_data_size;
+#endif
         uint32_t use_compact_key;
     } __attribute__((packed));
 #define KEYMAP_COMPRESS         0x80000000
@@ -145,7 +151,9 @@ namespace insdb {
             char rep_[1];
     };
 
+#ifdef USE_HASHMAP_RANDOMREAD
     KeyMapHashMap* BuildKeymapHashmapWithString(std::string &hash_data);
+#endif
 
     class Keymap {
         public:
@@ -161,12 +169,15 @@ namespace insdb {
                     uint32_t NextOffset(int n);
                     void SetNextOffset(int n, uint32_t next_offset);
                     Slice GetNodeKey(bool use_compact_key);
+                    Slice GetNodeKey(bool use_compact_key, Slice &parse, bool advance = false);
                     Slice GetKeyInfo(bool use_compact_key);
                     Slice GetKeyInfoWithSize(bool use_compact_key);
+                    Slice GetKeyInfoWithSize(bool use_compact_key, Slice &node_key);
                     void Cleanup(char* base_addr, std::vector<uint32_t> &free_offset, bool use_compact_key);
                     Slice Init(int height, Slice key, uint32_t shared, uint32_t non_shared, uint32_t keyinfo_size, uint32_t size);
                     Slice InitNoCompact(int height, Slice key, uint32_t keyinfo_size, uint32_t size);
                     KeyMeta* GetKeyMeta(char* base_addr,  bool use_compact_key, uint32_t* new_meta_offset = nullptr, uint32_t* new_meat_size = nullptr);
+                    KeyMeta* GetKeyMeta(char* base_addr,  bool use_compact_key, Slice &node_key);
 
                 private:
                     char rep_[1];
@@ -179,7 +190,9 @@ namespace insdb {
                 uint32_t max_arena_size; /* allowed max arean size. 0 = no limit */
                 uint32_t cur_arena_size; /* set when finish migration */
                 std::string cur_begin_key; /* keep begin key */
+#ifdef USE_HASHMAP_RANDOMREAD
                 KeyMapHashMap* hashmap;
+#endif
             };
             /* comparator */
             struct KeymapComparator {
@@ -196,15 +209,19 @@ namespace insdb {
 
             // Create a new Keymap object that will use "cmp" for comparing keys
             explicit Keymap(Arena *arena, const Comparator *cmp);
+#ifdef USE_HASHMAP_RANDOMREAD
             explicit Keymap(Arena *arena, const Comparator *cmp, KeyMapHashMap* hashmap);
+#endif
             explicit Keymap(KeySlice beginkey, const Comparator *cmp);
+#ifdef USE_HASHMAP_RANDOMREAD
             void InsertArena(Arena *arena, KeyMapHashMap* hashmap = nullptr);
+#else
+            void InsertArena(Arena *arena);
+#endif
             void InitArena(Arena *arena, bool use_compact_key = false);
             bool HasArena() {
-                if (arena_){
-                    if (__sync_add_and_fetch((uint32_t*)arena_,0)) 
+                if ((volatile Arena *)arena_)
                         return true;
-                }
                 return false;
             }
 
@@ -237,7 +254,9 @@ namespace insdb {
 
             KeyMapHandle Last();
            
+#ifdef USE_HASHMAP_RANDOMREAD
             bool BuildHashMapData(std::string &hash_data);
+#endif
 
             void GetiKeySeqNum(KeyMapHandle handle, std::set<uint64_t> &KeysList); 
             KeyMeta* GetKeyMeta(KeyMapHandle handle);
@@ -246,7 +265,9 @@ namespace insdb {
             bool GetKeyColumnData(KeyMapHandle handle, uint8_t col_id, ColumnData &col_data);
             void SetKeyReference(KeyMapHandle handle, uint8_t col_id);
             Slice GetColumnData(KeyMapHandle handle, uint8_t col_id, void*& uk);
+            Slice GetColumnData(KeyMapHandle handle, uint8_t col_id, void* &uk, Slice &key);
             void GetKeyString(uint32_t handle, std::string &key_str);
+            Slice GetKeySlice(Slice &node_key);
             Slice GetKeySlice(uint32_t handle);
             KeySlice GetKeymapBeginKey() {
                 return KeySlice(key_str_.data(), key_str_.size(), key_hash_);
@@ -255,6 +276,7 @@ namespace insdb {
             void SetPreAllocSKTableID(uint32_t skt_id);
             void SetNextSKTableID(uint32_t skt_id);
             uint32_t IncCurColInfoID();
+            void ResetCurColInfoID(uint32_t prev_col_id, uint32_t next_col_id);
             void SetPrevColInfoID();
             uint32_t GetSKTableID();
             uint32_t GetPreAllocSKTableID();
@@ -271,13 +293,25 @@ namespace insdb {
             void DumpState() { arena_->DumpState(); }
             bool Contains(const Slice& key);
             uint32_t GetBufferSize() { return arena_->GetBufferSize(); }
-            uint32_t GetAllocatedSize() { return arena_->AllocatedMemorySize(); }
-            uint32_t GetFreedMemorySize() { return arena_->FreedMemorySize(); }
+            int32_t GetAllocatedSize() { return arena_->AllocatedMemorySize(); }
+            int32_t GetFreedMemorySize() { return arena_->FreedMemorySize(); }
 
+#ifdef USE_HASHMAP_RANDOMREAD
             Arena* MemoryCleanup(Manifest* mf, KeyMapHashMap* hashmap);
+#else
+            Arena* MemoryCleanup(Manifest* mf);
+#endif
             bool MemoryMigration(Manifest* mf, Arena *new_arena, struct KeyMigrationCtx& ctx);
             bool SplitKeymap(Manifest* mf, std::vector<Keymap*>& keymaps, uint32_t chunk_sise = 0);
             Keymap* MergeKeymap(Manifest* mf, std::vector<Keymap*>& keymaps);
+
+            void InitKeyMigrationCtx(KeyMigrationCtx &ctx);
+            void AppendWithConext(const KeySlice& key, Slice key_info, KeyMigrationCtx &ctx);
+
+#define KEYMAP_CHANGED                  (0x0)
+#define NO_KEYMAP_CHANGE_SAME_ORIG      (0x01)
+#define NO_KEYMAP_CHANGE_SAME_TARGET    (0x02)
+            Keymap* ConvergeKeymap(Keymap* target_keymap, uint8_t &status);
             void CopyMemory(char *addr, uint32_t size) { memcpy(addr, GetBaseAddr(), size);}
             void CopyToString(std::string &dest_str, uint32_t size) {dest_str.append(GetBaseAddr(), size);}
             KeyMapHandle GetNextAllocOffset(uint32_t bytes) {
@@ -356,12 +390,14 @@ namespace insdb {
 
             KeyMapHandle _Search(const KeySlice& key);
 
+#ifdef USE_HASHMAP_RANDOMREAD
             void CleanupHashMap();
+#endif
 
             int GetMaxHeight() {
                 return (int)arena_->GetMaxHeight();
             }
-            char* GetBaseAddr() { return arena_->GetBaseAddr(); }
+            char* GetBaseAddr() { assert(arena_); return arena_->GetBaseAddr(); }
             uint32_t GetOffset(char* addr) { return (addr - GetBaseAddr()); }
             char* GetAddr(uint32_t offset) {
                 if (!offset) return nullptr;
@@ -383,7 +419,9 @@ namespace insdb {
             KeymapNoCompactComparator const compare_nocompact_;
             KeymapComparator  const compare_;
             Random rnd_;
+#ifdef USE_HASHMAP_RANDOMREAD
             KeyMapHashMap* hashmap_;
+#endif
             bool use_compact_key_;
             /* fast key begin access remove node size prefix */
             uint32_t begin_key_offset_;

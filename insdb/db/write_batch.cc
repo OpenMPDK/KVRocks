@@ -184,6 +184,7 @@ namespace insdb {
                     return Status::Corruption("unknown WriteBatch tag");
             }
         }
+
         if (found != DecodeFixed32(rep_.data())) {
             return Status::Corruption("WriteBatch has wrong count");
         } else {
@@ -377,11 +378,18 @@ namespace insdb {
         * We don't need to increase ref count of SKT.
         * If SKTable is being evicted, BuildKeyBlock(Meta)() will prefetch the SKTable 
         */
+       SequenceNumber seq;
        if(mf_->KeyHashMapFindOrInsertUserKey(uk, key, col_id)){
            SKTableMem *skt = mf_->FindSKTableMem(key);
-           skt->PushUserKeyToActiveKeyQueue(uk);
-           if(!skt->IsKeymapLoaded() && !skt->IsFetchInProgress()) 
-               skt->PrefetchSKTable(mf_, true);
+           seq = mf_->GenerateSequenceNumber();
+           skt->PushUserKeyToActiveKeyQueue(uk,seq);
+           if(mf_->MemoryUsage() < kCacheSizeLowWatermark){
+               if(!skt->IsKeymapLoaded() && !skt->IsFetchInProgress()) 
+                   skt->PrefetchSKTable(mf_, true);
+           }else
+                mf_->InsertSKTableMemCache(skt, kDirtySKTCache, SKTableMem::flags_in_dirty_cache);
+       } else {
+           seq = mf_->GenerateSequenceNumber();
        }
 
        /* 
@@ -391,7 +399,7 @@ namespace insdb {
        assert(uk);
        assert(uk->GetReferenceCount());
 
-       col_node->NewColumnInit(uk, type, col_id, (mf_->TtlIsEnabled(col_id)?ttl_:0), mf_->GenerateSequenceNumber(), (value.size() + key.size() + 1/*Col id*/)/*To estimate col info size*/);
+       col_node->NewColumnInit(uk, type, col_id, (mf_->TtlIsEnabled(col_id)?ttl_:0), seq, (value.size() + key.size() + 1/*Col id*/)/*To estimate col info size*/);
 
 #ifdef CODE_TRACE
        if (type == kPutType) {
@@ -478,7 +486,6 @@ namespace insdb {
            dbimpl_->PutColumnNodeToRequestQueue(req_node/*, skt*/);
        }
 
-       mf_->DoCongestionControl();
        trxn_.seq_number++;
        /** 
         * Decrease in the Worker after submitting the command 

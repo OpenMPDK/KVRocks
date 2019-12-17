@@ -280,9 +280,9 @@ namespace insdb {
         mf_->TerminateCacheThread();
         mf_->WorkerTerminationWaitSig();
 #endif
-#ifndef NDEBUG
+
         mf_->CheckForceFlushSKT();
-#endif
+
         /* Clean up key list and move SKTable from clean cache to dirty cache if the SKTable has been dirty*/
         assert(mf_->IsAllSKTCacheListEmpty());
 #if 0
@@ -369,6 +369,7 @@ namespace insdb {
         /* Use per thread memory pool for WriteBatchInternal & initialize it */
         WriteBatchInternal *handler = GetWBIBuffer(updates->Count(), ttl);
         updates->Iterate(handler);
+        mf_->DoCongestionControl();
 #ifdef INSDB_GLOBAL_STATS
         if(options.ttl)
             g_api_write_ttl_cnt++;
@@ -450,25 +451,16 @@ namespace insdb {
         g_unpinslice_uv_cnt++;
 #endif
     }
-    void PinnableSlice_ColumnNode_CleanupFunction(void* arg1, void* arg2)
+
+    void PinnableSlice_KeyBlock_CleanupFunction(void* arg1, void* arg2)
     {
-        ColumnNode* col_node= reinterpret_cast<ColumnNode*>(arg1);
-        col_node->ColUnpin();
+        KeyBlock* kb = reinterpret_cast<KeyBlock*>(arg1);
+        Manifest* mf = reinterpret_cast<Manifest*>(arg2);
+        mf->FreeKB(kb);
 #ifdef INSDB_GLOBAL_STATS
         g_unpinslice_uv_cnt++;
 #endif
     }
-
-    void PinnableSlice_SKTable_CleanupFunction(void* arg1, void* arg2)
-    {
-        SKTableMem* skt = reinterpret_cast<SKTableMem*>(arg1);
-        skt->DecSKTRefCnt();
-#ifdef INSDB_GLOBAL_STATS
-        g_unpinslice_uv_cnt++;
-#endif
-    }
-
-
 
     /**
       If snapshot in options is set, Get() read value from snapshot.
@@ -483,7 +475,12 @@ namespace insdb {
         Status s;
         SequenceNumber sequence = 0;
         uint64_t cur_time = 0;
-        KeySlice hkey(key); 
+        KeySlice hkey(key);
+        NonBlkState non_blk_flag_;
+        if (options.read_tier == kBlockCacheTier)
+            non_blk_flag_ = kNonblockingBefore;
+        else
+            non_blk_flag_ = kNonblockingOff;
 
         if(options.snapshot){
             SnapshotImpl* snap = reinterpret_cast<SnapshotImpl*>(const_cast<Snapshot*>(options.snapshot));
@@ -542,16 +539,20 @@ namespace insdb {
 
                     KeyBlock* kb = NULL;
                     if (!(kb = kbpm->GetKeyBlockAddr())) {
+                        if (non_blk_flag_ != kNonblockingOff) {
+                            return Status::Incomplete("Not found in cache, no_io is set");
+                        }
                         kb = kbpm->LoadKeyBlock(mf_, col_node->GetInSDBKeySeqNum(), col_node->GetiValueSize(), &ra_rahit);
                     }
+                    kb->IncKBRefCnt();
                     /* get value from kb */
                     Slice value_slice = kb->GetValueFromKeyBlock(mf_, col_node->GetKeyBlockOffset());
 
                     if(value){ 
                         value->assign(value_slice.data(), value_slice.size());
+                        mf_->FreeKB(kb);
                     }else {
-                        col_node->ColPin();
-                        pin_slice->PinSlice(value_slice, PinnableSlice_ColumnNode_CleanupFunction, col_node, NULL);
+                        pin_slice->PinSlice(value_slice, PinnableSlice_KeyBlock_CleanupFunction, kb, mf_);
                     }
                 }
                 uk->DecreaseReferenceCount();
@@ -559,7 +560,7 @@ namespace insdb {
             }
         }
         /* "NO else" because uk can be NULL after checking the seq #*/
-        if(!uk) s = mf_->GetValueFromKeymap(hkey, value, pin_slice, col_id, sequence, cur_time);
+        if(!uk) s = mf_->GetValueFromKeymap(hkey, value, pin_slice, col_id, sequence, cur_time, non_blk_flag_);
         return s;
     }
 
@@ -725,6 +726,7 @@ pointer for uint64_t[] array.
     void DBImpl::PutColumnNodeToRequestQueue(RequestNode *req_node/*, SKTableMem *skt*/){
 
         mf_->WorkerLock();
+#if 0
         if((pending_req_.size()+1)>= kSlowdownTrigger || slowdown_){
 #ifdef CODE_TRACE
             printf("[%d :: %s]Queue wait %lu %u\n", __LINE__, __func__, pending_req_.size(), kSlowdownTrigger);
@@ -735,6 +737,7 @@ pointer for uint64_t[] array.
             slowdown_cv_.Wait();
             mf_->WorkerLock();
         }
+#endif
         pending_req_.push(req_node);
         mf_->WorkerUnlock();
 
@@ -786,36 +789,39 @@ pointer for uint64_t[] array.
             uk->DoVerticalMerge((*it), uk, col_id, worker_id, del_kb_offset, mf_, kbml);
             /* KeyBlock must ONLY contain Put requests */
             SKTableMem *skt = mf_->FindSKTableMem(uk->GetKeySlice());
-            /**
-             * The SKTableMem should be exist in one of cache.
-             * If SKTableMem had not been cache in Store(), the user sent Prefetch request & insert to dirty cache.
-             * If SKTableMem is in Clean cache, migrate to Dirty Cache
-             *  - Cache Evictor may do this to avoid atomic variable check.
-             */
-            if((!skt->IsKeymapLoaded()) && !skt->IsFetchInProgress()){
-                if(!skt->IsInDirtyCache()) {
-                    if(!skt->IsFetchInProgress())
-                        skt->PrefetchSKTable(mf_, true);
-                }
-            }
-            //assert(skt->IsCached());
-            if(skt->KeyQueueKeyCount() > kMinUpdateCntForTableFlush){
-                /* 
-                 * If a SKTable has been updated over kMinUpdateCntForTableFlush, flush all SKTables
+            if(mf_->MemoryUsage() < kCacheSizeLowWatermark){
+                /**
+                 * The SKTableMem should be exist in one of cache.
+                 * If SKTableMem had not been cache in Store(), the user sent Prefetch request & insert to dirty cache.
+                 * If SKTableMem is in Clean cache, migrate to Dirty Cache
+                 *  - Cache Evictor may do this to avoid atomic variable check.
                  */
-                mf_->IncreaseUpdateCount(kSKTableFlushWatermark);
-                if(skt->IsInCleanCache()){
-                    mf_->SignalSKTEvictionThread(true);
-                } else {
-                    assert(skt->IsInDirtyCache());
-#if 0
+                if((!skt->IsKeymapLoaded()) && !skt->IsFetchInProgress()){
                     if(!skt->IsInDirtyCache()) {
                         if(!skt->IsFetchInProgress())
                             skt->PrefetchSKTable(mf_, true);
                     }
-#endif
                 }
-            }
+                //assert(skt->IsCached());
+                if(skt->KeyQueueKeyCount() > kMinUpdateCntForTableFlush){
+                    /* 
+                     * If a SKTable has been updated over kMinUpdateCntForTableFlush, flush all SKTables
+                     */
+                    mf_->IncreaseUpdateCount(kSKTableFlushWatermark);
+                    if(skt->IsInCleanCache()){
+                        mf_->SignalSKTEvictionThread(true);
+                    } else {
+                        assert(skt->IsInDirtyCache());
+#if 0
+                        if(!skt->IsInDirtyCache()) {
+                            if(!skt->IsFetchInProgress())
+                                skt->PrefetchSKTable(mf_, true);
+                        }
+#endif
+                    }
+                }
+            }else
+                mf_->InsertSKTableMemCache(skt, kDirtySKTCache, SKTableMem::flags_in_dirty_cache);
             col_node->SetKeyBlockOffset(del_kb_offset++);
             uk->ColumnUnlock(col_id);
         }
@@ -899,30 +905,33 @@ pointer for uint64_t[] array.
              * If SKTableMem is in Clean cache, migrate to Dirty Cache
              *  - Cache Evictor may do this to avoid atomic variable check.
              */
-            if((!skt->IsKeymapLoaded()) && !skt->IsFetchInProgress()){
-                if(!skt->IsInDirtyCache()) {
-                    if(!skt->IsFetchInProgress())
-                        skt->PrefetchSKTable(mf_, true);
-                }
-            }
-            //assert(skt->IsCached());
-            if(skt->KeyQueueKeyCount() > kMinUpdateCntForTableFlush){
-                /* 
-                 * If a SKTable has been updated over kMinUpdateCntForTableFlush, flush all SKTables
-                 */
-                mf_->IncreaseUpdateCount(kSKTableFlushWatermark);
-                if(skt->IsInCleanCache()){
-                    mf_->SignalSKTEvictionThread(true);
-                } else {
-                    assert(skt->IsInDirtyCache());
-#if 0
+            if(mf_->MemoryUsage() < kCacheSizeLowWatermark){
+                if((!skt->IsKeymapLoaded()) && !skt->IsFetchInProgress()){
                     if(!skt->IsInDirtyCache()) {
                         if(!skt->IsFetchInProgress())
                             skt->PrefetchSKTable(mf_, true);
                     }
-#endif
                 }
-            }
+                //assert(skt->IsCached());
+                if(skt->KeyQueueKeyCount() > kMinUpdateCntForTableFlush){
+                    /* 
+                     * If a SKTable has been updated over kMinUpdateCntForTableFlush, flush all SKTables
+                     */
+                    mf_->IncreaseUpdateCount(kSKTableFlushWatermark);
+                    if(skt->IsInCleanCache()){
+                        mf_->SignalSKTEvictionThread(true);
+                    } else {
+                        assert(skt->IsInDirtyCache());
+#if 0
+                        if(!skt->IsInDirtyCache()) {
+                            if(!skt->IsFetchInProgress())
+                                skt->PrefetchSKTable(mf_, true);
+                        }
+#endif
+                    }
+                }
+            }else
+                mf_->InsertSKTableMemCache(skt, kDirtySKTCache, SKTableMem::flags_in_dirty_cache);
             if(type == kDelType){
                 col_node->SetKeyBlockOffset(del_kb_offset++);
 #ifdef CODE_TRACE
@@ -1032,7 +1041,7 @@ pointer for uint64_t[] array.
             //mf_->RefillFreeUserValueCount(max_value_size);
             mf_->WorkerLock();
             /** Wait for a signal */
-            while(!shutting_down_ && kMaxRequestPerKeyBlock > pending_req_.size()){
+            while(!shutting_down_ && kMaxRequestPerKeyBlock > pending_req_.size() && !mf_->GetOffloadFlushCount()){
                 mf_->DecRunningWorkerCount();
                 bool timeout = mf_->WorkerWaitSig();
                 mf_->IncRunningWorkerCount();
@@ -1044,7 +1053,7 @@ pointer for uint64_t[] array.
                  */
             }
 
-            if(shutting_down_ && pending_req_.empty())
+            if(shutting_down_ && pending_req_.empty() && !mf_->GetOffloadFlushCount())
                 break;
 #define KEY_BLOCK_SIZE_APPENDIX 12 // Offset ( 2 ) + CRC ( 4 ) + keyvalue size ( 5 ) + Column ID ( 1 )
 #define KEY_BLOCK_TOTAL_SIZE 4
@@ -1064,11 +1073,13 @@ pointer for uint64_t[] array.
             uint32_t pending_req_size = pending_req_.size();
             mf_->WorkerUnlock();
 
+#if 0
             if( slowdown_ && (pending_req_size < kSlowdownLowWaterMark)){
                 MutexLock l(&slowdown_mu_);
                 slowdown_= false;
                 slowdown_cv_.SignalAll();
             }
+#endif
             if(pending_req_.size() >= kMaxRequestPerKeyBlock && mf_->GetRunningWorkerCount() < mf_->GetWorkerCount() )
                 mf_->SignalWorkerThread();
 
@@ -1241,6 +1252,12 @@ pointer for uint64_t[] array.
 #endif
                         mf_->FreeKB(kb);
                     }
+                } else {
+                    /* delete only -- add kbpm size for memroy tracking */
+                    mf_->IncreaseMemoryUsage(sizeof(KeyBlockPrimaryMeta));
+#ifdef MEM_TRACE
+                    mf_->IncKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
+#endif
                 }
                 /*Insert KBPM to Hash*/
                 if (!mf_->InsertKBPMToHashMap(kbpm)) abort();
@@ -1462,10 +1479,11 @@ pointer for uint64_t[] array.
         } else {
             db_exist_ = true;
             if (options.error_if_exists) return Status::OK(); //do not load sktable .. it will report error. 
-            s = mf_->RecoverInSDB();
-            if(s.ok() || s.IsNotFound())
-                s = mf_->InitManifest();
-            else if (!s.ok()) {//fail to recover.
+            bool bNeedInitManifest = true;
+            s = mf_->RecoverInSDB(bNeedInitManifest, options.create_if_missing);
+            if(s.ok() || s.IsNotFound()) {
+                if (bNeedInitManifest) s = mf_->InitManifest();
+            } else if (!s.ok()) {//fail to recover.
                 printf("failed to recover %s\n", s.ToString().data());
                 return s;
             }

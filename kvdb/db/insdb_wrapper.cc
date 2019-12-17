@@ -95,6 +95,23 @@ insdb::ReadOptions convert_read_options_to_insdb(ReadOptions read_options)
     insdb::ReadOptions insdb_read_options;
     insdb_read_options.verify_checksums = read_options.verify_checksums;
     insdb_read_options.fill_cache = read_options.fill_cache;
+    // Feat:iter upper bound function
+    if (read_options.iterate_upper_bound != nullptr) {
+      insdb_read_options.iterator_upper_bound =
+      new insdb::Slice(read_options.iterate_upper_bound->data(),
+      read_options.iterate_upper_bound->size());
+    }
+    // end
+    // Fix bug: value should not be get before flush with kPersistedTier
+    // Add option check to skip memtable
+    if (read_options.read_tier == kBlockCacheTier)
+        insdb_read_options.read_tier = insdb::kBlockCacheTier;
+    else if (read_options.read_tier == kPersistedTier)
+        insdb_read_options.read_tier = insdb::kPersistedTier;
+    else
+        insdb_read_options.read_tier = insdb::kReadAllTier;
+    // Fix end
+
     if (read_options.snapshot)
     {
         const SnapshotImpl* casted_s = reinterpret_cast<const SnapshotImpl*>(read_options.snapshot);

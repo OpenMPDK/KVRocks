@@ -39,9 +39,11 @@
 #ifndef INCLUDE_INSDB_CLEANABLE_H_
 #define INCLUDE_INSDB_CLEANABLE_H_
 
+#include "export.h"
+
 namespace insdb {
 
-class Cleanable {
+class INSDB_EXPORT Cleanable {
  public:
   Cleanable();
   ~Cleanable();

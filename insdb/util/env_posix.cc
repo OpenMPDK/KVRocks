@@ -158,6 +158,8 @@ class PosixEnv : public Env {
 #endif
 #endif
 
+    if (value.size() > kDeviceRquestMaxSize) abort();
+
     Status s;
     int ret = 0;
     int dev_idx = GetDevIdx(key);
@@ -385,6 +387,7 @@ struct dev_buffer {
         if (opcode == nvme_cmd_kv_retrieve)
             dev_buf[dev_idx].cmd->cdw11 |= ((__u32)flags<<8);
         // Set size
+        if ( opcode == nvme_cmd_kv_store && size[i] > kDeviceRquestMaxSize) abort();
         if(i < size.size())
             dev_buf[dev_idx].cmd->cdw10 = ((__u32)size[i] >> 2);
         else

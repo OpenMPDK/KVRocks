@@ -68,16 +68,18 @@ namespace insdb {
         ///////////////////////////////////////////////////////////////////////
     }
 #endif
-    bool UserKey::BuildColumnInfo(Manifest *mf, uint16_t size, Slice buffer, SequenceNumber &largest_ikey, std::queue<KeyBlockPrimaryMeta*> &in_log_KBM_queue){
+    bool UserKey::BuildColumnInfo(Manifest *mf, uint16_t &size, Slice buffer, SequenceNumber &largest_ikey, SequenceNumber &largest_seq,  std::queue<KeyBlockPrimaryMeta*> &in_log_KBM_queue, bool &has_del){
         bool valid = false;
         ColumnNode* col_node = NULL;
         SimpleLinkedList* col_list = NULL;
         SimpleLinkedNode* col_list_node = NULL;
         std::string *col_info = NULL;
+        size = 0;
         uint16_t col_info_size = 0;
         uint8_t nr_col = 0;
         char* key_info_data = const_cast<char*>(buffer.data());
         key_info_data+=1; // reserved for nr col
+        col_info_size +=1;
         for( uint8_t col_id = 0 ; col_id < kMaxColumnCount ; col_id++){
             ColumnLock(col_id);
             col_list = GetColumnList(col_id);
@@ -85,10 +87,12 @@ namespace insdb {
             if(col_list_node) {
                 col_node = GetColumnNodeContainerOf(col_list_node);
                 SequenceNumber ikey = col_node->GetInSDBKeySeqNum();
+                SequenceNumber begin_seq = col_node->GetBeginSequenceNumber();
 #ifdef CODE_TRACE
                 printf("[%d :: %s]write to keymap col info ikey : %ld offset : %d\n", __LINE__, __func__, col_node->GetInSDBKeySeqNum(), col_node->GetKeyBlockOffset());
 #endif
                 if(ikey > largest_ikey) largest_ikey = ikey;
+                if (begin_seq != ULONG_MAX && begin_seq > largest_seq) largest_seq = begin_seq;
                 col_info = col_node->GetColInfo()/*To store col info size*/;
                 //*key_info_data = ((uint8_t)col_info->size());
                 //key_info_data++;
@@ -117,10 +121,6 @@ namespace insdb {
                         printf("[%d :: %s];Inserted to Inlog;|;KBPM;%p;|;iKey;%ld;|;offset;%d;|\n", __LINE__, __func__,col_node->GetKeyBlockMeta(), col_node->GetInSDBKeySeqNum(), col_node->GetKeyBlockOffset());
 #endif
                     }
-#ifdef CODE_TRACE
-                    else
-                        printf("[%d :: %s];Not inserted to InLog;|;KBPM;%p;|;iKey;%ld;|;offset;%d;|\n", __LINE__, __func__,col_node->GetKeyBlockMeta(), col_node->GetInSDBKeySeqNum(), col_node->GetKeyBlockOffset());
-#endif
                     /* Delete latest column from col list because it is stored in keymap_*/
                     col_list->Delete(col_node->GetColumnNodeNode());
                     col_node->InvalidateUserValue(mf);
@@ -138,12 +138,14 @@ namespace insdb {
 #endif
                     col_node->SetRequestNode(nullptr);
                     mf->FreeColumnNode(col_node);
-                }
-#ifdef CODE_TRACE
-                else
-                    printf("[%d :: %s]\n", __LINE__, __func__);
+                }else{
+                    has_del=true;
+#ifndef CODE_TRACE
+                    printf("[%d :: %s];Not inserted to InLog;|;KBPM;%p;|;iKey;%ld;|;offset;%d;|\n", __LINE__, __func__,col_node->GetKeyBlockMeta(), col_node->GetInSDBKeySeqNum(), col_node->GetKeyBlockOffset());
 #endif
+                }
                 key_info_data+=col_info->size();
+                col_info_size += col_info->size();
                 nr_col++;
             }
 
@@ -153,6 +155,7 @@ namespace insdb {
         assert(nr_col);
         key_info_data = const_cast<char*>(buffer.data());
         *key_info_data = nr_col-1;
+        size = col_info_size;
         return valid;
     }
 
@@ -192,6 +195,36 @@ namespace insdb {
     }
 
 
+    // It is called with lock
+    // TTL is ignored.
+     SequenceNumber UserKey::GetSmallestSequence() {
+        SequenceNumber smallest_seq = kMaxSequenceNumber;
+
+        for(uint16_t col_id = 0 ; col_id < kMaxColumnCount; col_id++) {
+            /* Find in latest column node without the list lock()*/
+            ColumnNode* col_node = col_data_[col_id].latest_col_node_;
+            //There is no ColumnNode in the list.
+            if(!col_node) continue;
+
+            SequenceNumber seq = col_node->GetBeginSequenceNumber();
+            if (col_node->IsDropped() || (col_node->GetRequestType() == kDelType)){
+                continue;
+            }
+
+            /* New Key is always inserted with column lock, the we can skip first one which is same to latest_col_node_*/
+            SimpleLinkedList* col_list = &(col_data_[col_id].col_list_);
+            if (col_list->Size() == 1) {
+                smallest_seq = seq;
+                continue;
+            }
+
+            SimpleLinkedNode* col_node_node = col_list->oldest();
+            col_node = GetColumnNodeContainerOf(col_node_node);
+            smallest_seq = col_node->GetBeginSequenceNumber();
+        }
+
+        return smallest_seq;
+    }
 
     /* It is called with lock */
     /*return true if col_node exists in the seq but the col_node was deleted*/
@@ -203,7 +236,7 @@ namespace insdb {
         if(!col_node) return NULL;
 
         if (col_node->GetBeginSequenceNumber() <= seq_num ){
-            if (col_node->IsDropped() || (ttl && (col_node->GetTS() + ttl < cur_time)) || (col_node->GetRequestType() == kDelType) || (col_node->GetEndSequenceNumber() != ULONG_MAX && col_node->GetEndSequenceNumber() < seq_num)){
+            if (col_node->IsDropped() || (ttl && (col_node->GetTS() + ttl <= cur_time)) || (col_node->GetRequestType() == kDelType) || (col_node->GetEndSequenceNumber() != ULONG_MAX && col_node->GetEndSequenceNumber() < seq_num)){
 
                 deleted=true;
                 return NULL;
@@ -224,7 +257,7 @@ namespace insdb {
             col_node = GetColumnNodeContainerOf(col_node_node);
             assert(col_node);
             if (col_node->GetBeginSequenceNumber() <= seq_num){
-                if (col_node->IsDropped() || (ttl && (col_node->GetTS() + ttl < cur_time)) || (col_node->GetRequestType() == kDelType) || (col_node->GetEndSequenceNumber() != ULONG_MAX && col_node->GetEndSequenceNumber() < seq_num)){
+                if (col_node->IsDropped() || (ttl && (col_node->GetTS() + ttl <= cur_time)) || (col_node->GetRequestType() == kDelType) || (col_node->GetEndSequenceNumber() != ULONG_MAX && col_node->GetEndSequenceNumber() < seq_num)){
                     deleted=true;
                     return NULL;
                 }
@@ -260,7 +293,6 @@ namespace insdb {
         while(snap_index < nr_snap && col_node->GetBeginSequenceNumber() <= snapinfo_list[snap_index].cseq ){
             ++snap_index;
         }
-#define TRXN_DEL_REQ 0x80
         RequestType type = col_node->GetRequestType();
         if(col_node->GetTGID()){
             if(type == kPutType){
@@ -365,20 +397,28 @@ namespace insdb {
      * TODO : WE HAVE TO HANDLE THIS SITUATION.  I'll do it in near future work . 
      */
 
-    bool UserKey::InsertColumnNode(ColumnNode* input_col_node, uint16_t col_id, bool front_merge/*For the UserKey in iterator hash*/)
+    bool UserKey::InsertColumnNode(ColumnNode* input_col_node, uint16_t col_id, bool &ignored, bool front_merge/*For the UserKey in iterator hash*/)
     {
+        ignored = false; 
         SimpleLinkedList* col_list = &(col_data_[col_id].col_list_);
         ColumnNode* col_node = NULL;
         SimpleLinkedNode* col_node_node = NULL;
         if((col_node_node = front_merge? col_list->newest() : col_list->oldest())){
             col_node = GetColumnNodeContainerOf(col_node_node);
             if(front_merge){
-                if (col_node->GetBeginSequenceNumber() >= input_col_node->GetBeginSequenceNumber() ) abort();
+                if (col_node->GetBeginSequenceNumber() >= input_col_node->GetBeginSequenceNumber() )  { 
+                    ignored = true; 
+                    return false;
+                }
                 if(col_node->GetEndSequenceNumber() == ULONG_MAX)
                     col_node->SetEndSequenceNumber(input_col_node->GetBeginSequenceNumber());
                 SetLatestColumnNode(col_id, input_col_node);
                 col_list->InsertFront(input_col_node->GetColumnNodeNode());
             }else{
+                if (col_node->GetBeginSequenceNumber() == input_col_node->GetBeginSequenceNumber()) { 
+                    ignored = true; 
+                    return false; 
+                }
                 assert(col_node->GetBeginSequenceNumber() > input_col_node->GetBeginSequenceNumber());
                 if(input_col_node->GetEndSequenceNumber() == ULONG_MAX)
                     input_col_node->SetEndSequenceNumber(col_node->GetBeginSequenceNumber());
@@ -393,7 +433,7 @@ namespace insdb {
         return false;
     }
     /* if the SKTable has not been flushed, discard sequnce number even if it has seq_num */
-    void UserKey::InsertColumnNodes(Manifest *mf, uint8_t nr_column, Slice &col_info){
+    void UserKey::InsertColumnNodes(Manifest *mf, uint8_t nr_column, Slice &col_info, bool front_merge){
         ColumnNode *col_node = NULL;
         uint8_t size;
         uint8_t col_id;
@@ -411,7 +451,8 @@ namespace insdb {
                 col_node = mf->AllocColumnNode();
                 col_node->ExistColInit(col_data, this);
                 ColumnLock(col_id);
-                if(InsertColumnNode(col_node, col_id)){
+                bool ignore = false;
+                if(InsertColumnNode(col_node, col_id, ignore, front_merge)){
                     /* Need to prefetch KBM, because the col_node is updated by new column */
                     assert(!col_node->GetKeyBlockMeta());//the col_node is just inserted. So, it can not have a KBPM.
                     /* search from hash table */
@@ -422,8 +463,11 @@ namespace insdb {
                     assert(kbpm);
                     assert(kbpm->IsRefBitmapSet(col_node->GetKeyBlockOffset()));
                     col_node->SetKeyBlockMeta(kbpm);
+                    while(kbpm->SetWriteProtection());
                     if(kbpm->IsDummy()) kbpm->PrefetchKBPM(mf);
+                    kbpm->ClearWriteProtection();
                 }
+                if (ignore) mf->FreeColumnNode(col_node);
                 ColumnUnlock(col_id);
             }
             col_info.remove_prefix(size);

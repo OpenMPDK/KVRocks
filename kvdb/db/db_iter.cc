@@ -21,17 +21,22 @@ bool IteratorImpl::Valid() const {
     } else {
       return false;
     }
-    //end
+    // end
 }
 
 void IteratorImpl::SeekToFirst() {
     insdb_iterator->SeekToFirst();
 
+	// fix:prefix bug
+    start_key_buf_ = new char[key().size()];
+    memcpy(start_key_buf_, key().data(), key().size());
+    Slice start_key(start_key_buf_);
+    // end
     // Feat: Iterator prefix seek
     // Find the first key as prefix target key
     if (insdb_iterator->Valid() && prefix_extractor_ &&
         prefix_same_as_start_) {
-      prefix_start_key_ = prefix_extractor_->Transform(key());
+      prefix_start_key_ = prefix_extractor_->Transform(start_key);
     }
     // end
 }
@@ -48,22 +53,26 @@ void IteratorImpl::SeekToLast() {
         return;
     }
 
-    if (insdb_iterator->Valid() && prefix_extractor_ &&
-        prefix_same_as_start_) {
-          prefix_start_key_ = prefix_extractor_->Transform(key());
+    if (insdb_iterator->Valid() && prefix_extractor_ && prefix_same_as_start_) {
+	    // fix: prefix bug
+        last_key_buf_ = new char[key().size()];
+        memcpy(last_key_buf_, key().data(), key().size());
+        Slice last_key(last_key_buf_);
+		// end
+        prefix_start_key_ = prefix_extractor_->Transform(last_key);
     }
-    //end
+    // end
 }
 
 void IteratorImpl::Seek(const Slice& target) {
 #ifdef KVDB_ENABLE_IOTRACE
-  log_iotrace("SEEK IN ITERATOR",0,target.data(),target.size(),0);
+  log_iotrace("SEEK IN ITERATOR", 0, target.data(), target.size(), 0);
 #endif
     insdb::Slice insdb_target(target.data(), target.size());
     insdb_iterator->Seek(insdb_target);
 
     // Feat: Iterator prefix seek
-    if (insdb_iterator->Valid() && prefix_extractor_ && prefix_same_as_start_ ) {
+    if (insdb_iterator->Valid() && prefix_extractor_ && prefix_same_as_start_) {
       prefix_start_key_ = prefix_extractor_->Transform(target);
     }
 
@@ -74,18 +83,18 @@ void IteratorImpl::Seek(const Slice& target) {
       prefix_start_key_.clear();
       return;
     }
-    //end
+    // end
 }
 
 void IteratorImpl::SeekForPrev(const Slice& target) {
 #ifdef KVDB_ENABLE_IOTRACE
-  log_iotrace("SEEK FOR PREV IN ITERATOR",0,target.data(),target.size(),0);
+  log_iotrace("SEEK FOR PREV IN ITERATOR", 0, target.data(), target.size(), 0);
 #endif
     insdb::Slice insdb_target(target.data(), target.size());
     insdb_iterator->SeekForPrev(insdb_target);
 
     // Feat: iterator prefix function
-    if (insdb_iterator->Valid() && prefix_extractor_ && prefix_same_as_start_ ) {
+    if (insdb_iterator->Valid() && prefix_extractor_ && prefix_same_as_start_) {
       prefix_start_key_ = prefix_extractor_->Transform(target);
     }
 
@@ -95,7 +104,7 @@ void IteratorImpl::SeekForPrev(const Slice& target) {
       prefix_start_key_.clear();
       return;
     }
-    //end
+    // end
 }
 
 void IteratorImpl::Next() {
@@ -126,7 +135,7 @@ void IteratorImpl::Prev() {
 
 Slice IteratorImpl::key() const {
 #ifdef KVDB_ENABLE_IOTRACE
-  log_iotrace("KEY IN ITERATOR",0,insdb_iterator->key().data(),insdb_iterator->key().size(),0);
+  log_iotrace("KEY IN ITERATOR", 0, insdb_iterator->key().data(), insdb_iterator->key().size(), 0);
 #endif
     insdb::Slice key = insdb_iterator->key();
 	return Slice(key.data(), key.size());
@@ -134,7 +143,7 @@ Slice IteratorImpl::key() const {
 
 Slice IteratorImpl::value() const {
 #ifdef KVDB_ENABLE_IOTRACE
-  log_iotrace("VALUE IN ITERATOR",0,insdb_iterator->key().data(),insdb_iterator->key().size(),insdb_iterator->value().size());
+  log_iotrace("VALUE IN ITERATOR", 0, insdb_iterator->key().data(), insdb_iterator->key().size(), insdb_iterator->value().size());
 #endif
     insdb::Slice value = insdb_iterator->value();
     return Slice(value.data(), value.size());

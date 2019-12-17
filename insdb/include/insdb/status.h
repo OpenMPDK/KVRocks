@@ -67,6 +67,9 @@ namespace insdb {
             static Status IOError(const Slice& msg, const Slice& msg2 = Slice()) {
                 return Status(kIOError, msg, msg2);
             }
+            static Status Incomplete(const Slice& msg, const Slice& msg2 = Slice()) {
+                return Status(kIncomplete, msg, msg2);
+            }
 
             // Returns true iff the status indicates success.
             bool ok() const { return (state_ == NULL); }
@@ -89,6 +92,9 @@ namespace insdb {
             // Returns true iff the status indicates an InvalidArgument.
             bool IsInvalidArgument() const { return code() == kInvalidArgument; }
 
+            // Returns true iff the status indicates Incomplete
+            bool IsIncomplete() const { return code() == kIncomplete; }
+
             // Return a string representation of this status suitable for printing.
             // Returns the string "OK" for success.
             std::string ToString() const;
@@ -108,7 +114,8 @@ namespace insdb {
                 kNotSupported = 3,
                 kNotAvailable = 4,
                 kInvalidArgument = 5,
-                kIOError = 6
+                kIOError = 6,
+                kIncomplete = 7
             };
 
             Code code() const {

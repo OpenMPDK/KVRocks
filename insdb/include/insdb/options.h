@@ -351,6 +351,25 @@ Default: 4.
         // Create an Options object with default values for all fields.
         Options();
     };
+    // Fix bug: value should not be get before flush with kPersistedTier
+    // Add option check to skip memtable
+    enum ReadTier {
+      kReadAllTier = 0x0,     // data in memtable, block cache, OS cache or storage
+      kBlockCacheTier = 0x1,  // data in memtable or block cache
+      kPersistedTier = 0x2,   // persisted data.  When WAL is disabled, this option
+                              // will skip data in memtable.
+                              // Note that this ReadTier currently only supports
+                              // Get and MultiGet and does not support iterators.
+      kMemtableTier = 0x3     // data in memtable. used for memtable-only iterators.
+    };
+    // Fix end
+
+    // Add non-blocking state
+    enum NonBlkState {
+      kNonblockingOff = 0x0,
+      kNonblockingBefore = 0x1,
+      kNonblockingAfter = 0x2
+    };
 
     // Options that control read operations
     struct INSDB_EXPORT ReadOptions {
@@ -371,10 +390,18 @@ Default: 4.
         // Default: NULL
         const Snapshot* snapshot;
 
+		const Slice *iterator_upper_bound;
+
+        // Fix bug: value should not be get before flush with kPersistedTier
+        // Add option check to skip memtable
+        ReadTier read_tier;
+
         ReadOptions()
             : verify_checksums(false),
             fill_cache(true),
-            snapshot(NULL) {
+            snapshot(NULL),
+			iterator_upper_bound(NULL),
+            read_tier(kReadAllTier) {
             }
     };
 

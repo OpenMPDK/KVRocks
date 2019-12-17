@@ -119,7 +119,8 @@ retry:
 #endif
 
     /* realloc arena memory */
-    uint32_t new_arena_size = arena_size_*2;
+    uint32_t new_arena_size = arena_size_+(arena_size_/10);
+#if 0
     char* mem = (char*)mmap(NULL, new_arena_size, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
     if (mem == MAP_FAILED) abort();
     memcpy(mem, GetBaseAddr(), hdr_->allocated_bytes_);
@@ -128,6 +129,29 @@ retry:
     hdr_ = (Arena_hdr*)mem;
     arena_size_ = new_arena_size;
     munmap((void*)old_mem, old_mem_size);
+#else
+#ifdef CODE_TRACE
+    Arena_hdr* tmp = hdr_;
+#endif
+#if 1
+    hdr_ = (Arena_hdr *)realloc((void*)hdr_, new_arena_size);
+    if(!hdr_) abort();
+    arena_size_ = new_arena_size;
+#else
+    char* mem = (char*)malloc(new_arena_size);
+    if (!mem) abort();
+    char* old_mem = GetBaseAddr();
+    //memset(mem, 0, new_arena_size);
+    memcpy(mem, old_mem, hdr_->allocated_bytes_);
+    uint32_t old_mem_size = arena_size_;
+    hdr_ = (Arena_hdr*)mem;
+    arena_size_ = new_arena_size;
+    free((void*)old_mem);
+#endif
+#ifdef CODE_TRACE
+        printf("[%d :: %s]old & new addr : %p & %p\n", __LINE__, __func__, tmp, hdr_);
+#endif
+#endif
     goto retry;
 }
 void Arena::DeAllocate(uint32_t addr_offset) {

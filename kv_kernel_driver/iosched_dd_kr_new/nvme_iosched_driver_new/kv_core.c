@@ -1186,7 +1186,14 @@ int __nvme_submit_iosched_kv_cmd(struct kv_memqueue_struct *memq, int qid)
             if(atomic_dec_and_test(&rq->refcount)){
                 free_kv_async_rq(rq);
             }else{
-                pr_err("[%d:%s]ERROR : retcount of invalid rq must not be 0 but it is %d\n", __LINE__, __func__, atomic_read(&rq->refcount));
+                /*
+                 * It can happen if two thread access this request 
+                 * Situation :
+                 * In kv_hash_find_and_lock()
+                 *  Thread 1 :  kv_hash_search(ref is increased in this function) => Lock => set invalidate bit => dec ref => unlock
+                 *  Thread 2 :  kv_hash_search(ref is increased in this function) => Lock : "Wating for submission" => CHECK invalidate bit => dec ref & try to free
+                 */
+                //pr_err("[%d:%s]ERROR : retcount of invalid rq must not be 0 but it is %d\n", __LINE__, __func__, atomic_read(&rq->refcount));
                 spin_unlock(&rq->lock);
             }
             /* Reuse req */

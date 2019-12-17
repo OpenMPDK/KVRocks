@@ -155,7 +155,12 @@ WriteBatch::WriteBatch(WriteBatch&& src) noexcept
       wal_term_point_(std::move(src.wal_term_point_)),
       content_flags_(src.content_flags_.load(std::memory_order_relaxed)) {
 
+#if __GNUC__ >= 6
+#pragma GCC diagnostic push
+#pragma GCC diagnostic warning "-Wterminate"
 	throw std::runtime_error("Not supported API");
+#pragma GCC diagnostic pop
+#endif
 }
 
 WriteBatch& WriteBatch::operator=(const WriteBatch& src) {
