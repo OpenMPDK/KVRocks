@@ -1,0 +1,558 @@
+[==========] Running 44 tests from 2 test cases.
+[----------] Global test environment set-up.
+[----------] 29 tests from DBIteratorTest
+[ RUN      ] DBIteratorTest.IteratorProperty
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :1
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+--------TryOpen----------
+OK
+
+../kvdbapi/kvdb_NewIterator_debug.cc:1675: Failure
+Value of: prop_value
+  Actual: "0"
+Expected: "Iterator is not valid."
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.IteratorProperty (1099 ms)
+[ RUN      ] DBIteratorTest.NewIteratorsTest
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :one
+The created cf id is :1
+The cf name is :two
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+-------------------------------------
+unknown file: Failure
+C++ exception with description "Not supported API" thrown in the test body.
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.NewIteratorsTest (1308 ms)
+[ RUN      ] DBIteratorTest.IterSeekBeforePrev
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.IterSeekBeforePrev (928 ms)
+[ RUN      ] DBIteratorTest.IterSeekForPrevBeforeNext
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.IterSeekForPrevBeforeNext (936 ms)
+[ RUN      ] DBIteratorTest.IterLongKeys
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.IterLongKeys (944 ms)
+[ RUN      ] DBIteratorTest.IterNextWithNewerSeq
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.IterNextWithNewerSeq (932 ms)
+[ RUN      ] DBIteratorTest.IterPrevWithNewerSeq
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.IterPrevWithNewerSeq (800 ms)
+[ RUN      ] DBIteratorTest.IterReseek
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :1
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:1924: Failure
+Value of: 1
+Expected: TestGetTickerCount(db_options_, NUMBER_OF_RESEEKS_IN_ITERATION)
+Which is: 0
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.IterReseek (1260 ms)
+[ RUN      ] DBIteratorTest.IterPrevWithNewerSeq2
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.IterPrevWithNewerSeq2 (632 ms)
+[ RUN      ] DBIteratorTest.IterEmpty
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.IterEmpty (820 ms)
+[ RUN      ] DBIteratorTest.IterMultiWithDelete
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+-------------------------
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+-------------------------
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.IterMultiWithDelete (1080 ms)
+[ RUN      ] DBIteratorTest.IterPrevMaxSkip
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+-------------finished
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:686: Failure
+DestroyDB(dbname_, options)
+NotFound: 
+[  FAILED  ] DBIteratorTest.IterPrevMaxSkip (1043 ms)
+[ RUN      ] DBIteratorTest.IterSingle
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.IterSingle (901 ms)
+[ RUN      ] DBIteratorTest.IterMulti
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.IterMulti (835 ms)
+[ RUN      ] DBIteratorTest.IterSmallAndLargeMix
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.IterSmallAndLargeMix (829 ms)
+[ RUN      ] DBIteratorTest.IterWithSnapshot
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:1268: Failure
+TryReopen(options)
+Not implemented: prefix_extractor
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:1268: Failure
+TryReopen(options)
+Not implemented: prefix_extractor
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:1268: Failure
+TryReopen(options)
+Not implemented: prefix_extractor
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:1268: Failure
+TryReopen(options)
+Not implemented: prefix_extractor
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:1268: Failure
+TryReopen(options)
+Not implemented: prefix_extractor
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:1268: Failure
+TryReopen(options)
+Not implemented: prefix_extractor
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:1268: Failure
+TryReopen(options)
+Not implemented: prefix_extractor
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:2366: Failure
+Value of: !iter->Valid()
+  Actual: false
+Expected: true
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.IterWithSnapshot (6664 ms)
+[ RUN      ] DBIteratorTest.IteratorPinsRef
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.IteratorPinsRef (803 ms)
+[ RUN      ] DBIteratorTest.DBIteratorBoundTest
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------1---------------------
+---------1-1---------------------
+---------1-2---------------------
+---------1-3---------------------
+../kvdbapi/kvdb_NewIterator_debug.cc:2475: Failure
+Value of: !iter->Valid()
+  Actual: false
+Expected: true
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.DBIteratorBoundTest (905 ms)
+[ RUN      ] DBIteratorTest.NonBlockingIteration
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :1
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+-----------------------------------
+-----------------------------------
+-----------------------------------
+-----------------------------------
+../kvdbapi/kvdb_NewIterator_debug.cc:2683: Failure
+Value of: 0
+Expected: count
+Which is: 1
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.NonBlockingIteration (736 ms)
+[ RUN      ] DBIteratorTest.ManagedNonBlockingIteration
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :1
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:2744: Failure
+Value of: 1
+Expected: count
+Which is: 0
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.ManagedNonBlockingIteration (768 ms)
+[ RUN      ] DBIteratorTest.PersistedTierOnIterator
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :pikachu
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:2801: Failure
+Value of: iter->status().IsNotSupported()
+  Actual: false
+Expected: true
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.PersistedTierOnIterator (972 ms)
+[ RUN      ] DBIteratorTest.PrevAfterAndNextAfterMerge
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+OK
+OK
+OK
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.PrevAfterAndNextAfterMerge (936 ms)
+[ RUN      ] DBIteratorTest.PinnedDataIteratorRandomized
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:2939: Failure
+Value of: prop_value
+  Actual: "0"
+Expected: "1"
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.PinnedDataIteratorRandomized (3741 ms)
+[ RUN      ] DBIteratorTest.PinnedDataIteratorMultipleFiles
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:3076: Failure
+Value of: prop_value
+  Actual: "0"
+Expected: "1"
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.PinnedDataIteratorMultipleFiles (1741 ms)
+[ RUN      ] DBIteratorTest.PinnedDataIteratorReadAfterUpdate
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:3197: Failure
+Value of: prop_value
+  Actual: "0"
+Expected: "1"
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.PinnedDataIteratorReadAfterUpdate (33211 ms)
+[ RUN      ] DBIteratorTest.IterPrevKeyCrossingBlocks
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:3325: Failure
+Value of: "val3.0,val3.1,val3.2,val3.3,val3.4"
+Expected: iter->value().ToString()
+Which is: "val3.0,,,,"
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.IterPrevKeyCrossingBlocks (1056 ms)
+[ RUN      ] DBIteratorTest.IteratorWithLocalStatistics
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+../kvdbapi/kvdb_NewIterator_debug.cc:3416: Failure
+Value of: (uint64_t)total_next
+  Actual: 10000
+Expected: TestGetTickerCount(options, NUMBER_DB_NEXT)
+Which is: 0
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.IteratorWithLocalStatistics (1046 ms)
+[ RUN      ] DBIteratorTest.DBIteratorSkipRecentDuplicatesTest
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+Data put
+unknown file: Failure
+C++ exception with description "Not supported API" thrown in the test body.
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[  FAILED  ] DBIteratorTest.DBIteratorSkipRecentDuplicatesTest (1057 ms)
+[ RUN      ] DBIteratorTest.NewIteratorGreater_CF
+---------------DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+The created cf id is :0
+The cf name is :one
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+---------------~DBIteratorTest--------------------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] DBIteratorTest.NewIteratorGreater_CF (960 ms)
+[----------] 29 tests from DBIteratorTest (68943 ms total)
+
+[----------] 15 tests from ts_kv_NewIterator
+[ RUN      ] ts_kv_NewIterator.NewIteratorGreater
+-------open----------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+-------opened----------
+-------cleared----------
+-------inserted----------
+-------cleared----------
+[       OK ] ts_kv_NewIterator.NewIteratorGreater (110 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorEqual
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorEqual (134 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorGreaterEqual
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorGreaterEqual (82 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorCom
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorCom (94 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorMaxKey
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorMaxKey (82 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorMaxTarget
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorMaxTarget (77 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorLongTarget
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorLongTarget (76 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorNullTarget
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorNullTarget (75 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorMutiSeek
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorMutiSeek (100 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorSpecTarget
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorSpecTarget (79 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorWithoutSeek
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorWithoutSeek (88 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorIn1000KV
+-------MultiOpen----------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+-------MultiOpened----------
+-------MultiClear----------
+-------MultiInserted----------
+-------Multi T1----------
+-------Multi t2----------
+-------Multi t3----------
+-------Multi Clear 2----------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorIn1000KV (5346 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorIn3000KV
+-------MultiOpen----------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+-------MultiOpened----------
+-------MultiClear----------
+-------MultiInserted----------
+-------Multi T1----------
+-------Multi t2----------
+-------Multi t3----------
+-------Multi Clear 2----------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorIn3000KV (5468 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorIn10000KV
+-------MultiOpen----------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+-------MultiOpened----------
+-------MultiClear----------
+-------MultiInserted----------
+-------Multi T1----------
+-------Multi t2----------
+-------Multi t3----------
+-------Multi Clear 2----------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorIn10000KV (5733 ms)
+[ RUN      ] ts_kv_NewIterator.NewIteratorIn100000KV
+-------MultiOpen----------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+-------MultiOpened----------
+-------MultiClear----------
+-------MultiInserted----------
+-------Multi T1----------
+-------Multi t2----------
+-------Multi t3----------
+-------Multi Clear 2----------
+[869 :: Manifest] max rq size : 24576 || flush key cnt : 1200 || update force : 12288 || min flush : 6144
+[       OK ] ts_kv_NewIterator.NewIteratorIn100000KV (9524 ms)
+[----------] 15 tests from ts_kv_NewIterator (27070 ms total)
+
+[----------] Global test environment tear-down
+[==========] 44 tests from 2 test cases ran. (96013 ms total)
+[  PASSED  ] 29 tests.
+[  FAILED  ] 15 tests, listed below:
+[  FAILED  ] DBIteratorTest.IteratorProperty
+[  FAILED  ] DBIteratorTest.NewIteratorsTest
+[  FAILED  ] DBIteratorTest.IterReseek
+[  FAILED  ] DBIteratorTest.IterPrevMaxSkip
+[  FAILED  ] DBIteratorTest.IterWithSnapshot
+[  FAILED  ] DBIteratorTest.DBIteratorBoundTest
+[  FAILED  ] DBIteratorTest.NonBlockingIteration
+[  FAILED  ] DBIteratorTest.ManagedNonBlockingIteration
+[  FAILED  ] DBIteratorTest.PersistedTierOnIterator
+[  FAILED  ] DBIteratorTest.PinnedDataIteratorRandomized
+[  FAILED  ] DBIteratorTest.PinnedDataIteratorMultipleFiles
+[  FAILED  ] DBIteratorTest.PinnedDataIteratorReadAfterUpdate
+[  FAILED  ] DBIteratorTest.IterPrevKeyCrossingBlocks
+[  FAILED  ] DBIteratorTest.IteratorWithLocalStatistics
+[  FAILED  ] DBIteratorTest.DBIteratorSkipRecentDuplicatesTest
+
+15 FAILED TESTS

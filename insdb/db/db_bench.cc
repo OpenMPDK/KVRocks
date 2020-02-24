@@ -278,6 +278,7 @@ namespace insdb {
                         else if (next_report_ < 500000) next_report_ += 50000;
                         else                            next_report_ += 100000;
                         fprintf(stderr, "... finished %d ops%30s\r", done_, "");
+                        //fprintf(stderr, "... finished %d ops%30s\n", done_, "");
                         fflush(stderr);
                     }
                 }

@@ -33,7 +33,9 @@
 #define ALLOC_FROM_FREED_DEBUG
 namespace insdb {
 
-class Arena {
+#define ArenaSizeAlignment(size) ((size + (4-1)) & (~(4-1)))
+
+    class Arena {
     const static int32_t arena_default_size = 1024*512;
     const static int32_t arena_resrv = 44;
     struct Arena_hdr {
@@ -57,6 +59,7 @@ class Arena {
         if (base == MAP_FAILED) abort();
         hdr_ = (Arena_hdr *)base;
 #else
+        arena_size_ = ArenaSizeAlignment(arena_size_);
         hdr_ = (Arena_hdr *)malloc(arena_size_);
         if(!hdr_) abort();
         memset(hdr_, 0, sizeof(Arena_hdr));

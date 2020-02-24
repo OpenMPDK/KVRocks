@@ -1,0 +1,493 @@
+/**
+ * @ Dandan Wang (dandan.wang@samsung.com)
+ */
+
+/**
+  * \addtogroup Doxygen Group
+  *
+  */
+
+/*! \file Common.h
+  *  \brief This head file defines the common functions used in the test suite.
+  */
+///////////////////////////////////////////////////////////////////////////////////////
+// Include files
+///////////////////////////////////////////////////////////////////////////////////////
+#ifndef __COMMON__
+#define __COMMON__
+
+#include <cstdlib>
+#include <string>
+#include <time.h>
+#include "gtest/gtest.h"
+#include "db.h"
+#include "env.h"
+#include "status.h"
+#include "options.h"
+#include "CommonType.h"
+
+//#include "kv_types.h"
+
+using namespace std;
+
+extern INT32 g_nAdiRes; ///< used to store the return value of the tested ADI.
+
+/**
+ * @brief     Try to make random buffer value.
+ * @param     pBuff --- The buffer array data. \n
+              len -- The buffer length.
+ * @return    void
+ * @author    Dandan Wang (dandan.wang@sumsung.com)
+ * @version   v0.1
+ * @remark    - 1. The buffer value is random.\n
+ */
+inline void MakeRandBuf(PUINT8 pBuff, UINT32 len)
+{
+    UINT32 i;
+
+    if(pBuff == NULL)
+    {
+        return;
+    }
+
+    for (i = 0; i < len; i++)
+    {
+        pBuff[i] = (UINT8)rand();
+    }
+    return;
+}
+
+/**
+ * @brief     Try to make asynchronous callback function.
+ * @param     void
+ * @return    void
+ * @author    Dandan Wang (dandan.wang@sumsung.com)
+ * @version   v0.1
+ * @remark    - 1. The only used for asynchronous operation.\n
+ */
+inline void async_cb()
+{
+    return;
+}
+
+/**
+ * @brief     Try to Create and Open DB.
+ * @param     db --- the operation DB. \n
+ *            path --- DB name. \n
+ *            flag --- create if missing. \n
+ * @return    stat --- The status of the operation.
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark
+ */
+inline rocksdb::Status CreateOpenDB(rocksdb::DB** db, string path, bool flag) {
+    rocksdb::Options options;
+    /**
+    BlockBasedTableOptions table_options;
+    table_options.block_cache = NewLRUCache(16384, 6, false, 0.0);
+    table_options.filter_policy.reset(NewBloomFilterPolicy(10, false));
+    rocksdb::options.table_factory.reset(
+        NewBlockBasedTableFactory(table_options));
+*/
+    options.create_if_missing = flag;
+    rocksdb::Status stat = rocksdb::DB::Open(options, path, db);
+    return stat;
+}
+
+ 
+/**
+ * @brief     Try to get random string.
+ * @param     len --- the length of the string
+ * @return    randString --- The function return random string.
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark
+ */
+inline string SetRandString(int len) {
+    const int SIZE_CHAR = len;
+    const char CCH[] = "_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@#%^&*<>,.-()_";
+    char randString[SIZE_CHAR + 1];
+     for (int i = 0; i < SIZE_CHAR; ++i) {
+            int x = rand() / (RAND_MAX / (sizeof(CCH) - 1));
+            randString[i] = CCH[x];
+			}		
+    return randString;
+}
+
+
+/**
+ * @brief     Try to get random string.
+ * @param     len --- the length of the string. \n
+ *            num --- the unti char if the string
+ * @return    teststring --- The function return  string.
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark
+ */
+inline string SetString(int len, int num) {
+    char teststring[len + 1] ;
+    for (int i = 0; i < len+1; i++) {
+        teststring[i] = num + '0';
+	}
+	return teststring;
+}
+
+/**
+ * @brief     Try to insert string.
+ * @param     db --- the operation DB. \n
+ *            k_len --- the length of key. \n
+ *            v_len --- the length of value. \n
+ *            num --- the number of  the insert kv pair
+ * @return    void
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark
+ */
+inline void InsertDB(rocksdb::DB* db, int k_len, int v_len, int num) {
+    for (int i = 0; i < num; i++) {
+        std::string testkey = SetString(k_len, i);
+        std::string testvalue = SetString(v_len, i);
+        db->Put(rocksdb::WriteOptions(), testkey, testvalue);
+    }
+}
+
+/**
+ * @brief     Try to insert random string.
+ * @param     db --- the operation DB. \n
+ *            k_len --- the length of key. \n
+ *            v_len --- the length of value. \n
+ *            num --- the number of  the insert kv pair
+ * @return    void
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark
+ */
+inline void InsertRandom(rocksdb::DB* db, int k_len, int v_len, int num) {
+    for (int i = 0; i < num; ++i) {
+        std::string testkey =  SetRandString(k_len);
+        std::string testvalue = SetRandString(v_len);
+        db->Put(rocksdb::WriteOptions(), testkey, testvalue);
+    }
+}
+
+
+/**
+ * @brief     Try to get the count of the matched keys.
+ * @param     db --- the operation DB. \n
+ *            target --- the compare target. 
+ * @return    count --- the number of the matched keys
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark
+ */
+inline int CntNewIterator(rocksdb::DB* db, string target) {
+    int count = 0 ;
+    rocksdb::Iterator* rit = db->NewIterator(rocksdb::ReadOptions());
+    rocksdb::Slice startkey = rocksdb::Slice(target);
+	   rit->Seek(startkey);
+    while (rit->Valid()) {
+        rit->Next();
+        count++;
+    }
+    delete rit;
+    return count;
+}
+
+
+/**
+ * @brief     Try to check the operation status .
+ * @param     db --- the operation DB
+ * @return    void
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark 
+
+inline int CheckStatus(rocksdb::Status status, string stat) {
+	if (status.code() != rocksdb::Status::Code::stat) 
+        return FAIL;
+    return SUCCESS;
+	
+}
+ */
+
+/**
+ * @brief     Try to clear the env.
+ * @param     db --- the operation DB
+ * @return    void
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark 
+ */
+inline void ClearEnv(rocksdb::DB* db) {
+    rocksdb::Iterator* rit = db->NewIterator(rocksdb::ReadOptions());
+    rocksdb::Slice startkey = rocksdb::Slice("");
+	rit->Seek(startkey);
+    while (rit->Valid()) {
+        db->Delete(rocksdb::WriteOptions(), rit->key());
+        rit->Next();
+    }
+    delete rit;
+}
+
+/*
+ * Test functions definitions
+ * */
+
+/**
+ * @brief     Try to clear the env.
+ * @param     db --- the operation DB
+ *            target --- the seek string of the NewIterator
+ * @return    void
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark
+ */
+inline void ReadUpdateDB(rocksdb::DB* db, string target) {
+    std::string testvalue = SetRandString(NORMALVALUE);
+    rocksdb::Iterator* rit = db->NewIterator(rocksdb::ReadOptions());
+    rocksdb::Slice startkey = rocksdb::Slice(target);
+    rit->Seek(startkey);
+    while (rit->Valid()) {
+        std::string value;
+        db->Get(rocksdb::ReadOptions(), rit->key(), &value);
+        db->Put(rocksdb::WriteOptions(), rit->key(), testvalue);
+        rit->Next();
+    }
+    delete rit;
+}
+
+/**
+ * @brief     Try to put KV then delete, check the delete status.
+ * @param     db --- the operation DB. \n
+ *            k  --- the length of key. \n
+ *            v --- the length of value.
+ * @return    SUCCESS --- The function execute successfully. \n
+   *          FAIL --- The function execution error.  
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark 
+ */
+inline int PutDelete(rocksdb::DB* db, int k, int v) {
+    std::string testkey(k, '1');
+    std::string testvalue(v,'a');
+    db->Put(rocksdb::WriteOptions(), testkey, testvalue);
+    rocksdb::Status status = db->Delete(rocksdb::WriteOptions(), testkey);
+    if (status.code() != rocksdb::Status::Code::kOk) { 
+        return FAIL;
+    }
+    return SUCCESS;
+
+}
+
+/**
+ * @brief     Try to make the unit strss to DB.
+ * @param     db --- the operation DB. \n
+ *            k --- the length of key. \n
+ *            v --- the length of value. \n
+ *            num --- the number of  the insert kv pair.
+ * @return    void
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark
+ */
+inline static int32_t UnitStress(rocksdb::DB* db, int k, int v, int num) {
+    ClearEnv(db);
+    InsertRandom(db, k, v, num);
+    ReadUpdateDB(db, "w");
+    ReadUpdateDB(db, "c");
+    ReadUpdateDB(db, "1");
+    ClearEnv(db);
+    return SUCCESS;
+} 
+
+/**
+ * @brief     Try to Create and Open DB.
+ * @param     db --- the operation DB. \n
+ *            k_len --- the length of key. \n
+ *            v_len --- the length of value. \n
+ *            num --- the number of KV pair
+ * @return    SUCCESS(0) --- The function execute successfully. \n
+ *            FAIL --- The function execution error.
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark
+ */
+inline int GetKVS(rocksdb::DB* db, int k_len, int v_len, int num) {
+    std::string testkey(k_len, '2');
+    std::string testvalue(v_len,'a');
+    //put key-value
+    db->Put(rocksdb::WriteOptions(), testkey, testvalue);
+    std::string value;
+    for (int i = 0; i < num; ++i) {
+        rocksdb::Status status = db->Get(rocksdb::ReadOptions(), testkey, &value);
+        if (status.code() != rocksdb::Status::Code::kOk) {
+            ClearEnv(db);
+            delete db;
+            return FAIL;
+        }
+        if (value != testvalue) {
+            // delete key
+            ClearEnv(db);
+            delete db;
+            return FAIL;
+        }
+    }
+    ClearEnv(db);
+    delete db;
+    return SUCCESS;
+}
+
+/**
+ * @brief     Try to Create and Open DB.
+ * @param     db --- the operation DB. \n
+ *            k --- the operation key. \n
+ *            v --- the operation value
+ * @return    SUCCESS(0) --- The function execute successfully. \n
+ *            FAIL --- The function execution error.
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark
+ */
+inline int CheckKV(rocksdb::DB* db, string testkey, string testvalue) {
+    std::string value;
+    db->Get(rocksdb::ReadOptions(), testkey, &value);
+    db->Delete(rocksdb::WriteOptions(), testkey);
+//    delete db;
+    if (value != testvalue)
+        return FAIL;
+    return SUCCESS;
+}
+
+/**
+ * @brief     Try to Create and Open DB.
+ * @param     db --- the operation DB. \n
+ *            k_len --- the length of key. \n
+ *            v_len --- the length of value. \n
+ *            num --- the number of KV pair.
+ * @return    SUCCESS(0) --- The function execute successfully. \n
+ *            FAIL --- The function execution error.
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   v0.1
+ * @remark
+ */
+inline int PutCheckKVS(rocksdb::DB* db, int k_len, int v_len, int num) {
+    for (int i = 0; i < num; ++i) {
+        std::string testkey = SetRandString(k_len);
+		std::string testvalue = SetRandString(v_len);
+        rocksdb::Status status = db->Put(rocksdb::WriteOptions(), testkey, testvalue);
+        if (status.code() != rocksdb::Status::Code::kOk) {
+            ClearEnv(db);
+            delete db;
+            return FAIL;
+        }
+        std::string value;
+        status = db->Get(rocksdb::ReadOptions(), testkey, &value);
+		if (status.code() != rocksdb::Status::Code::kOk || value != testvalue){
+			ClearEnv(db);
+            delete db;    
+		    return FAIL;
+		}
+
+    }
+    ClearEnv(db);
+    delete db;
+    return SUCCESS;
+}
+
+
+/**
+ * @brief     Try to Create a unified string.
+ * @param     i --- the string member\n
+ * @return    
+ * @author    Lining Dou(lining.dou@sumsung.com)
+ * @version   20190215
+ * @remark
+ */
+inline  static std::string Key(int i) {
+    char buf[100];
+    snprintf(buf, sizeof(buf), "key%06d", i);
+    return std::string(buf);
+  }
+/**
+ * @brief     Try to construct an inexistent key.
+ * @param     pKey --- The inexistent key. \n
+              len -- The key length.
+ * @return    TRUE32(1) --- The function execute successfully. \n
+ *            FALSE32(0) --- The function execution error.
+ * @author    Dandan Wang (dandan.wang@sumsung.com)
+ * @version   v0.1
+ */
+extern BOOL32 MakeInexistentKey(PUINT8 pKey, UINT32 len);
+ 
+//Status CreateOpenDB(DB** db, string path, bool flag); 
+ 
+
+ 
+/**
+ * @brief     Try to get a key-value pair.
+ * @param     keyLen --- The key length. \n
+              valLen -- The value length. \n
+			  offLen -- The value offset length.
+			  opt -- The option value.
+ * @return    pair --- The key-value pair. \n
+ * @author    Dandan Wang (dandan.wang@sumsung.com)
+ * @version   v0.1
+ * @remark    - 1. The key and value are random data.\n
+ */
+//extern kv_pair GenKVPair(UINT16 keyLen, UINT32 valLen, UINT32 offLen, INT32 opt);
+
+/**
+ * @brief     Try to get a key-value pair.
+ * @param     pkey --- The key data. \n
+              valLen -- The value length. \n
+			  offLen -- The value offset length. \n
+			  opt -- The option value. \n
+ * @return    pair --- The key-value pair. \n
+ * @author    Dandan Wang (dandan.wang@sumsung.com)
+ * @version   v0.1
+ * @remark    - 1. Caller must ensure the key is ginven.\n
+ */
+//extern kv_pair GenExistKVPair(kv_key pkey, UINT32 valLen, UINT32 offLen, INT32 opt);
+
+ /**
+ * @brief     Try to get an iterate key-value pair.
+ * @param     iteHdl --- The iterate handle. \n
+              valLen -- The value length. \n
+			  offLen -- The value offset length. \n
+			  opt -- The option value. \n
+ * @return    kv_it --- The iterate key-value pair. \n
+ * @author    Dandan Wang (dandan.wang@sumsung.com)
+ * @version   v0.1
+ * @remark   
+ */
+//kv_iterate GenIterateKVPair(uint8_t iteHdl, UINT32 valLen, UINT32 offLen, INT32 opt);
+
+
+namespace rocksdb {
+
+namespace test {
+
+// Return the directory to use for temporary storage.
+std::string TmpDir(Env* env = Env::Default());
+
+// Return a randomization seed for this run.  Typically returns the
+// same number on repeated invocations of this binary, but automated
+// runs may be able to vary the seed.
+int RandomSeed();
+
+::testing::AssertionResult AssertStatus(const char* s_expr, const Status& s);
+
+#define ASSERT_OK(s) ASSERT_PRED_FORMAT1(rocksdb::test::AssertStatus, s)
+#define ASSERT_NOK(s) ASSERT_FALSE((s).ok())
+#define EXPECT_OK(s) EXPECT_PRED_FORMAT1(rocksdb::test::AssertStatus, s)
+#define EXPECT_NOK(s) EXPECT_FALSE((s).ok())   
+
+}
+
+
+
+
+
+}
+
+#endif //__COMMON__

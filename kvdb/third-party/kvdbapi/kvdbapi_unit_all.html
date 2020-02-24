@@ -1,0 +1,68 @@
+<body text="#000000" link="#0000ff" bgcolor="#ffffff">
+  
+    
+  
+  
+    
+    
+      ../kvdbapi/kvdb_put.cc:963
+Value of: PutWithInvalidKV(0, 64, &quot;/tmp/ddtest&quot;, 1)
+  Actual: 0
+Expected: -1
+kvdb-put-withoutkey-002
+
+    
+    
+      ../kvdbapi/kvdb_put.cc:967
+Value of: PutWithInvalidKV(16, 0, &quot;/tmp/ddtest&quot;, 1)
+  Actual: 0
+Expected: -1
+kvdb-put-without-value-003
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
+      ../kvdbapi/kvdb_put.cc:999
+Value of: PutWithInvalidKV(256, 64, &quot;/tmp/ddtest&quot;, 1)
+  Actual: 0
+Expected: -1
+kvdb-put-256B-key-011
+
+    
+    
+    
+    
+    
+    
+    
+      ../kvdbapi/kvdb_put.cc:1023
+Value of: PutWithInvalidKV(17, 2*1024*1024+1, &quot;/tmp/ddtest&quot;, 1)
+  Actual: 0
+Expected: -1
+kvdb-put-More2MB-Key-017
+
+    
+    
+    
+    
+    
+    
+    
+      ../kvdbapi/kvdb_put.cc:1047
+Value of: PutWithInvalidKV(3, 65, &quot;/tmp/ddtest&quot;, 1)
+  Actual: 0
+Expected: -1
+kvdb-put-key-3B-025
+
+    
+    
+    
+    
+  
+</body>

@@ -89,8 +89,9 @@ namespace insdb {
             KeySlice key(key_str, 16);
             uint32_t est_size = offset;
             KeyMapHandle new_handle;
-            Slice keyinfo = table.Insert(key, est_size, new_handle);
-            if (keyinfo.size()) {
+            bool key_info_exist = false;
+            Slice keyinfo = table.Insert(key, est_size, new_handle, key_info_exist);
+            if (!key_info_exist) {
                 if (keyinfo.size() < est_size) abort();
                 insert++;
                 char* addr = const_cast<char*>(keyinfo.data());
@@ -133,9 +134,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d)  :IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size,coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             result = table.Next(result);
@@ -185,8 +186,9 @@ namespace insdb {
             KeySlice key(key_str, 16);
             uint32_t est_size = offset;
             KeyMapHandle new_handle;
-            Slice keyinfo = table2.Insert(key, est_size, new_handle);
-            if (keyinfo.size()) {
+            bool key_info_exist = false;
+            Slice keyinfo = table2.Insert(key, est_size, new_handle, key_info_exist );
+            if (!key_info_exist) {
                 if (keyinfo.size() < est_size) abort();
                 insert++;
                 char* addr = const_cast<char*>(keyinfo.data());
@@ -229,9 +231,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             result = table2.Next(result);
@@ -271,9 +273,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             result = table3->Next(result);
@@ -350,9 +352,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             handle = table.Next(handle);
@@ -416,9 +418,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             handle = table.Next(handle);
@@ -436,9 +438,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             handle = table.Prev(handle);
@@ -461,9 +463,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Searching key(%s), Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Searching key(%s), Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        search_key_str, key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        search_key_str, key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
        }
@@ -481,9 +483,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Searching key(%s), Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Searching key(%s), Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        search_key_str, key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        search_key_str, key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
        }
@@ -501,9 +503,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Searching key(%s), Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Searching key(%s), Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        search_key_str, key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        search_key_str, key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
        }
@@ -568,8 +570,9 @@ namespace insdb {
             KeySlice key(key_str, 16);
             uint32_t est_size = offset;
             KeyMapHandle new_handle;
-            Slice keyinfo = table.Insert(key, est_size, new_handle);
-            if (keyinfo.size()) {
+            bool key_info_exist = false;
+            Slice keyinfo = table.Insert(key, est_size, new_handle, key_info_exist);
+            if (!key_info_exist) {
                 if (keyinfo.size() < est_size) abort();
                 insert++;
                 char* addr = const_cast<char*>(keyinfo.data());
@@ -612,9 +615,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             result = table.Next(result);
@@ -697,9 +700,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             result = table.Next(result);
@@ -749,9 +752,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             result = table.Next(result);
@@ -803,9 +806,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             result = table.Next(result);
@@ -856,8 +859,9 @@ namespace insdb {
             KeySlice key(key_str, 16);
             uint32_t est_size = offset;
             KeyMapHandle new_handle;
-            Slice keyinfo = table.Insert(key, est_size, new_handle);
-            if (keyinfo.size()) {
+            bool key_info_exist = false;
+            Slice keyinfo = table.Insert(key, est_size, new_handle, key_info_exist);
+            if (!key_info_exist) {
                 if (keyinfo.size() < est_size) abort();
                 insert++;
                 char* addr = const_cast<char*>(keyinfo.data());
@@ -900,9 +904,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             result = table.Next(result);
@@ -982,9 +986,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             result = table.Next(result);
@@ -1043,9 +1047,9 @@ namespace insdb {
            memcpy(key_str, coldata.key.data(), coldata.key.size());
            key_str[coldata.key.size()] = 0;
            free(const_cast<char*>(coldata.key.data()));
-           printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+           printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
            "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-           key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+           key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
            coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
            }
            result = table2.Next(result);
@@ -1062,9 +1066,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             result = table2.Next(result);
@@ -1122,9 +1126,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             result = table3.Next(result);
@@ -1174,8 +1178,9 @@ namespace insdb {
             KeySlice key(key_str, 16);
             uint32_t est_size = offset;
             KeyMapHandle new_handle;
-            Slice keyinfo = table.Insert(key, est_size, new_handle);
-            if (keyinfo.size()) {
+            bool key_info_exist = false;
+            Slice keyinfo = table.Insert(key, est_size, new_handle, key_info_exist);
+            if (!key_info_exist) {
                 if (keyinfo.size() < est_size) abort();
                 insert++;
                 char* addr = const_cast<char*>(keyinfo.data());
@@ -1388,8 +1393,9 @@ namespace insdb {
             KeySlice key(key_str, 16);
             uint32_t est_size = offset;
             KeyMapHandle new_handle;
-            Slice keyinfo = table.Insert(key, est_size, new_handle);
-            if (keyinfo.size()) {
+            bool key_info_exist = false;
+            Slice keyinfo = table.Insert(key, est_size, new_handle, key_info_exist);
+            if (!key_info_exist) {
                 if (keyinfo.size() < est_size) abort();
                 insert++;
                 char* addr = const_cast<char*>(keyinfo.data());
@@ -1565,9 +1571,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             result = table.Next(result);
@@ -1583,9 +1589,9 @@ namespace insdb {
                 memcpy(key_str, coldata.key.data(), coldata.key.size());
                 key_str[coldata.key.size()] = 0;
                 free(const_cast<char*>(coldata.key.data()));
-                printf("Find key(%s) col_size(%d)  ref(%d):IsDelete(%d):HasTTL(%d)\n"
+                printf("Find key(%s) col_size(%d):IsDelete(%d):HasTTL(%d)\n"
                         "             column id(%d) kb_offset(%d) iter_seq(%ld) ttl(%ld) ikey_seq(%ld) ikey_size(%d)\n\n",
-                        key_str, coldata.col_size, coldata.referenced,coldata.is_deleted, coldata.has_ttl,
+                        key_str, coldata.col_size, coldata.is_deleted, coldata.has_ttl,
                         coldata.column_id, coldata.kb_offset, coldata.iter_sequence, coldata.ttl, coldata.ikey_sequence, coldata.ikey_size);
             }
             result = table.Next(result);

@@ -392,6 +392,7 @@ static inline int nvme_nvm_ns_supported(struct nvme_ns *ns, struct nvme_id_ns *i
 #endif /* CONFIG_NVM */
 
 #ifdef KV_NVME_SUPPORT
+
 /*
  * The stuct nvme_dev is relocated from pci.c
  */
@@ -438,6 +439,34 @@ struct nvme_dev {
 
 #endif
 
+#define NVME_SYNC_BUSY_WAIT
+
+#if defined(NVME_SYNC_BUSY_WAIT)
+
+struct blk_mq_ctx {
+	struct {
+		spinlock_t		lock;
+		struct list_head	rq_list;
+	}  ____cacheline_aligned_in_smp;
+
+	unsigned int		cpu;
+	unsigned int		index_hw;
+
+	unsigned int		last_tag ____cacheline_aligned_in_smp;
+
+	/* incremented at dispatch time */
+	unsigned long		rq_dispatched[2];
+	unsigned long		rq_merged;
+
+	/* incremented at completion time */
+	unsigned long		____cacheline_aligned_in_smp rq_completed[2];
+
+	struct request_queue	*queue;
+	struct kobject		kobj;
+} ____cacheline_aligned_in_smp;
+
+int kv_blk_mq_hctx_next_cpu(struct blk_mq_hw_ctx *hctx);
+#endif
 
 int __init nvme_core_init(void);
 void nvme_core_exit(void);

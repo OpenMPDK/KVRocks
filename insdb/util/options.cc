@@ -46,7 +46,7 @@ namespace insdb {
       disable_cache(false),
       disable_io_size_check(false),
       filter_policy(NULL),
-      max_cache_size(2*1024*1024*1024UL),
+      max_cache_size(16*1024*1024*1024UL),
       num_write_worker(8),
       num_column_count(1),
       max_request_size(32*1024),

@@ -119,7 +119,7 @@ retry:
 #endif
 
     /* realloc arena memory */
-    uint32_t new_arena_size = arena_size_+(arena_size_/10);
+    uint32_t new_arena_size = ArenaSizeAlignment(arena_size_+(arena_size_/10));
 #if 0
     char* mem = (char*)mmap(NULL, new_arena_size, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
     if (mem == MAP_FAILED) abort();

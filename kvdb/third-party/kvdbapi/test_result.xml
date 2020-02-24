@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="11" failures="2" disabled="1" errors="0" timestamp="2019-06-20T20:55:54" time="21.558" name="AllTests">
+  <testsuite name="ColumnFamilyTest" tests="11" failures="2" disabled="1" errors="0" time="21.558">
+    <testcase name="ReuseColumnFamilyID" status="run" time="2.954" classname="ColumnFamilyTest">
+      <failure message="../kvdbapi/kvdb_column_family.cc:88&#x0A;DestroyDB(dbname_, options)&#x0A;NotFound: NotFound: super sktable is not exist" type=""><![CDATA[../kvdbapi/kvdb_column_family.cc:88
+DestroyDB(dbname_, options)
+NotFound: NotFound: super sktable is not exist]]></failure>
+    </testcase>
+    <testcase name="CreateCFRaceWithGetAggProperty" status="run" time="0.28" classname="ColumnFamilyTest" />
+    <testcase name="AddDrop" status="run" time="1.175" classname="ColumnFamilyTest" />
+    <testcase name="BulkAddDrop" status="run" time="12.008" classname="ColumnFamilyTest" />
+    <testcase name="WriteBatchFailure" status="run" time="1.423" classname="ColumnFamilyTest">
+      <failure message="../kvdbapi/kvdb_column_family.cc:1013&#x0A;Value of: s.IsInvalidArgument()&#x0A;  Actual: false&#x0A;Expected: true" type=""><![CDATA[../kvdbapi/kvdb_column_family.cc:1013
+Value of: s.IsInvalidArgument()
+  Actual: false
+Expected: true]]></failure>
+    </testcase>
+    <testcase name="ReadWrite" status="run" time="1.545" classname="ColumnFamilyTest" />
+    <testcase name="CrashAfterFlush" status="run" time="0.43" classname="ColumnFamilyTest" />
+    <testcase name="GetComparator" status="run" time="0.719" classname="ColumnFamilyTest" />
+    <testcase name="CreateMissingColumnFamilies" status="run" time="0.174" classname="ColumnFamilyTest" />
+    <testcase name="ReadDroppedColumnFamily" status="run" time="0.85" classname="ColumnFamilyTest" />
+    <testcase name="DISABLED_LogTruncationTest" status="notrun" time="0" classname="ColumnFamilyTest" />
+  </testsuite>
+</testsuites>

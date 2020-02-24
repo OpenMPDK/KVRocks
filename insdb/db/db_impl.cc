@@ -10,11 +10,11 @@
  * Authors      : Heekwon Park, Ilgu Hong, Hobin Lee
  *
  * This modified version is distributed under a BSD-style license that can be
- * found in the LICENSE.insdb file  
- *                    
+ * found in the LICENSE.insdb file
+ *
  * This program is distributed in the hope it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  
+ * FITNESS FOR A PARTICULAR PURPOSE.
  */
 
 
@@ -55,7 +55,7 @@ namespace insdb {
       2. It provides mechanism to repair InDB for power failure, each internal value has next
       internal key, and it gives a way to trace key-value pairs.
 
-      [user key, user value] ---> 
+      [user key, user value] --->
       [internal key, internal value( next internal key, user key, user value)]
       */
 
@@ -106,9 +106,9 @@ namespace insdb {
     }
 
     DBImpl::DBImpl(const Options& options, const std::string& dbname) :
-        options_(SanitizeOptions(options, dbname)), 
-        env_(options.env), 
-        dbname_(dbname), 
+        options_(SanitizeOptions(options, dbname)),
+        env_(options.env),
+        dbname_(dbname),
         mf_(NULL),
         wbi_buffer_(),
         snaplist_(),
@@ -140,7 +140,7 @@ namespace insdb {
             prefetch_hit_ = 0;
             cache_miss_ = 0;
 #endif
-#if 0 
+#if 0
 #ifdef KV_TIME_MEASURE
             /** New & Reuse memory performance comparison */
             std::string *t1 = new std::string();
@@ -397,7 +397,7 @@ namespace insdb {
     Status DBImpl::GetLatestSequenceForKey(const Slice& key, uint64_t* sequence, bool* found, uint8_t col_id) {
         *sequence = 0;
         *found = false;
-        KeySlice hkey(key); 
+        KeySlice hkey(key);
 #ifdef USE_HOTSCOTCH
         UserKey *uk = mf_->FindUserKeyFromHopscotchHashMap(hkey);
 #if 0
@@ -416,7 +416,7 @@ namespace insdb {
             *sequence = uk->GetLatestColumnNodeSequenceNumber(col_id, deleted);
             uk->ColumnUnlock(col_id);
             uk->DecreaseReferenceCount();
-            if (*sequence){ 
+            if (*sequence){
                 *found = true;
                 if (deleted)
                     return Status::NotFound("key does not exit");
@@ -486,7 +486,7 @@ namespace insdb {
             SnapshotImpl* snap = reinterpret_cast<SnapshotImpl*>(const_cast<Snapshot*>(options.snapshot));
             assert(snap);
 
-            sequence = snap->GetCurrentSequenceNumber(); 
+            sequence = snap->GetCurrentSequenceNumber();
             cur_time = snap->GetCurrentTime();
         }else{
             sequence = ULONG_MAX; /* Max Number */
@@ -511,7 +511,7 @@ namespace insdb {
             UserValue* uv = NULL;
             bool deleted = false;
             ColumnNode* col_node = uk->GetColumnNode(col_id, deleted, cur_time, sequence, GetTtlFromTtlList(col_id));
-            if (!col_node){ 
+            if (!col_node){
                 /* in case of snapshot get */
                 uk->DecreaseReferenceCount();
                 uk->ColumnUnlock(col_id);
@@ -523,32 +523,35 @@ namespace insdb {
                 uk = NULL;
             }else{
                 if((uv = col_node->GetUserValue())){
-                    if(value){ 
+                    if(value){
                         value->assign(uv->GetBuffer(), uv->GetValueSize());
                         //mf_->FreeUserValue(uv); /* GetValue Pin uv inside funciton, so we will decrease Pin and give a chance to free */
                     }else {
                         uv->Pin();
-                        pin_slice->PinSlice(uv->ReadValue(), PinnableSlice_UserValue_CleanupFunction, uv, mf_);
+                        pin_slice->PinSlice(uv->GetValueSlice(), PinnableSlice_UserValue_CleanupFunction, uv, mf_);
                     }
                 }else{
-                    
                     bool ra_rahit = false;
-                    //KeyBlockPrimaryMeta *kbpm = mf_->GetValueUsingColumn(col_node, value_slice);
-                    KeyBlockPrimaryMeta* kbpm = col_node->GetKeyBlockMeta();
-                    assert(kbpm);//If column exists kbpm must exist!
-
-                    KeyBlock* kb = NULL;
-                    if (!(kb = kbpm->GetKeyBlockAddr())) {
+                    KeyBlock* kb = mf_->FindKBCache(col_node->GetInSDBKeySeqNum());
+                    assert(kb);
+                    if (kb->IsDummy()) {
                         if (non_blk_flag_ != kNonblockingOff) {
+                            mf_->RemoveDummyKB(kb);
+                            mf_->FreeKB(kb);
                             return Status::Incomplete("Not found in cache, no_io is set");
                         }
-                        kb = kbpm->LoadKeyBlock(mf_, col_node->GetInSDBKeySeqNum(), col_node->GetiValueSize(), &ra_rahit);
+
+                        kb->KBLock();
+                        if (kb->IsDummy()) {
+                            mf_->LoadValue(col_node->GetInSDBKeySeqNum(), col_node->GetiValueSize(), &ra_rahit, kb);
+                            mf_->DummyKBToActive(col_node->GetInSDBKeySeqNum(), kb);
+                        }
+                        kb->KBUnlock();
                     }
-                    kb->IncKBRefCnt();
                     /* get value from kb */
                     Slice value_slice = kb->GetValueFromKeyBlock(mf_, col_node->GetKeyBlockOffset());
 
-                    if(value){ 
+                    if(value){
                         value->assign(value_slice.data(), value_slice.size());
                         mf_->FreeKB(kb);
                     }else {
@@ -574,7 +577,7 @@ namespace insdb {
     Status DBImpl::CompactRange(const Slice *begin, const Slice *end, const uint16_t col_id)
     {
         Status s;
-        //Todo: when upper_bound of iter is ok, need to update this 
+        //Todo: when upper_bound of iter is ok, need to update this
         //Feat: delete the keys in the range in insdb code
         const ReadOptions Rop;
         const WriteOptions Wop;
@@ -618,7 +621,7 @@ namespace insdb {
             ukey->ColumnLock(col_id);
             bool deleted = false;
             ColumnNode *col_node = ukey->GetColumnNode(col_id, deleted);
-            if (col_node){ 
+            if (col_node){
 //#if 0
                 ukey->GetCurrentSKTableMem()->SetForceFlush();
 //#endif
@@ -751,7 +754,7 @@ pointer for uint64_t[] array.
 
         uint8_t del_kb_offset = 0;
         /* || value size(21 bit) || key size (11 bit) ||*/
-        /* the type of "auto it" is "RequestNode*" */ 
+        /* the type of "auto it" is "RequestNode*" */
         for(auto it = submit_list.begin()  ;  total_req_count-- ; it++){
             assert(it != submit_list.end());
             ColumnNode *col_node = (*it)->GetRequestNodeLatestColumnNode();
@@ -764,16 +767,16 @@ pointer for uint64_t[] array.
                 uk->ColumnLock(col_id);
             }while(uk != col_node->GetUserKey());
             assert(uk);
-            /* 
+            /*
              * If the table is being flushed, GetCurrentSKTableMem() may have either main SKTable or new(sub) SKTable.
              * 1. If uk belongs to sub-SKTable but table is main, it can have two situation.
              *    (a) The UK hsa not yet been scanned in FlushSKTableMem().
              *        In this case, The FlushSKTableMem() will scan it soon.
-             *    (b) The uk range was already scanned in FlushSKTableMem()(uk is inserted after scan). 
+             *    (b) The uk range was already scanned in FlushSKTableMem()(uk is inserted after scan).
              *        In this case, FlushSKTableMem() can not increase the key_count.
              * 2. If the uk is already scanned in FlushSKTableMem, it has the correct table it which the uk belongs.
              *    because FlushSKTableMem() can change the uk->sktable.
-             * 
+             *
              * For case 1(a). It does not need to increase sktable->key_count even if it is new.
              *                FlushSKTableMem() will increase the key_count
              * For case 1(b). If uk is new, the key_count must be increased at here
@@ -782,14 +785,14 @@ pointer for uint64_t[] array.
              */
 
             /*
-             * Add merged columns to KeyBlockMetaLog 
-             * Cleanup merged columns. 
+             * Add merged columns to KeyBlockMetaLog
+             * Cleanup merged columns.
              */
             assert(kDelType == col_node->GetRequestType());
             uk->DoVerticalMerge((*it), uk, col_id, worker_id, del_kb_offset, mf_, kbml);
             /* KeyBlock must ONLY contain Put requests */
             SKTableMem *skt = mf_->FindSKTableMem(uk->GetKeySlice());
-            if(mf_->MemoryUsage() < kCacheSizeLowWatermark){
+            if (mf_->MemUseLow()) {
                 /**
                  * The SKTableMem should be exist in one of cache.
                  * If SKTableMem had not been cache in Store(), the user sent Prefetch request & insert to dirty cache.
@@ -804,7 +807,7 @@ pointer for uint64_t[] array.
                 }
                 //assert(skt->IsCached());
                 if(skt->KeyQueueKeyCount() > kMinUpdateCntForTableFlush){
-                    /* 
+                    /*
                      * If a SKTable has been updated over kMinUpdateCntForTableFlush, flush all SKTables
                      */
                     mf_->IncreaseUpdateCount(kSKTableFlushWatermark);
@@ -842,8 +845,8 @@ pointer for uint64_t[] array.
         /* Keyblock Memory Format
          * ** KV info : (Key & value size | User Value | User Key | Col ID | (TTL))
          * < 1st KV Ofs | 2en KV Ofs | ... | Last KV Ofs | Total Size of KV | 1st KV info | 2ed KV Info | ... | Last KV Info >
-         * ^^^^^^^^^^^^^^ =>  "offset" starts at here.                      ^^^^^^^^^^^^^^^ => "kv_buffer" start at here. 
-         * ^ => "buf" points the begining of the KeyBlock buffer 
+         * ^^^^^^^^^^^^^^ =>  "offset" starts at here.                      ^^^^^^^^^^^^^^^ => "kv_buffer" start at here.
+         * ^ => "buf" points the begining of the KeyBlock buffer
          */
         uint32_t *offset = (uint32_t *)(buf);
         /*
@@ -856,7 +859,7 @@ pointer for uint64_t[] array.
         uint8_t del_kb_offset = 0;
         uint8_t put_kb_offset = 0;
         /* || value size(21 bit) || key size (11 bit) ||*/
-        /* the type of "auto it" is "RequestNode*" */ 
+        /* the type of "auto it" is "RequestNode*" */
         for(auto it = submit_list.begin()  ;  total_req_count-- ; it++){
             assert(it != submit_list.end());
             assert( ((uint64_t)kv_buffer - (uint64_t)buf) < 0x100000/*1M*/);
@@ -873,16 +876,16 @@ pointer for uint64_t[] array.
                 uk->ColumnLock(col_id);
             }while(uk != col_node->GetUserKey());
             assert(uk);
-            /* 
+            /*
              * If the table is being flushed, GetCurrentSKTableMem() may have either main SKTable or new(sub) SKTable.
              * 1. If uk belongs to sub-SKTable but table is main, it can have two situation.
              *    (a) The UK hsa not yet been scanned in FlushSKTableMem().
              *        In this case, The FlushSKTableMem() will scan it soon.
-             *    (b) The uk range was already scanned in FlushSKTableMem()(uk is inserted after scan). 
+             *    (b) The uk range was already scanned in FlushSKTableMem()(uk is inserted after scan).
              *        In this case, FlushSKTableMem() can not increase the key_count.
              * 2. If the uk is already scanned in FlushSKTableMem, it has the correct table it which the uk belongs.
              *    because FlushSKTableMem() can change the uk->sktable.
-             * 
+             *
              * For case 1(a). It does not need to increase sktable->key_count even if it is new.
              *                FlushSKTableMem() will increase the key_count
              * For case 1(b). If uk is new, the key_count must be increased at here
@@ -892,8 +895,8 @@ pointer for uint64_t[] array.
             RequestType type = col_node->GetRequestType();
 
             /*
-             * Add merged columns to KeyBlockMetaLog 
-             * Cleanup merged columns. 
+             * Add merged columns to KeyBlockMetaLog
+             * Cleanup merged columns.
              */
             uk->DoVerticalMerge(req_node, uk, col_id, worker_id, ((type == kPutType) ? put_kb_offset : del_kb_offset), mf_, kbpm);
             uk->ColumnUnlock(col_id);
@@ -905,7 +908,7 @@ pointer for uint64_t[] array.
              * If SKTableMem is in Clean cache, migrate to Dirty Cache
              *  - Cache Evictor may do this to avoid atomic variable check.
              */
-            if(mf_->MemoryUsage() < kCacheSizeLowWatermark){
+            if(mf_->MemUseLow()){
                 if((!skt->IsKeymapLoaded()) && !skt->IsFetchInProgress()){
                     if(!skt->IsInDirtyCache()) {
                         if(!skt->IsFetchInProgress())
@@ -914,7 +917,7 @@ pointer for uint64_t[] array.
                 }
                 //assert(skt->IsCached());
                 if(skt->KeyQueueKeyCount() > kMinUpdateCntForTableFlush){
-                    /* 
+                    /*
                      * If a SKTable has been updated over kMinUpdateCntForTableFlush, flush all SKTables
                      */
                     mf_->IncreaseUpdateCount(kSKTableFlushWatermark);
@@ -1014,7 +1017,7 @@ pointer for uint64_t[] array.
         uint64_t cur_ikey_seq_num = 0;
         //uint32_t max_value_size = 512;
         uint32_t ivalue_size = 0;
-        /* 
+        /*
          * Keyblock Device Format
          * ** KV info : (Key & value size | User Value | User Key | Col ID | (TTL))
          * < CRC(4B) | Total # of Keys(1B) : Total Size of Compressed KB(3B) | (compressed or uncompressed)KeyBlock data >
@@ -1026,6 +1029,7 @@ pointer for uint64_t[] array.
         char* kb_buffer = (char*)(kb_keycnt_size_loc + 1)/*CRC(4B) + # of Keys(1B) + Size of compressed KB(3B)*/;
         char* kbm_dev_buffer = (char*)malloc(kDeviceRquestMaxSize);
         uint8_t count[kNrRequestType] = { 0 }; // Max 32
+        uint64_t put_iter_seq_num[kMaxRequestPerKeyBlock] = {0,};
         uint32_t estimated_ivalue_size   = 0;
         UserKey *uk = NULL;
         uint8_t total_req_cnt = 0;
@@ -1034,7 +1038,8 @@ pointer for uint64_t[] array.
         std::string col_info_table;
         col_info_table.reserve(kDeviceRquestMaxSize);
         /* kb_dev_buffer can be used for con_info_tabel buffer in SKTable flush because these do not use kb_dev_buffer at the same time*/
-        Slice comp_col_info_table(kb_dev_buffer, kDeviceRquestMaxSize);
+        std::string comp_col_info_table;
+        comp_col_info_table.reserve(kDeviceRquestMaxSize);
         while(true){
 
             //This lock is also realsed out of while(true);
@@ -1058,7 +1063,7 @@ pointer for uint64_t[] array.
 #define KEY_BLOCK_SIZE_APPENDIX 12 // Offset ( 2 ) + CRC ( 4 ) + keyvalue size ( 5 ) + Column ID ( 1 )
 #define KEY_BLOCK_TOTAL_SIZE 4
             /*
-               Additional memory per key (11B) = CRC(4B) + user key/value size(4B) + Column ID(1B) + Offset and flag(2B) (+ TTL(8B) ??) 
+               Additional memory per key (11B) = CRC(4B) + user key/value size(4B) + Column ID(1B) + Offset and flag(2B) (+ TTL(8B) ??)
                the data will be compressed. So, actual data size must be less than estimated size.
                that's why we don't add TTL size to the estimated size
                */
@@ -1119,12 +1124,16 @@ pointer for uint64_t[] array.
                             uk->ColumnUnlock(col_id);
                             break;
                         }
-                    } 
+                    }
                     latest_col_node->ClearPendingRequest();
                     uk->ColumnUnlock(col_id);
                     assert(worker_id);
+
+                    if(type == kPutType)
+                        put_iter_seq_num[count[type]] = latest_col_node->GetBeginSequenceNumber();
                     count[type]++;
-                    if(latest_col_node->GetTGID()){
+                    if(latest_col_node->GetTGID() || type == kDelType){
+                        /*The key of del command must be writte to KBPM even if it is not a TRXN.*/
                         /*Exclude TRXN header's memory in the KBML*/
                         trxn_cnt++;// - 1; /* Do not allocate memory for the Header of Vertical Merge Group*/
                     }
@@ -1146,8 +1155,8 @@ pointer for uint64_t[] array.
                 }
 #endif
 
-                estimated_ivalue_size+=4;/*Last size*/
-                if(estimated_ivalue_size % kRequestAlignSize) estimated_ivalue_size = SizeAlignment(estimated_ivalue_size);
+                estimated_ivalue_size += 4;/*Last size*/
+                estimated_ivalue_size = SizeAlignment(estimated_ivalue_size);
                 /* Following memories should be allocated using memory-pool */
                 KeyBlock *kb = NULL;
                 if (count[kPutType]) {
@@ -1158,7 +1167,8 @@ pointer for uint64_t[] array.
                 next_ikey_seq_num = mf_->GenerateNextInSDBKeySeqNum();
 
                 KeyBlockPrimaryMeta* kbpm = mf_->AllocKBPM();
-                kbpm->NewKBPMInit(count[kPutType], count[kDelType], next_ikey_seq_num, trxn_cnt, kKeepWrittenKeyBlock ? kb: NULL, kbm_dev_buffer, !mf_->IsCacheDisabled());
+                bool free_kb = kKeepWrittenKeyBlock ? mf_->CheckKeyEvictionThreshold(): true;
+                kbpm->NewKBPMInit(count[kPutType], count[kDelType], put_iter_seq_num, next_ikey_seq_num, trxn_cnt, free_kb? NULL:kb, kbm_dev_buffer, !mf_->IsCacheDisabled());
 #ifdef CODE_TRACE
                 printf("[%d :: %s]PreAlloc (kbpm : 0x%p)\n", __LINE__, __func__, kbpm);
 #endif
@@ -1196,7 +1206,7 @@ pointer for uint64_t[] array.
                     /* Submit KeyBlock*/
                     *kb_keycnt_size_loc = ((uint32_t)count[kPutType] << KEYBLOCK_KEY_CNT_SHIFT);
 #ifdef HAVE_SNAPPY
-                    if(options_.compression == kSnappyCompression){ 
+                    if(options_.compression == kSnappyCompression){
 
                         /* data->size() has been aligned */
                         size_t outlen = 0;
@@ -1208,7 +1218,7 @@ pointer for uint64_t[] array.
                         snappy::RawCompress(kb->GetRawData().data(), (size_t)ivalue_size, kb_buffer, &outlen);
 
                         /*
-                         * compressed less than 12.5%, just store uncompressed form 
+                         * compressed less than 12.5%, just store uncompressed form
                          * This ratio is the same as that of LevelDB/RocksDB
                          *
                          * Regardless of the compression efficiency, We may not have any penalty even if we store compressed data.
@@ -1223,13 +1233,13 @@ pointer for uint64_t[] array.
                             memcpy(kb_buffer, kb->GetRawData().data(), ivalue_size);
                         }
                     }else
-#endif 
+#endif
                     {
                         *kb_keycnt_size_loc |= ivalue_size;
                         memcpy(kb_buffer, kb->GetRawData().data(), ivalue_size);
                     }
 
-                    uint32_t crc = crc32c::Value((char*)kb_keycnt_size_loc, (*kb_keycnt_size_loc & KEYBLOCK_KB_SIZE_MASK) + 4/* 4 is for "kb_keycnt_size_loc" */); 
+                    uint32_t crc = crc32c::Value((char*)kb_keycnt_size_loc, (*kb_keycnt_size_loc & KEYBLOCK_KB_SIZE_MASK) + 4/* 4 is for "kb_keycnt_size_loc" */);
                     EncodeFixed32((char*)kb_crc_loc, crc32c::Mask(crc)); //Append the CRC info.
                     ivalue_size+= 8;/*CRC(4) & CNT(1) & SIZE(3)*/
 #ifdef CODE_TRACE
@@ -1238,15 +1248,15 @@ pointer for uint64_t[] array.
                     InSDBKey kb_key = GetKBKey(mf_->GetDBHash(), kKBlock, cur_ikey_seq_num);
                     //s = env_->Put(kb_key, Slice(kb->GetRawData().data(), SizeAlignment(kb->GetRawData().size())), true);
                     s = env_->Put(kb_key, Slice(kb_dev_buffer, SizeAlignment(ivalue_size)), true);
+                    kb->SetIKeySeqNum(cur_ikey_seq_num);
                     assert(s.ok());
-                    if (kKeepWrittenKeyBlock) {
-                        mf_->IncreaseMemoryUsage(kb->GetSize() + sizeof(KeyBlockPrimaryMeta));
+                    if (!free_kb) {
 #ifdef MEM_TRACE
                         mf_->IncKBPM_MEM_Usage(kb->GetSize() + sizeof(KeyBlockPrimaryMeta));
 #endif
- 
+                        mf_->AddKBCache(cur_ikey_seq_num, kb);
+
                     } else {
-                        mf_->IncreaseMemoryUsage(sizeof(KeyBlockPrimaryMeta));
 #ifdef MEM_TRACE
                         mf_->IncKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
 #endif
@@ -1254,20 +1264,19 @@ pointer for uint64_t[] array.
                     }
                 } else {
                     /* delete only -- add kbpm size for memroy tracking */
-                    mf_->IncreaseMemoryUsage(sizeof(KeyBlockPrimaryMeta));
 #ifdef MEM_TRACE
                     mf_->IncKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
 #endif
                 }
                 /*Insert KBPM to Hash*/
                 if (!mf_->InsertKBPMToHashMap(kbpm)) abort();
- 
+
                 /*To update ColumnNode, ivalue size & ikey */
                 for(auto it = submit_list.begin(); total_req_cnt-- ; ){
                     assert(it != submit_list.end());
                     req_node = (*it);
-                    /* 
-                     * SKTDF will be written to device after device flush with the completed trxn 
+                    /*
+                     * SKTDF will be written to device after device flush with the completed trxn
                      * So, it is safe to decrease request count of the trxn group
                      */
                     /*Free UserValue in the UpdateColumnNode()*/
@@ -1416,7 +1425,7 @@ pointer for uint64_t[] array.
                     }
 
                     //Slice uv_slice(*req->UserValue_->GetData());
-                    Slice uv_slice = req->UserValue_->ReadValue();
+                    Slice uv_slice = req->UserValue_->GetValueSlice();
                     Status status = db->options_.AddUserKey(
                             req->UserKey_, uv_slice, type, req->Sequence_, db->callback_file_sizes_[req->col_id_], req->col_id_, db->options_.AddUserKeyContext);
                     assert(status.ok());
@@ -1478,7 +1487,7 @@ pointer for uint64_t[] array.
             return s; // DB does not exist.
         } else {
             db_exist_ = true;
-            if (options.error_if_exists) return Status::OK(); //do not load sktable .. it will report error. 
+            if (options.error_if_exists) return Status::OK(); //do not load sktable .. it will report error.
             bool bNeedInitManifest = true;
             s = mf_->RecoverInSDB(bNeedInitManifest, options.create_if_missing);
             if(s.ok() || s.IsNotFound()) {
@@ -1517,8 +1526,6 @@ pointer for uint64_t[] array.
 
     DB::~DB() { }
 
-    std::vector<std::string> kv_ssd;
-
     Status DB::OpenWithTtl(const Options& options, const std::string& name,
                     DB** dbptr, uint64_t* TtlList, bool* TtlEnabledList) {
       Status s = DB::Open(options, name, dbptr);
@@ -1534,16 +1541,13 @@ pointer for uint64_t[] array.
     Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
         *dbptr = NULL;
         // copy device names
-        kv_ssd.resize(0);
-        for(auto dev : options.kv_ssd)
-            kv_ssd.push_back(dev);
-
+        std::vector<std::string> kv_ssd{options.kv_ssd};
         Status s = options.env->Open(kv_ssd);
         if (!s.ok()) {
             return Status::InvalidArgument("Fail to open device");
         }
+
         DBImpl* impl = new DBImpl(options, dbname);
-        assert(impl);
 
         /* validation check */
         s = impl->ValidateOption();
@@ -1557,7 +1561,7 @@ pointer for uint64_t[] array.
             if (impl->Is_DB_exist() == false) { // no db, based on option create or return error.
                 if (options.create_if_missing) {
                     s = impl->NewDB(); // create new db, create super sktable and firt sktbale.
-                    if (!s.ok()) { 
+                    if (!s.ok()) {
                         delete impl;
                         return Status::IOError(dbname, "fail to create db (create if missing)");
                     }
@@ -1569,7 +1573,7 @@ pointer for uint64_t[] array.
                 delete impl;
                 return Status::Corruption(dbname, "db exists but corrupted");
             }
-        } else if (options.error_if_exists) { // expect db not exist. 
+        } else if (options.error_if_exists) { // expect db not exist.
             delete impl;
             return Status::InvalidArgument(dbname, "db exists (error_if_exists is true)");
         }
@@ -1590,16 +1594,13 @@ pointer for uint64_t[] array.
             const Options& options)
     {
         // copy device names
-        kv_ssd.resize(0);
-        for(auto dev : options.kv_ssd)
-            kv_ssd.push_back(dev);
-
+        std::vector<std::string> kv_ssd{options.kv_ssd};
         Status s = options.env->Open(kv_ssd);
         if (!s.ok()) {
             return Status::InvalidArgument("Fail to open device");
         }
+
         DBImpl* impl = new DBImpl(options, dbname);
-        assert(impl);
         s = impl->DeleteDB(); // try to get super sktable information, and then read manifest or recover.
         if (!s.ok()) {
             /* ignor error */
@@ -1615,16 +1616,13 @@ pointer for uint64_t[] array.
             const Options& options)
     {
         // copy device names
-        kv_ssd.resize(0);
-        for(auto dev : options.kv_ssd)
-            kv_ssd.push_back(dev);
-
+        std::vector<std::string> kv_ssd{options.kv_ssd};
         Status s = options.env->Open(kv_ssd);
         if (!s.ok()) {
             return Status::InvalidArgument("Fail to open device");
         }
+
         DBImpl* impl = new DBImpl(options, dbname);
-        assert(impl);
         s = impl->Recover(options); // try to get super sktable information, and then read manifest or recover.
         if (s.ok()) impl->SetNormalStart(); //build manifest...
         delete impl;

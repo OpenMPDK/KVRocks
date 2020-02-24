@@ -18,23 +18,43 @@
 #include <linux/time.h>
 #include <linux/blkdev.h>
 #include <linux/bio.h>
+#include <linux/delay.h>
 #include "nvme.h"
 #include "linux_nvme_ioctl.h"
 //#include "fabrics.h"
 #include "kv_iosched.h"
 #include "kv_fifo.h"
 
+struct kv_end_io_data{
+            struct completion w;
+            int rc_done;
+            int busy_wait;
+};
 static void kv_end_io_sync_rq(struct request *rq, int error)
 {
+#if defined( NVME_SYNC_BUSY_WAIT) 
+    struct kv_end_io_data * kv_end = rq->end_io_data;
+    //pr_err("[%d:%s] : rq %p busy_wait %d cpu(%d)\n", __LINE__, __func__, rq, kv_end->busy_wait, get_cpu());
+    if(kv_end->busy_wait){
+        int * done = &kv_end->rc_done;
+        *done = 1; 
+    }else{
+       struct completion *waiting = &(kv_end->w);
+       complete(waiting);  
+    }
+#else
     struct completion *waiting = rq->end_io_data;
-
+#endif
     rq->end_io_data = NULL;
 
     /*
      * complete last, if this is a stack request the process (and thus
      * the rq pointer) could be invalid right after this complete()
      */
-    complete(waiting);
+#if defined(NVME_SYNC_BUSY_WAIT) 
+#else
+    complete(waiting); 
+#endif
 }
 
 static void kv_end_io_async_rq(struct request *req, int error)
@@ -127,10 +147,10 @@ static int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
     unsigned timeout = sync_rq->timeout;
     //////////////
 
-    struct nvme_completion cqe;
     struct nvme_ns *ns = q->queuedata;
     struct gendisk *disk = ns ? ns->disk : NULL;
     struct request *req;
+    struct nvme_completion cqe = { 0 };
     struct bio *bio = NULL;
     int ret;
 
@@ -143,8 +163,7 @@ static int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
         return PTR_ERR(req);
 
     req->timeout = timeout ? timeout : ADMIN_TIMEOUT;
-    req->special = &cqe;
-
+    
     /*
      * A sync request always uses user memory,
      * even if the request was async request which uses kernel buffer.
@@ -208,7 +227,9 @@ static int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
     pr_err("[%d:%s] :  opcode(%02x)\n", __LINE__, __func__, cmd->common.opcode);
 #endif
     {
-        DECLARE_COMPLETION_ONSTACK(wait);
+        struct kv_end_io_data kk_end_io_data;
+        kk_end_io_data.rc_done = 0;
+        kk_end_io_data.busy_wait = 0;
         char sense[SCSI_SENSE_BUFFERSIZE];
 #ifndef NO_LOG
     struct timeval wait_start, wait_stop;
@@ -217,15 +238,28 @@ static int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
         memset(sense, 0, sizeof(sense));
         req->sense = sense;
         req->sense_len = 0;
-
-        req->end_io_data = &wait;
+#if defined(NVME_SYNC_BUSY_WAIT)
+        req->special = &cqe;
+        req->end_io_data = &kk_end_io_data;
+        kk_end_io_data.busy_wait = 1;
+        blk_execute_rq_nowait(req->q, disk, req, 0, kv_end_io_sync_rq);       
+    #ifndef NO_LOG
+        do_gettimeofday(&wait_start);
+    #endif
+       while(!kk_end_io_data.rc_done){ndelay(100);};
+#else
+        init_completion(&(kk_end_io_data.w));
+        req->end_io_data = &(kk_end_io_data.w);
+        req->special = &cqe;
         blk_execute_rq_nowait(req->q, disk, req, 0, kv_end_io_sync_rq);
-
-#ifndef NO_LOG
+    #ifndef NO_LOG
             do_gettimeofday(&wait_start);
-#endif
+    #endif        
+
         /* Prevent hang_check timer from firing at us during very long I/O */
-        while (!wait_for_completion_io_timeout(&wait, 120* (HZ/2)));
+        while (!wait_for_completion_io_timeout(&kk_end_io_data.w, 120* (HZ/2)));
+#endif
+
 #ifndef NO_LOG
             do_gettimeofday(&wait_stop);
             atomic64_inc(&kv_total_sync_wait_time);
@@ -442,8 +476,9 @@ static inline bool kv_do_readahead(void *key,  u32 hash_key, struct kv_iosched_s
         /* Remove the data from the readahead lru */
 
         /* If it is a "get" request, it copies the data to user buffer */
-        if(is_kv_retrieve_cmd(cmd->opcode)){
-            copy_to_user((void __user *)cmd->data_addr, ra_rq->data_addr, cmd->data_length);
+        if (is_kv_retrieve_cmd(cmd->opcode)) {
+            unsigned long len = min(ra_rq->data_length, cmd->data_length);
+            copy_to_user((void __user *)cmd->data_addr, ra_rq->data_addr, len);
             if (cmd->key_length > KVCMD_INLINE_KEY_MAX) kfree(key);
             cmd->result = ra_rq->result;
             ret = true;
@@ -1283,7 +1318,7 @@ int __nvme_submit_iosched_kv_cmd(struct kv_memqueue_struct *memq, int qid)
             atomic64_inc(&kv_total_blocked_submit);
 #endif
             set_bit(KV_iosched_congested,  &rq->iosched->state);
-            wait_on_bit(&rq->iosched->state, KV_iosched_congested, TASK_KILLABLE);
+            wait_on_bit(&rq->iosched->state, KV_iosched_congested, TASK_UNINTERRUPTIBLE);
         }
         
         blk_execute_rq_nowait(req->q, disk, req, 0, kv_end_io_async_rq);
@@ -1592,7 +1627,7 @@ int nvme_kv_iosched_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
 
     if(atomic_read(&kv_iosched->kv_hash[KV_RQ_HASH].nr_rq) > KV_PENDING_QUEU_HIGH_WATERMARK){
         set_bit(KV_iosched_queue_full,  &kv_iosched->state);
-        wait_on_bit(&kv_iosched->state, KV_iosched_queue_full, TASK_KILLABLE);
+        wait_on_bit(&kv_iosched->state, KV_iosched_queue_full, TASK_UNINTERRUPTIBLE);
     }
 
     status = KVS_SUCCESS;//kv_iosched->status;//__nvme_submit_iosched_kv_cmd(kv_iosched);
@@ -1936,7 +1971,7 @@ int nvme_kv_flush_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
             do_gettimeofday(&wait_start);
 #endif
             if(type == ACTIVE_WRITE) 
-                wait_on_bit_io(&rq->state, KV_async_flush_wakeup, TASK_KILLABLE);
+                wait_on_bit_io(&rq->state, KV_async_flush_wakeup, TASK_UNINTERRUPTIBLE);
 
             // Release rq reference count
             (void)kv_decrease_req_refcnt(rq, true);
@@ -1986,7 +2021,7 @@ int nvme_kv_flush_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
                 do_gettimeofday(&wait_start);
 #endif
                 if(type == ACTIVE_WRITE) 
-                    wait_on_bit(&rq->state, KV_async_flush_wakeup, TASK_KILLABLE);
+                    wait_on_bit(&rq->state, KV_async_flush_wakeup, TASK_UNINTERRUPTIBLE);
 #ifndef NO_LOG
                 do_gettimeofday(&wait_stop);
                 atomic64_inc(&kv_flush_statistics[KV_flush_done]);

@@ -866,7 +866,9 @@ Status GetStringFromDBOptions(std::string* opt_string,
     std::string single_output;
     bool result = SerializeSingleDBOption(&single_output, db_options,
                                           iter->first, delimiter);
-    assert(result);
+    // assert(result);  // sometimes. the first pass encounters kVectorString
+                        // where SerializeSingleDBOption returns false,
+                        // we simply ignore and continue
     if (result) {
       opt_string->append(single_output);
     }

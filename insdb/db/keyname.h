@@ -46,7 +46,8 @@ namespace insdb {
         kSKTable = 7,
         kHashMap = 8,
         kColLog = 9,
-        kMaxMetaType = 9,
+        kRecoverLog = 10,
+        kMaxMetaType = 10,
     };
     /**
       return Metadata key.

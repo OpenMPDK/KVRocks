@@ -423,7 +423,7 @@ void kv_submission_workfn(struct work_struct *work)
                     pr_err("[%d:%s]Wrong daemon type\n", __LINE__, __func__);
                     break;
             }
-            //wait_on_bit(&kv_iosched->state, KV_iosched_need_to_wake_submit_daemon, TASK_KILLABLE);
+            //wait_on_bit(&kv_iosched->state, KV_iosched_need_to_wake_submit_daemon, TASK_UNINTERRUPTIBLE);
             //continue;
             break;
         }
@@ -456,7 +456,7 @@ void kv_submission_workfn(struct work_struct *work)
                         }
                     }
 
-                    wait_on_bit_io(&rq->state, KV_async_waiting_submission, TASK_KILLABLE);
+                    wait_on_bit_io(&rq->state, KV_async_waiting_submission, TASK_UNINTERRUPTIBLE);
 
                     // Release rq reference count
                     (void)kv_decrease_req_refcnt(rq, true);
@@ -526,7 +526,7 @@ void kv_completion_workfn(struct work_struct *work){
     struct kv_iosched_struct *kv_iosched = container_of(work,
             struct kv_iosched_struct, complete_work);
 #endif
-    struct kv_async_request *rq, *ra_rq = NULL;
+    struct kv_async_request *rq;
     bool has_it_been_run = false;
 
 restart:
@@ -592,14 +592,18 @@ restart:
         else
             rq->result = rq->data_length;
         if(is_kv_retrieve_cmd(rq->c.common.opcode)){
+            struct kv_async_request *ra_rq;
             ra_rq = kv_hash_insert_readahead(&rq->iosched->kv_hash[KV_RA_HASH], rq);
             if(!ra_rq){
                 set_bit(KV_async_in_readahead, &rq->state);
-            }else if(atomic_dec_and_test(&ra_rq->refcount)){ 
+            }else {
                 spin_lock(&ra_rq->lock);
-                free_kv_async_rq(ra_rq); 
+                if(atomic_dec_and_test(&ra_rq->refcount)){
+                    free_kv_async_rq(ra_rq);
+                } else {
+                    spin_unlock(&ra_rq->lock);
+                }
             }
-            
         }
         /*if(is_kv_store_cmd(rq->c.common.opcode)){
            for Save After Store
@@ -614,6 +618,7 @@ restart:
          * Sync IOs may wait this bit.
          */
         clear_bit(KV_async_inFlight_rq, &rq->state);
+
         /* Wake up sync IO threads having same key */
         wake_up_bit(&rq->state, KV_async_inFlight_rq);
 

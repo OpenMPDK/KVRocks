@@ -12,7 +12,7 @@
 int rocksdb_kill_odds = 0;
 std::vector<std::string> rocksdb_kill_prefix_blacklist;
 
-#ifndef NDEBUG
+//#ifndef NDEBUG
 namespace rocksdb {
 
 void TestKillRandom(std::string kill_point, int odds,
@@ -167,4 +167,4 @@ void SyncPoint::Process(const std::string& point, void* cb_arg) {
   cv_.notify_all();
 }
 }  // namespace rocksdb
-#endif  // NDEBUG
+//#endif  // NDEBUG

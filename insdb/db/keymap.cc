@@ -304,32 +304,17 @@ namespace insdb {
 
 
     /* ColMeta function */
-    bool ColMeta::HasReference() {
-        return (rep_[1] & first_flags_mask);
-    }
-    bool ColMeta::HasSecondChanceReference() {
-        return ((rep_[1] & first_flags_mask) == first_flags_second_ref_bit);
-    }
-    void ColMeta::SetSecondChanceReference() {
-        (rep_[1] = (rep_[1] & ~first_flags_mask) | first_flags_second_ref_bit);
-    }
-    void ColMeta::SetReference() {
-        (rep_[1] |= first_flags_mask);
-    }
-    void ColMeta::ClearReference() {
-        (rep_[1] &= ~first_flags_mask);
-    }
     bool ColMeta::IsDeleted() {
         return (rep_[0] & flags_deleted);
     }
     uint8_t ColMeta::ColumnID() {
-        return ((rep_[1] & ~first_flags_mask));
+        return ((rep_[1] & ~second_flags_ttl));
     }
     bool ColMeta::HasTTL() {
-        return (rep_[2] & second_flags_ttl);
+        return (rep_[1] & second_flags_ttl);
     }
     uint8_t ColMeta::KeyBlockOffset() {
-        return (rep_[2] & ~second_flags_ttl);
+        return (rep_[2]);
     }
     uint8_t ColMeta::GetColSize() {
         return (rep_[0] & ~flags_deleted);
@@ -345,7 +330,6 @@ namespace insdb {
 
     void ColMeta::ColInfo(ColumnData &col_data) {
         col_data.col_size = GetColSize();
-        col_data.referenced = HasReference();
         col_data.is_deleted = IsDeleted();
         col_data.column_id = ColumnID();
         col_data.has_ttl = HasTTL();
@@ -902,6 +886,11 @@ namespace insdb {
         KEYMAP_HDR *hdr = (KEYMAP_HDR*)(GetBaseAddr());
         return hdr->last_colinfo;
     }
+    bool Keymap::ColInfoExist(){
+        assert(HasArena());
+        KEYMAP_HDR *hdr = (KEYMAP_HDR*)(GetBaseAddr());
+        return hdr->start_colinfo != hdr->last_colinfo;
+    }
 
 
 
@@ -936,7 +925,7 @@ namespace insdb {
             node = (KeyNode*)(GetBaseAddr() + addr_offset);
             keyinfo = node->InitNoCompact(height, key, keyinfo_size, est_size);
         }
-        assert(keyinfo.size() == keyinfo_size);
+        assert(keyinfo.size() >= keyinfo_size);
         return node;
     }
 
@@ -1050,7 +1039,7 @@ namespace insdb {
         }
     }
 
-    Slice Keymap::_Insert(const KeySlice& key, uint32_t keyinfo_size, KeyMapHandle &node_offset) {
+    Slice Keymap::_Insert(const KeySlice& key, uint32_t keyinfo_size, KeyMapHandle &node_offset, bool &key_info_exist) {
         op_count_++;
         node_offset = 0;
         uint32_t prev[kMaxHeight];
@@ -1060,7 +1049,8 @@ namespace insdb {
         //assert(x == nullptr || !Equal(x->GetNodeKey(UseCompact()), key));
         if (x  && Equal(x->GetNodeKey(UseCompact()),key)) {
             node_offset = x_offset; 
-            return Slice(0);
+            key_info_exist = true;
+            return x->GetKeyInfo(UseCompact());
         }
 
         int height = RandomHeight();
@@ -1084,8 +1074,8 @@ namespace insdb {
     }
 
 
-    Slice Keymap::Insert(const KeySlice& key, uint32_t keyinfo_size, KeyMapHandle &node_offset) {
-        Slice keyinfo = _Insert(key, keyinfo_size, node_offset);
+    Slice Keymap::Insert(const KeySlice& key, uint32_t keyinfo_size, KeyMapHandle &node_offset, bool &key_info_exist) {
+        Slice keyinfo = _Insert(key, keyinfo_size, node_offset, key_info_exist);
 #ifdef USE_HASHMAP_RANDOMREAD
         if (!keyinfo.size()) return keyinfo;
         auto it = hashmap_->find(key.GetHashValue());
@@ -1114,7 +1104,7 @@ namespace insdb {
         uint32_t x_offset = FindGreaterOrEqual(key, prev);
         KeyNode* x = (KeyNode*)GetAddr(x_offset);
         if (x  && Equal(x->GetNodeKey(UseCompact()), key)) {
-            Slice orig_keyinfo = x->GetKeyInfoWithSize(UseCompact());
+            Slice orig_keyinfo = x->GetKeyInfo(UseCompact());
             if (orig_keyinfo.size() > keyinfo_size) { /* check in-place update */
                 node_offset = x_offset;
                 existing = true;
@@ -1491,19 +1481,6 @@ namespace insdb {
         col->ColInfo(col_data);
         return true;
     }
-
-    void Keymap::SetKeyReference(KeyMapHandle handle, uint8_t col_id) {
-        if (!HasArena()) return;
-        KeyNode *x = (KeyNode*)GetAddr(handle);
-        assert(x);
-        KeyMeta *meta = x->GetKeyMeta(GetBaseAddr(), UseCompact()); /* get latest KeyMeta */
-        assert(meta);
-        if (meta->HasUserKey()) return;
-        ColMeta* col = meta->GetColumn(col_id); /* get latest ColMeta */
-        if (col) col->SetReference();
-        return;
-    }
-
 
     /*
      * Fill column info.
@@ -2255,11 +2232,10 @@ namespace insdb {
                         uint32_t start_offset = new_col_info.size();
                         new_col_info.append(1, 0x0); /* reserve for column size */
                         uint8_t colid = colms[i].column_id;
-                        if (colms[i].referenced) colid |= 0xC0;
+                        if (colms[i].has_ttl) colid |= 0x80;
                         new_col_info.append(1, colid);
-                        uint8_t ttl_offset = colms[i].kb_offset;
-                        if (colms[i].has_ttl) ttl_offset |= 0x80;
-                        new_col_info.append(1, ttl_offset);
+                        uint8_t kb_offset = colms[i].kb_offset;
+                        new_col_info.append(1, kb_offset);
                         PutVarint64(&new_col_info, colms[i].iter_sequence);
                         if (colms[i].has_ttl) PutVarint64(&new_col_info, colms[i].ttl);
                         PutVarint64(&new_col_info, colms[i].ikey_sequence);

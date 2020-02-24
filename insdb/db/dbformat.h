@@ -105,8 +105,8 @@ namespace insdb {
     extern int kRequestAlignSize;
 
     extern const uint16_t kMaxAllocatorPool;
-    extern uint64_t kMaxCacheSize;
-    extern uint64_t kCacheSizeLowWatermark;
+    extern int64_t kMaxCacheSize;
+    extern int64_t kCacheSizeLowWatermark;
 
     extern uint32_t kMinUpdateCntForTableFlush;
     extern uint32_t kSKTableFlushWatermark;

@@ -51,6 +51,9 @@
 #include "util/crc32c.h"
 #include "util/arena.h"
 #include "db/keymap.h"
+
+
+
 //#define USE_HOTSCOTCH
 #ifdef USE_HOTSCOTCH
 #include "tsl/hopscotch_map.h"
@@ -96,9 +99,10 @@ namespace insdb {
     class KeyBlock;
     class KeyBlockPrimaryMeta;
 
-    class UVAllocatorPool;
-    class UKAllocatorPool;
-    class RequestNodeAllocatorPool;
+    class LRU_Cache;
+    class KBPM_Cache;
+    template <class T> class ObjectPoolShard;
+
 
 #ifdef USE_HOTSCOTCH
     typedef tsl::hopscotch_map<KeySlice, UserKey*, UKHash, UKEqual> HotscotchKeyHashMap;
@@ -175,148 +179,31 @@ namespace insdb {
         kHasBeenScheduled = 2,
     };
 
-    template <class T>
-        class ObjectAllocator{
-            private:
-                Spinlock lock_;
-                std::queue<T*> queue_;
-            public:
-                ObjectAllocator(): lock_(), queue_(){ }
-                ~ObjectAllocator(){
-                    T* obj;
-                    while(!queue_.empty()){
-                        obj = queue_.front();
-                        queue_.pop();
-                        delete obj;
-                    }
-                }
-                T* Alloc(uint32_t size = 0){
-                    T* obj;
-                    if(!queue_.empty() && !lock_.TryLock()){
-                        if (!queue_.empty()) {
-                            obj = queue_.front();
-                            queue_.pop();
-                            lock_.Unlock();
-                        } else {
-                            lock_.Unlock();
-                            obj = new T(size);
-                            obj->SetAllocator(this);
-                        }
-                    }else{
-                        obj = new T(size);
-                        obj->SetAllocator(this);
-                    }
-                    return obj;
-                }
-#if 0
-                void Free(T* obj, uint32_t max = 0){
-                    bool del = false;
-                    lock_.Lock();
-                    if(!max || queue_.size() < max)
-                        queue_.push(obj);
-                    else
-                        del = true;
-                    lock_.Unlock();
-                    if(del) delete obj;
-                }
-#endif
-                void Free(T* obj, uint32_t max = 0){
-                    bool del = false;
-                    T* del_obj;
-                    lock_.Lock();
-                    queue_.push(obj);
-                    if(max && queue_.size() >=  max) {
-                        del_obj = queue_.front();
-                        queue_.pop();
-                        del = true;
-                    }
-                    lock_.Unlock();
-                    if(del) delete del_obj;
-                }
-
-        };
-
-    template <class T>
-        class SimpleObjectAllocator{
-            private:
-                Spinlock lock_;
-                std::queue<T*> queue_;
-            public:
-                SimpleObjectAllocator(): lock_(), queue_(){ }
-                ~SimpleObjectAllocator(){
-                    T* obj;
-                    while(!queue_.empty()){
-                        obj = queue_.front();
-                        queue_.pop();
-                        delete obj;
-                    }
-                }
-                T* Alloc(){
-                    T* obj;
-                    if(!queue_.empty() && !lock_.TryLock()){
-                        if (!queue_.empty()) {
-                            obj = queue_.front();
-                            queue_.pop();
-                            lock_.Unlock();
-                        } else {
-                            lock_.Unlock();
-                            obj = new T();
-                            obj->SetAllocator(this);
-                        }
-                    }else{
-                        obj = new T();
-                        obj->SetAllocator(this);
-                    }
-                    return obj;
-                }
-#if 0
-                void Free(T* obj, uint32_t max = 0){
-                    bool del = false;
-                    lock_.Lock();
-                    if(!max || queue_.size() < max)
-                        queue_.push(obj);
-                    else
-                        del = true;
-                    lock_.Unlock();
-                    if(del) delete obj;
-                }
-#endif
-                void Free(T* obj, uint32_t max = 0){
-                    bool del = false;
-                    T* del_obj;
-                    lock_.Lock();
-                    queue_.push(obj);
-                    if(max && queue_.size() >=  max) {
-                        del_obj = queue_.front();
-                        queue_.pop();
-                        del = true;
-                    }
-                    lock_.Unlock();
-                    if(del) delete del_obj;
-                }
-        };
-
     enum RequestType {
         kPutType = 0,
         kDelType = 1,
         kNrRequestType = 2,
     };
 
+
     /* The RequestNode is used to insert a user request into the pending request queue.*/
-    class RequestNode{
+    class RequestNode {
         /* Free RequestNode Registration */
         private:
             uint8_t col_id_;
             ColumnNode *latest_col_node_;
             std::string trxn_;
             uint16_t trxn_cnt_;// merged trxn cnt + head(1)
-            ObjectAllocator<RequestNode>* allocator_;
+            ObjectPoolShard<RequestNode>* alloc_;
         public:
-            RequestNode(ObjectAllocator<RequestNode>* allocator):col_id_(0), latest_col_node_(NULL), allocator_(allocator){}
-            RequestNode(uint32_t size):col_id_(0), latest_col_node_(NULL), allocator_(NULL){}
+            RequestNode(uint32_t size, ObjectPoolShard<RequestNode>* alloc) :
+                col_id_(0), latest_col_node_(NULL), trxn_(), trxn_cnt_(0), alloc_(alloc) {}
+
             void RequestNodeInit(uint8_t col_id){
                 col_id_ = col_id;
                 latest_col_node_ = NULL;
+                trxn_.resize(0);
+                trxn_cnt_ = 0;
             }
 
             uint8_t GetRequestNodeColumnID(void){ return col_id_; }
@@ -344,8 +231,12 @@ namespace insdb {
             ColumnNode* GetRequestNodeLatestColumnNode(){
                 return latest_col_node_;
             }
-            void SetAllocator(ObjectAllocator<RequestNode>* allocator){ allocator_ = allocator; }
-            ObjectAllocator<RequestNode>* GetAllocator(){ return allocator_; }
+
+            void* GetAllocator() { return alloc_; }
+
+            unsigned Realloc(unsigned size) { return 0; }
+
+            void CleanUp() {;}
     };
 
     enum PrefetchDirection {
@@ -355,7 +246,8 @@ namespace insdb {
         kEndType = 3,
     };
 
-#define SizeAlignment(size) ((size + (kRequestAlignSize-1)) & (~(kRequestAlignSize-1)))
+#define P2ROUNDUP(x, a)     (-(-(x) & -(__typeof__(x))(a)))
+#define SizeAlignment(s)    P2ROUNDUP((s), kRequestAlignSize) /* Drive IO alignment requirement */
 
     enum ColumnStatus{
         kValidColumn = 0,
@@ -419,9 +311,7 @@ namespace insdb {
         RequestType type;
         uint8_t col_id;
         SequenceNumber ikey_seq;
-#if 0
         SequenceNumber iter_seq;
-#endif
         uint64_t ttl;
         TrxnInfo *trxninfo;
         KeyBlockPrimaryMeta* kbpm;
@@ -500,10 +390,27 @@ namespace insdb {
         struct InSDBThreadsState * state;
         SequenceNumber largest_ikey;
         SequenceNumber largest_seq;
+        uint32_t new_uk;
+        uint32_t removed_uk;
+        uint32_t replace_uk;
         uint32_t start_index;
         uint32_t count;
         DBRecovery* recovery;
     };
+
+
+    /*
+     * RecoverLog.
+     *  - During DB recovery, it save lastest recovered information ...
+     *  - RecoverLog can provide lastest recovered point.
+     * |4B(CRC)|4B(size)|8B(latest_ikey)|8B(latest_seq)|
+     *
+     */
+#define RECOVER_LOG_CRC_OFFSET      (0)
+#define RECOVER_LOG_SIZE_OFFSET     (4)
+#define RECOVER_LOG_IKEY_OFFSET     (8)
+#define RECOVER_LOG_SEQ_OFFSET      (16)
+#define RECOVER_LOG_SIZE            (24)
 
     class DBRecovery {
         private:
@@ -527,9 +434,11 @@ namespace insdb {
             void UpdateColInfoToUk(std::string &col_info, KeyHashMap *key_hashmap, uint64_t &largest_ikey, uint64_t &largest_seq);
 #endif
             void FlushUserKey(UserKey* uk, uint64_t &largest_ikey, uint64_t &largest_seq);
-            void LoadKeymapAndProcessColTable(std::vector<KEYMAP_HDR*> &keymap_hdrs, SequenceNumber &largest_ikey, SequenceNumber &largest_seq, uint32_t start_index, uint32_t count);
+            void LoadKeymapAndProcessColTable(std::vector<KEYMAP_HDR*> &keymap_hdrs, SequenceNumber &largest_ikey, SequenceNumber &largest_seq,
+                   uint32_t &new_uk, uint32_t &removed_uk, uint32_t &replace_uk, uint32_t start_index, uint32_t count);
             void RecoverSKTable(RecoverSKTableCtx* recover_ctx) {
-                LoadKeymapAndProcessColTable(keymap_hdrs_, recover_ctx->largest_ikey, recover_ctx->largest_seq, recover_ctx->start_index, recover_ctx->count);
+                LoadKeymapAndProcessColTable(keymap_hdrs_, recover_ctx->largest_ikey, recover_ctx->largest_seq, recover_ctx->new_uk, recover_ctx->removed_uk, recover_ctx->replace_uk,
+                        recover_ctx->start_index, recover_ctx->count);
                 recover_ctx->state->mu.Lock();
                 recover_ctx->state->num_running -= 1;
                 recover_ctx->state->mu.Unlock(); 
@@ -542,7 +451,7 @@ namespace insdb {
             }
             bool AddCompletedColumn(std::unordered_map<TransactionID, TransactionColCount> &TRXNList, TransactionID col_trxn_id, uint32_t count);
             void AddUncompletedColumn(std::unordered_map<TransactionID, TransactionColCount> &TRXNList, TransactionID col_trxn_id, uint32_t count);
-            void InsertRecoveredKeyToKeymap(Manifest *mf, ColumnInfo &colinfo);
+            void InsertRecoveredKeyToKeymap(Manifest *mf, ColumnInfo &colinfo, uint32_t &new_uk, uint32_t &removed_uk, uint32_t &replace_uk);
             bool UpdateAllKBMsInOrder();
             Status RunRecovery();
             Env *GetEnv() { return env_; }
@@ -556,6 +465,9 @@ namespace insdb {
             DBRecovery *recovery_;
             uint16_t worker_id_;
             uint64_t thread_id_;
+            uint32_t new_uk_;
+            uint32_t removed_uk_;
+            uint32_t replace_uk_;
             uint64_t largest_seq_;
             uint64_t largest_ikey_;
             Status status_;
@@ -564,7 +476,7 @@ namespace insdb {
 
         public:
             DBRecoveryThread(DBRecovery *recovery, uint16_t worker_id) :
-                recovery_(recovery), worker_id_(worker_id), thread_id_(0), largest_seq_(0), largest_ikey_(0), status_() { }
+                recovery_(recovery), worker_id_(worker_id), thread_id_(0), new_uk_(0), removed_uk_(0), replace_uk_(0), largest_seq_(0), largest_ikey_(0), status_() { }
             static void DBRecoveryThread_(void* recovery)
             { reinterpret_cast<DBRecoveryThread*>(recovery)->ThreadFn(); }
             void ThreadFn();
@@ -577,6 +489,9 @@ namespace insdb {
             Status GetStatus() { return status_; }
             uint64_t GetLargestIKey() { return largest_ikey_; }
             uint64_t GetLargestSeq() { return largest_seq_; }
+            uint32_t GetNewUK() { return new_uk_;}
+            uint32_t GetRemovedUK() { return removed_uk_;}
+            uint32_t GetReplaceUK() { return replace_uk_;}
             std::unordered_map<TransactionID, TransactionColCount> &GetUncompletedTrxnList() { return UncompletedTRXNList_; }
             std::list<ColumnInfo> &GetUncompletedKeyList() { return UncompletedKeyList_; }
     };
@@ -607,132 +522,6 @@ namespace insdb {
       memcpy(&thread_id, &tid, std::min(sizeof(thread_id), sizeof(tid)));
       return thread_id;
       }*/
-    /**
-      Simple Memory Pool logic.
-      Thie framework provide a simple interface for memory pool.
-      Only AllocMemoryNode() and FreeMomoryNode() interface provides.
-
-      1. Constructor takes on parameter for qsize, which will keep in memory.
-      2. class use this mechanism must provide it's own mechnaism based on it's internal requirement.
-      a. If class need to reinitialize object, each class must provides itself.
-      b. If class need to cleanup some extra information, each class need to implement it on destructor fucntion.
-      */
-    template <class T>
-        class MemoryPool {
-            private:
-                Spinlock lock_;
-                uint32_t qsize_;
-                std::queue<T*>  free_node_;
-                Manifest* mf_;
-            public:
-                MemoryPool(int qsize, Manifest *mf) : lock_(), qsize_(qsize), free_node_(), mf_(mf) {
-                    for (int i = 0; i < qsize; i++) free_node_.push(new T(mf_));
-                }
-                ~MemoryPool() {
-                    T* node = NULL;
-                    while(!free_node_.empty()) {
-                        node = free_node_.front();
-                        assert(node);
-                        free_node_.pop();
-                        delete node;
-                    }
-                }
-                T* AllocMemoryNode() {
-                    T* node = NULL;
-                    if (/*free_node_.size() > 128 && */!lock_.TryLock()) {
-                        if (free_node_.empty()) {
-                            node = new T(mf_);
-                        } else {
-                            node = free_node_.front();
-                            free_node_.pop();
-                        }
-                        lock_.Unlock();
-                    } else node = new T(mf_);
-                    return node;
-                }
-
-                void FreeMemoryNode(T* node) {
-                    node->CleanUp();
-                    if (free_node_.size() < qsize_ && !lock_.TryLock()) {
-                        free_node_.push(node);
-                        lock_.Unlock();
-                    } else delete node;
-                }
-        };
-    class RawMemoryPool {
-        private:
-            /*this memory pool is per thread pool So, we don't need to have lock */
-            //Spinlock lock_;
-            uint32_t qsize_;
-            std::queue<Slice>  free_node_;
-        public:
-            RawMemoryPool(int qsize) : /*lock_(),*/ qsize_(qsize), free_node_(){}
-            ~RawMemoryPool() {
-                Slice node;
-                while(!free_node_.empty()) {
-                    node = free_node_.front();
-                    free_node_.pop();
-                    free(const_cast<char*>(node.data()));
-                }
-            }
-            Slice AllocRawMemoryNode(uint32_t size) {
-                Slice node;
-                //lock_.Lock();
-                if (free_node_.empty()) {
-                    node = Slice((char*)malloc(size), size);
-                } else {
-                    node = free_node_.front();
-                    free_node_.pop();
-                    if(node.size() < size){
-                        node = Slice((char*)realloc(const_cast<char*>(node.data()), size), size);
-                    }
-                }
-                //lock_.Unlock();
-                return node;
-            }
-
-            void FreeRawMemoryNode(Slice node) {
-                //lock_.Lock();
-                if (free_node_.size() < qsize_) {
-                    free_node_.push(node);
-                } else {
-                    free(const_cast<char*>(node.data()));
-                }
-                //lock_.Unlock();
-            }
-    };
-
-    /* Per Thread Raw Memory Pool*/
-    class PerThreadRawMemoryPool{
-        private:
-            pthread_key_t pool_id_;
-            static void DestroyBuffer(void *arg){
-                RawMemoryPool *mem_pool = reinterpret_cast<RawMemoryPool*>(arg);
-                delete mem_pool;
-            }
-        public:
-            explicit PerThreadRawMemoryPool() { 
-                if(pthread_key_create(&pool_id_, DestroyBuffer)) abort(); 
-            } 
-            ~PerThreadRawMemoryPool(){
-                if (pthread_key_delete(pool_id_)) abort();
-            }
-            Slice PerThreadAllocRawMemoryNode(uint32_t size) {
-
-                RawMemoryPool *mem_pool = reinterpret_cast<RawMemoryPool *>(pthread_getspecific(pool_id_));
-                if(!mem_pool){
-                    mem_pool= new RawMemoryPool(16*1024);
-                    pthread_setspecific(pool_id_, mem_pool);
-                }
-                return mem_pool->AllocRawMemoryNode(size);
-            }
-            void PerThreadFreeRawMemoryNode(Slice node) {
-                RawMemoryPool *mem_pool = reinterpret_cast<RawMemoryPool *>(pthread_getspecific(pool_id_));
-                /*It must be NOT NULL. it should be allocated in AllocRawMemoryNode()*/
-                assert(mem_pool);
-                mem_pool->FreeRawMemoryNode(node);
-            }
-    };
 
     /* DIOBuffer : Per Thread Device I/O Buffer */
     class DIOBuffer{
@@ -892,73 +681,193 @@ retry:
         uint8_t offset;
     };
 
-    class UVAllocatorPool{
-        private:
-            pthread_key_t pool_id_;
-            volatile uint16_t id_;
-            Manifest *mf_;
-        public:
-            explicit UVAllocatorPool(Manifest *mf) { 
-                if(pthread_key_create(&pool_id_, NULL)) abort(); 
-                id_ = 0;
-                mf_ = mf;
-            } 
-            ~UVAllocatorPool(){
-                if (pthread_key_delete(pool_id_)) abort();
+    template <class T>
+    class ObjectPoolShard {
+    public:
+        ObjectPoolShard(unsigned num_entries) :
+            entryc_(num_entries),
+            mem_alloc_(0),
+            mem_alloc_buf_(0),
+            pendingc_(0) {}
+        ~ObjectPoolShard() {
+            while (!free_list_.empty()) {
+                T* obj = free_list_.front();
+                free_list_.pop_front();
+                delete obj;
+                pendingc_--;
+                DecMetaSize(sizeof (T));
             }
-            ObjectAllocator<UserValue>* GetUVAllocator();
+            //TODO: J.L.: to be uncommented once KBPM issue is fixed
+            //assert(!pendingc_);
+            //assert(!mem_alloc_);
+            //assert(!mem_alloc_buf_);
+        }
+
+        T* Getlocal(uint32_t size) {
+            T* obj = nullptr;
+
+            if (!free_list_.empty() && !lock_.TryLock()) {
+                if (!free_list_.empty()) {
+                    obj = free_list_.front();
+                    free_list_.pop_front();
+                }
+                lock_.Unlock();
+            }
+            if (obj) {
+                size = obj->Realloc(size);
+            } else {
+                obj = new T(size, this);
+                pendingc_++;
+                IncMetaSize(sizeof (T));
+            }
+
+            return obj;
+        }
+
+        void Putlocal(T* obj) {
+            if (free_list_.size() < entryc_) {
+                lock_.Lock();
+                free_list_.push_back(obj);
+                lock_.Unlock();
+            } else {
+                T* tmp_obj;
+                lock_.Lock();
+                free_list_.push_back(obj);
+                tmp_obj = free_list_.front();
+                free_list_.pop_front();
+                lock_.Unlock();
+                delete tmp_obj;
+                pendingc_--;
+                DecMetaSize(sizeof (T));
+            }
+        }
+
+        void* AllocBuf(unsigned size) {
+            IncBufSize(size);
+            return malloc(size);
+        }
+        void FreeBuf(void* p, unsigned size) {
+            free(p);
+            DecBufSize(size);
+        }
+
+        uint64_t MemStats() {
+            return mem_alloc_.load(std::memory_order_relaxed) +
+                   mem_alloc_buf_.load(std::memory_order_relaxed);
+        }
+
+        void IncMetaSize(unsigned size) {
+            mem_alloc_.fetch_add(size, std::memory_order_relaxed);
+        }
+        void DecMetaSize(unsigned size) {
+            mem_alloc_.fetch_sub(size, std::memory_order_relaxed);
+        }
+        void IncBufSize(unsigned size) {
+            mem_alloc_buf_.fetch_add(size, std::memory_order_relaxed);
+            if (mem_alloc_buf_ & (1ULL << 63))
+                abort();
+        }
+        void DecBufSize(unsigned size) {
+            mem_alloc_buf_.fetch_sub(size, std::memory_order_relaxed);
+            if (mem_alloc_buf_ & (1ULL << 63))
+                abort();
+        }
+
+    private:
+        __attribute__((aligned(64)))
+        Spinlock lock_;
+        std::list<T*> free_list_;
+        std::atomic<uint64_t> mem_alloc_;
+        std::atomic<uint64_t> mem_alloc_buf_;
+        std::atomic<uint32_t> pendingc_;        /* for debug only */
+        unsigned entryc_;
     };
 
-    class CNAllocatorPool{
-        private:
-            pthread_key_t pool_id_;
-            volatile uint16_t id_;
-            Manifest *mf_;
-        public:
-            explicit CNAllocatorPool(Manifest *mf) {
-                if(pthread_key_create(&pool_id_, NULL)) abort();
-                id_ = 0;
-                mf_ = mf;
-            }
-            ~CNAllocatorPool(){
-                if (pthread_key_delete(pool_id_)) abort();
-            }
-            SimpleObjectAllocator<ColumnNode>* GetCNAllocator();
-    };
+    template <class T>
+    class ObjectPool {
+    public:
+        ObjectPool(size_t num_pools, size_t num_entries, uint64_t lim, std::string name):
+            shardc_(num_pools), mem_lim_(lim), mem_sleep_(0), mem_total_(0), curr_idx_(0)
+        {
+            name_ = new std::string(name.c_str());
+            if (pthread_key_create(&thr_key_, NULL))
+                abort();
 
-    class UKAllocatorPool{
-        private:
-            pthread_key_t pool_id_;
-            volatile uint16_t id_;
-            Manifest *mf_;
-        public:
-            explicit UKAllocatorPool(Manifest *mf) { 
-                if(pthread_key_create(&pool_id_, NULL)) abort(); 
-                id_ = 0;
-                mf_ = mf;
-            } 
-            ~UKAllocatorPool(){
-                if (pthread_key_delete(pool_id_)) abort();
-            }
-            ObjectAllocator<UserKey>* GetUKAllocator();
-    };
-    class RequestNodeAllocatorPool{
-        private:
-            pthread_key_t pool_id_;
-            volatile uint16_t id_;
-            Manifest *mf_;
-        public:
-            explicit RequestNodeAllocatorPool(Manifest *mf) { 
-                if(pthread_key_create(&pool_id_, NULL)) abort(); 
-                id_ = 0;
-                mf_ = mf;
-            } 
-            ~RequestNodeAllocatorPool(){
-                if (pthread_key_delete(pool_id_)) abort();
-            }
-            ObjectAllocator<RequestNode>* GetRequestNodeAllocator();
-    };
+            int ret = posix_memalign((void**)&shards_, 64, shardc_ * sizeof (ObjectPoolShard<T>*));
+            if (ret)
+                abort();
 
+            for (int i=0; i<shardc_; i++)
+                shards_[i] = new ObjectPoolShard<T>(num_entries);
+        }
+
+        ~ObjectPool() {
+            for (int i=0; i<shardc_; i++)
+                delete shards_[i];
+
+            free(shards_);
+
+            if (pthread_key_delete(thr_key_))
+                abort();
+
+            delete name_;
+        }
+
+        /* Never fail */
+        T* Get(uint32_t size = 0) {
+            int cnt = 0;
+            T* obj = nullptr;
+            ObjectPoolShard<T>* shard;
+
+
+#define unlikely(x) __builtin_expect(!!(x), 0)
+            while (unlikely(mem_sleep_)) {
+                printf("Sleep..\n");
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            }
+
+            shard = reinterpret_cast<ObjectPoolShard<T>*>(pthread_getspecific(thr_key_));
+            if (!shard) {
+                uint64_t i_next, i = curr_idx_;
+                do {
+                    i_next = (i + 1) % shardc_;
+                } while (!curr_idx_.compare_exchange_weak(i, i_next));
+                shard = shards_[i];
+                pthread_setspecific(thr_key_, reinterpret_cast<void*>(shard));
+            }
+
+            return shard->Getlocal(size);
+        }
+
+        void Put(T* obj) {
+            ObjectPoolShard<T>* shard = static_cast<insdb::ObjectPoolShard<T>*>(obj->GetAllocator());
+            obj->CleanUp();
+            shard->Putlocal(obj);
+        }
+
+        uint64_t PoolMemStats() {
+            uint64_t sum = 0;
+
+            for (int i=0; i<shardc_; i++)
+                sum += shards_[i]->MemStats();
+            mem_sleep_ = (sum > mem_lim_) ? 1 : 0;
+
+            return mem_total_ = sum;
+        }
+
+    private:
+        __attribute__((aligned(64)))
+        pthread_key_t thr_key_;
+        ObjectPoolShard<T>** shards_;
+        uint64_t mem_lim_;
+        uint32_t mem_sleep_;
+        uint64_t mem_total_;  /* for debug */
+
+        std::atomic<uint64_t> curr_idx_;
+        unsigned shardc_;
+        Manifest *mf_;
+        std::string* name_;
+    };
 
     struct KBPMUpdateVector{
         std::vector<InSDBKey> key_vec;
@@ -1009,6 +918,7 @@ retry:
 #ifdef INSDB_USE_HASHMAP
             typedef folly::ConcurrentHashMap<SequenceNumber, KeyBlockPrimaryMeta*, KBMHash> KBPMHashMap;
 #endif
+            typedef LRU_Cache  KBCache;
             Env *env_;
             const Options options_;
             std::string dbname_;
@@ -1034,7 +944,8 @@ retry:
             TransactionID next_trxn_id_;
             ////////////////////////////////////////////////////////////////
             std::atomic<uint32_t> next_sktable_id_; 
-            std::atomic<int64_t> memory_usage_;
+            std::atomic<int64_t> mem_use_;
+            int64_t mem_use_cached_;
             std::atomic<int64_t> skt_memory_usage_;
 #ifdef MEM_TRACE
             std::atomic<uint64_t> skt_usage_;
@@ -1084,9 +995,9 @@ retry:
             std::atomic<uint32_t> flushed_key_cnt_;
             bool enable_blocking_read_;
 #endif
-
             uint32_t kbpm_pad_size_;
             std::atomic<KeyBlockPrimaryMeta*> *kbpm_pad_;
+            std::atomic<KeyBlock*> *kb_pad_;
 
             /*The last Col Info Table key for flush the table before update in-log KBPM in KBMUpdateThread */
             std::atomic<InSDBKey> last_cit_key_;
@@ -1170,10 +1081,6 @@ retry:
             Spinlock skt_kbm_update_cache_lock_;
             CacheList<KeyBlockPrimaryMeta> kbpm_update_list_;
 
-            /* memory pool definition */
-            MemoryPool <KeyBlock> *kb_pool_;
-            MemoryPool <KeyBlockPrimaryMeta> *kbpm_pool_;
-
             port::Mutex skt_flush_mu_;
             port::CondVar skt_flush_cv_;
 
@@ -1208,15 +1115,13 @@ retry:
             ////////////////////////////////////////////////////////////////
             uint32_t max_iter_key_buffer_size_;
             uint32_t max_iter_key_offset_buffer_size_;
-            ObjectAllocator<UserValue> *uv_allocator_;
-            SimpleObjectAllocator<ColumnNode> *cn_allocator_;
-            ObjectAllocator<UserKey>   *uk_allocator_;
-            ObjectAllocator<RequestNode>   *request_node_allocator_;
 
-            UVAllocatorPool uv_allocator_pool_;
-            CNAllocatorPool cn_allocator_pool_;
-            UKAllocatorPool uk_allocator_pool_;
-            RequestNodeAllocatorPool request_node_allocator_pool_;
+            ObjectPool<UserKey>*     uk_pool_;
+            ObjectPool<UserValue>*   uv_pool_;
+            ObjectPool<ColumnNode>*  cn_pool_;
+            ObjectPool<RequestNode>* req_pool_;
+            ObjectPool<KeyBlock>*    kb_pool_;
+            ObjectPool<KeyBlockPrimaryMeta>* kbpm_pool_;
             //Spinlock *free_request_node_spinlock_;
             //std::deque<RequestNode*> *free_request_node_;
 
@@ -1226,7 +1131,8 @@ retry:
             Spinlock free_skt_buffer_spinlock_;
             std::deque<Slice> free_skt_buffer_;
 
-            //PerThreadRawMemoryPool thread_memory_pool_;
+            KBCache * kb_cache_;
+            KBPM_Cache *kbpm_cache_;
             bool normal_start_;
             uint32_t dbhash_;
         public:
@@ -1243,6 +1149,18 @@ retry:
             };
             Manifest(const Options& option, std::string& dbname);
             ~Manifest();
+
+            bool AddKBCache(SequenceNumber key, KeyBlock* kb);
+            KeyBlock* RefKBCache(SequenceNumber key);
+            void RemoveDummyKB(KeyBlock* kb);
+            void DummyKBToActive(SequenceNumber key, KeyBlock *kb);
+            KeyBlock* FindKBCache(SequenceNumber key);
+            KeyBlock* FindKBCacheWithoutRef(SequenceNumber key);
+            void EvictKBCache();
+            void CleanupKBCache();
+            void EvictKBPMCache();
+            void AddKBPMCache(SequenceNumber key, KeyBlockPrimaryMeta* meta);
+
 
 #ifdef USE_HOTSCOTCH
             void KeyHashLock(){hopscotch_key_hasp_lock_.Lock();}
@@ -1303,6 +1221,11 @@ retry:
             const static uint8_t flags_skt_flush_thread_busy    = 0x20;
             const static uint8_t flags_log_cleanup_requested    = 0x40;
             const static uint8_t flags_clean_to_dirty           = 0x80;
+
+            const static uint64_t def_uk_entry_cnt          = 64 * 1024;
+            const static uint64_t def_req_entry_cnt         = 1024 * 1024;
+            const static uint64_t def_uv_entry_cnt          = 8 * 1024;
+            const static uint64_t def_cn_entry_cnt          = 1024 * 1024;
 
             bool IsInSKTableFlush() { return (flags_.load() & flags_memory_reclaim); }
             void SetSKTableFlush() { flags_.fetch_or(flags_memory_reclaim) ; }
@@ -1392,7 +1315,7 @@ retry:
 #else
             Arena* LoadKeymapFromDevice(uint32_t skt_id, uint32_t keymap_size, GetType type);
 #endif
-            Status LoadColInfoFromDevice(uint32_t skt_id, uint32_t cur_col_id, std::string &col_info);
+            Status LoadColInfoFromDevice(uint32_t skt_id, uint32_t &cur_col_id, std::string &col_info);
             Status ReadAheadSKTableMeta(InSDBMetaType type, uint32_t skt_id, int buffer_size = kMaxSKTableSize);
             Status DeleteSKTableMeta(InSDBMetaType type, uint32_t skt_id, uint16_t nr_key = 1);
             Status ReadSKTableInfo(uint32_t skt_id, SKTableInfo* reocver);
@@ -1450,22 +1373,34 @@ retry:
             /////////////////////////////////////////// END  : Sorted list related functions ///////////////////////////////////////////
 
             /////////////////////////////////////////// START: Dirty/KBMUpdate/Clean Cache Management ///////////////////////////////////////////
-            //For Eviction
-            int64_t MemoryUsage(){
-                return memory_usage_.load(std::memory_order_relaxed);
+            int64_t MemUseUpdate() {
+                mem_use_cached_ = mem_use_ +
+                                  uk_pool_->PoolMemStats() + uv_pool_->PoolMemStats() +
+                                  cn_pool_->PoolMemStats() + req_pool_->PoolMemStats() +
+                                  kb_pool_->PoolMemStats() + kbpm_pool_->PoolMemStats();
+                return mem_use_cached_;
             }
+            int64_t MemUse() { return mem_use_cached_; }
+
+            /* Try your best NOT to use update version in hot path */
+            bool MemUseHigh() { return MemUse() > kMaxCacheSize; }
+            bool MemUseLow() { return MemUse() < kCacheSizeLowWatermark; }
+
+            bool MemUseHighUpdate() { return MemUseUpdate() > kMaxCacheSize; }
+            bool MemUseLowUpdate() { return MemUseUpdate() < kCacheSizeLowWatermark; }
+
             int64_t SKTMemoryUsage(){
                 return skt_memory_usage_.load(std::memory_order_relaxed);
             }
             void IncreaseMemoryUsage(int32_t size){
 #ifdef MEM_TRACE
-                int64_t old_val = memory_usage_.fetch_add(size, std::memory_order_relaxed);
+                int64_t old_val = mem_use_.fetch_add(size, std::memory_order_relaxed);
                 if ((old_val >> 27) !=  ((old_val + size) >> 27)) {
                     printf("MEM: cur mem %ld: skt %ld, uk %ld, col %ld, sktd %ld, kv %ld, iterpad %ld\n"
                             "FLUSH & SKT: miss(%ld):hit(%ld):ToClean(%ld):ToDirt(%ld):new skt(%ld), Log:ToClean(%ld),Evict:evicted_skt(%ld)\n"
                             "PR: iter(%ld) next(%ld) clear(%ld) skip(%ld) evicted_with_pr(%ld)"
                             "evict_iter(%ld) evict_skt_iter(%ld) evict_stop(%ld) evict_reclaim(%ld)\n\n",
-                            memory_usage_.load(std::memory_order_relaxed),
+                            mem_use_.load(std::memory_order_relaxed),
                             skt_usage_.load(std::memory_order_relaxed),
                             uk_usage_.load(std::memory_order_relaxed),
                             col_usage_.load(std::memory_order_relaxed),
@@ -1483,18 +1418,18 @@ retry:
                             evict_stop_skt_ref_, evict_recalim_);
                 }
 #else
-                memory_usage_.fetch_add(size, std::memory_order_relaxed);
+                mem_use_.fetch_add(size, std::memory_order_relaxed);
 #endif 
             }
             void DecreaseMemoryUsage(int32_t size){
 #ifdef MEM_TRACE
-                uint64_t old_val = memory_usage_.fetch_sub(size, std::memory_order_relaxed);
+                uint64_t old_val = mem_use_.fetch_sub(size, std::memory_order_relaxed);
                 if ((old_val >> 27) !=  ((old_val - size) >> 27)) {
                     printf("MEM: cur mem %ld: skt %ld, uk %ld, col %ld, sktd %ld, kv %ld, iterpad %ld\n"
                             "FLUSH & SKT: miss(%ld):hit(%ld):ToClean(%ld):ToDirt(%ld):new skt(%ld), Log:ToClean(%ld),Evict:evicted_skt(%ld)\n"
                             "PR: iter(%ld) next(%ld) clear(%ld) skip(%ld) evicted_with_pr(%ld)"
                             "evict_iter(%ld) evict_skt_iter(%ld) evict_stop(%ld) evict_reclaim(%ld)\n\n",
-                            memory_usage_.load(std::memory_order_relaxed),
+                            mem_use_.load(std::memory_order_relaxed),
                             skt_usage_.load(std::memory_order_relaxed),
                             uk_usage_.load(std::memory_order_relaxed),
                             col_usage_.load(std::memory_order_relaxed),
@@ -1512,7 +1447,7 @@ retry:
                             evict_stop_skt_ref_, evict_recalim_);
                 }
 #else
-                memory_usage_.fetch_sub(size, std::memory_order_relaxed);
+                mem_use_.fetch_sub(size, std::memory_order_relaxed);
 #endif 
             }
 
@@ -1697,7 +1632,7 @@ retry:
                 update_cnt_.fetch_sub(size, std::memory_order_relaxed);
             }
 #endif
-            bool CheckKeyEvictionThreshold(void){ return (MemoryUsage() > kMaxCacheSize); }
+            bool CheckKeyEvictionThreshold(void) { return MemUseHigh(); }
             void InsertSKTableMemCache(SKTableMem* sktm, SKTCacheType type, uint16_t cache);
             void InsertSKTableMemCache(SKTableMem* sktm, SKTCacheType type);
             void SpliceCacheList(std::list<SKTableMem*> &skt_list, SKTCacheType type, bool to_front = false);
@@ -1733,7 +1668,7 @@ retry:
                 return true;
             }
             bool CheckExitCondition(){
-                if(cache_thread_shutdown_.load(std::memory_order_relaxed) && IsAllSKTCacheListEmpty() && !IsCacheThreadsBusy() && IsWorkerLogCleanupQueueEmpty() && flushed_key_hashmap_->empty())
+                if(cache_thread_shutdown_.load(std::memory_order_relaxed) && IsAllSKTCacheListEmpty() && !IsCacheThreadsBusy() && IsWorkerLogCleanupQueueEmpty() && flushed_key_hashmap_->empty() && IsSKTKBMUpdateListEmpty())
                     return true;
                 return false;
             }
@@ -1757,6 +1692,7 @@ retry:
             bool SKTableReclaim(SKTableMem *skt);
             void SKTableReclaim(SKTableMem *skt, int64_t &reclaim_size, bool force_reclaim, std::list<SKTableMem*> &clean_list, std::list<SKTableMem*> &dirty_list );
             //Eviction
+            void SKTableCleanup(SKTableMem *skt, int64_t &reclaim_size, std::list<SKTableMem*> &clean_list, std::list<SKTableMem*> &dirty_list);
             void EvictUserKeys(std::list<SKTableMem*> &skt_list, int64_t &reclaim_size, bool cleanup);
 
             uint16_t GetOffloadFlushCount();
@@ -1834,21 +1770,13 @@ retry:
             /* Worker Thread calls it after request submission */
             void FreeRequestNode(RequestNode* req_node);
 
-            /* memory pool function */
-            void CreateMemoryPool() {
-                kb_pool_ = new MemoryPool<KeyBlock>(1024, this);
-                kbpm_pool_ = new MemoryPool<KeyBlockPrimaryMeta>(1024, this);
-            }
-            void DestroyMemoryPool() {
-                delete kb_pool_;
-                delete kbpm_pool_;
-            }
-
             KeyBlock *AllocKB();
             void FreeKB(KeyBlock *node);
-            KeyBlockPrimaryMeta *AllocKBPM() { return kbpm_pool_->AllocMemoryNode(); }
-            void FreeKBPM(KeyBlockPrimaryMeta * node) { kbpm_pool_->FreeMemoryNode(node); }
+            KeyBlockPrimaryMeta *AllocKBPM() { return kbpm_pool_->Get(); }
+            void FreeKBPM(KeyBlockPrimaryMeta * node) { kbpm_pool_->Put(node); }
+
             void ClearKBPMPad(KeyBlockPrimaryMeta *kbpm);
+            void ClearKBPad(KeyBlock *kb);
 
             /*Iterator Scratch Pad*/
             uint32_t GetMaxIterKeyBufferSize(void){
@@ -1894,15 +1822,11 @@ retry:
                 return new_size;
             }
 
-            ObjectAllocator<UserValue>* GetUVAllocator(uint16_t id){ return &uv_allocator_[id]; }
-            SimpleObjectAllocator<ColumnNode>* GetCNAllocator(uint16_t id){ return &cn_allocator_[id]; }
-            ObjectAllocator<UserKey>* GetUKAllocator(uint16_t id){ return &uk_allocator_[id]; }
-            ObjectAllocator<RequestNode>* GetRequestNodeAllocator(uint16_t id){ return &request_node_allocator_[id]; }
             /////////////////////////////////////////// END  : Memory Allocation/Deallocation ///////////////////////////////////////////
 
             /////////////////////////////////////////// START: User Key & Value[UserKey/SKTDF/KBPM/KBML] Manageement ///////////////////////////////////////////
 
-            KeyBlock* LoadValue(uint64_t insdb_key_seq, uint32_t ivalue_size, bool *from_readahead, KeyBlockPrimaryMeta* kbpm, bool report_error = false);
+            bool LoadValue(uint64_t insdb_key_seq, uint32_t ivalue_size, bool *from_readahead, KeyBlock* kb, bool report_error = false);
 #ifdef USE_HOTSCOTCH
             bool InsertUserKeyToHopscotchHashMap(UserKey* uk);
             UserKey* FindUserKeyFromHopscotchHashMap(KeySlice& key);
@@ -1930,8 +1854,8 @@ retry:
                 return last_cit_key_.load(std::memory_order_relaxed);
             }
 
-            void FlushSingleSKTableMem(SKTableMem* sktable, std::string &col_info_table, Slice &comp_col_info_table);
-            void WorkerThreadFlushSKTableMem(std::string &col_info_table, Slice &comp_col_info_table);
+            void FlushSingleSKTableMem(SKTableMem* sktable, std::string &col_info_table, std::string &comp_col_info_table);
+            void WorkerThreadFlushSKTableMem(std::string &col_info_table, std::string &comp_col_info_table);
             void DoCongestionControl();
             void ReleaseCongestionControl();
 
@@ -2025,11 +1949,10 @@ retry:
 #define TTL_BIT 0x80
 #define USERVALUE_FLAG 0x8000000000000000UL
 #define KB_OFFSET_LOC 2
-#define TTL_FLAG_LOC 2
+#define TTL_FLAG_LOC 1
     class ColumnNode{// 64 Byte
         private:
             friend class UserKey;
-            SimpleObjectAllocator<ColumnNode> *allocator_;
 
             volatile UserKey* uk_;                                       //1byte
             volatile RequestNode* req_node_;                                       //1byte
@@ -2039,14 +1962,16 @@ retry:
             uint32_t ivalue_size_;
             /*
              * col_info_ : It will be copied to node in keymap
-             * ||userkey(1bit) used in keymap | del type(1bit) | col id(6bit) | ttl flag(1bit)
-             *     | KB offset(7bit) | iter seq #(varint64) | (TTL(varint64)) | ikey(varint64) | KB Size(varint32)||
+             * ||userkey(1bit) used in keymap | del type(1bit) col_info size(7bit) | ttl flag(1bit) | col_id(7bit)|
+             *     | KB offset(8bit) | iter seq #(varint64) | (TTL(varint64)) | ikey(varint64) | KB Size(varint32)||
              */
             std::string col_info_;
             uint64_t uvalue_or_kbm_ ;                                       //8byte
             volatile uint8_t flags_;                                       //1byte
             SimpleLinkedNode col_list_node_;                                //16byte
             /*Set the ikey_seq_ with ColumnLock*/
+            ObjectPoolShard<ColumnNode>* alloc_;
+
         public:
 
             /*Non-atomic*/
@@ -2059,7 +1984,10 @@ retry:
             const static uint8_t flags_pending_request                 = 0x20; // Set it under lock
             const static uint8_t flags_delete                          = 0x40; // Set it under lock
 
-            ColumnNode() : allocator_(NULL), uk_(NULL), req_node_(NULL), tgid_(0), ikey_seq_(0), end_seq_(0), ivalue_size_(0), col_info_(), uvalue_or_kbm_(0), flags_(0), col_list_node_(){ }
+            ColumnNode(uint32_t size, ObjectPoolShard<ColumnNode>* alloc) :
+                    uk_(NULL), req_node_(NULL), tgid_(0), ikey_seq_(0), end_seq_(0),
+                    ivalue_size_(0), col_info_(), uvalue_or_kbm_(0), flags_(0),
+                    col_list_node_(), alloc_(alloc) {}
             ~ColumnNode(){ assert(!GetUserValue()); }
 
             void ExistColInit(Slice &data, UserKey *uk) {
@@ -2078,7 +2006,8 @@ retry:
                 col_list_node_.next_ = col_list_node_.prev_ = nullptr;
             }
             /* Call from Store function(New column)  */
-            void NewColumnInit(UserKey* uk, RequestType type, uint8_t col_id, uint64_t ttl, SequenceNumber seq, uint32_t data_size/*For estimating KB size : key size + value size*/) {
+            void NewColumnInit(UserKey* uk, RequestType type, uint8_t col_id, uint64_t ttl, SequenceNumber seq,
+                               uint32_t data_size/*For estimating KB size : key size + value size*/) {
                 uint8_t size = 0;
                 uk_ = uk;
                 req_node_ = NULL;
@@ -2089,14 +2018,14 @@ retry:
                 /* For size Info */
                 col_info_.resize(1);
                 /* For Column Size */
+                if(ttl) col_id |= TTL_BIT;
                 col_info_.append(1, col_id);
+                col_info_.append(1, 0); /* kb offset */
                 if(ttl){
-                    col_info_.append(1, TTL_BIT);/* ttl bit + KB offset */
                     size = PutVarint64(&col_info_, seq);
                     PutVarint64(&col_info_, ttl);
                     data_size += 8/*sizeof(ttl)*/;
                 }else{
-                    col_info_.append(1, 0);
                     size = PutVarint64(&col_info_, seq);
                 }
 
@@ -2115,9 +2044,11 @@ retry:
                 col_list_node_.next_ = col_list_node_.prev_ = nullptr;
             }
 
+            /* col_info_ is not accounted */
+            unsigned Realloc(unsigned size) { return 0; }
+            unsigned Size() { return sizeof (*this); }
 
-            void SetAllocator(SimpleObjectAllocator<ColumnNode> *allocator) { allocator_ = allocator; }
-            SimpleObjectAllocator<ColumnNode> *GetAllocator() { return allocator_; }
+            void* GetAllocator() { return alloc_; }
 
             void SetTGID(TrxnGroupID tgid){ tgid_ = tgid; }
             TrxnGroupID GetTGID(void){ return tgid_; }
@@ -2225,7 +2156,7 @@ retry:
                 uint64_t ikey_seq;
                 Slice col_info(col_info_);
                 bool ttl = *(col_info.data() + TTL_FLAG_LOC) & TTL_BIT;
-                col_info.remove_prefix(TTL_FLAG_LOC+1);
+                col_info.remove_prefix(KB_OFFSET_LOC+1);
                 GetVarint64(&col_info, &ikey_seq);//to skip iter seq number
                 if(ttl)
                     GetVarint64(&col_info, &ikey_seq);//to skip TTL
@@ -2240,7 +2171,7 @@ retry:
              * Transaction GetTrxnInfo() { return trxn_; }
              */
 
-#define SEQNUM_LOC (TTL_FLAG_LOC+1)
+#define SEQNUM_LOC (KB_OFFSET_LOC+1)
 #if 0
             SequenceNumber  GetBeginSequenceNumber() {
                 SequenceNumber seq = 0;
@@ -2264,9 +2195,9 @@ retry:
                 uint64_t ttl = 0;
 
                 Slice col_info(col_info_);
-                col_info.remove_prefix(TTL_FLAG_LOC);
-                if(*col_info.data() & TTL_BIT){
-                    col_info.remove_prefix(1);
+                bool b_ttl = *(col_info.data() + TTL_FLAG_LOC) & TTL_BIT;
+                if (b_ttl) {
+                    col_info.remove_prefix(KB_OFFSET_LOC+1);
                     GetVarint64(&col_info, &ttl);//to skip iter seq number
                     GetVarint64(&col_info, &ttl);//Get TTL
                 }
@@ -2283,13 +2214,12 @@ retry:
                 uint64_t temp= 0;
 
                 Slice col_info(col_info_);
-                col_info.remove_prefix(TTL_FLAG_LOC);
-                if(*col_info.data() & TTL_BIT){
-                    col_info.remove_prefix(1);
+                bool b_ttl = *(col_info.data() + TTL_FLAG_LOC) & TTL_BIT;
+                col_info.remove_prefix(KB_OFFSET_LOC+1);
+                if (b_ttl) {
                     GetVarint64(&col_info, &temp);//to skip iter seq number
                     GetVarint64(&col_info, &temp);//to skip TTL
                 }else{
-                    col_info.remove_prefix(1);
                     GetVarint64(&col_info, &temp);//to skip iter seq number
                 }
                 GetVarint64(&col_info, &temp);//to skip ikey seq number
@@ -2299,11 +2229,11 @@ retry:
             }
 
             uint8_t GetKeyBlockOffset(){
-                return (uint8_t) (*(col_info_.data()+KB_OFFSET_LOC) & ~TTL_BIT);
+                return (uint8_t) (*(col_info_.data()+KB_OFFSET_LOC));
             }
             void SetKeyBlockOffset(uint8_t offset){
                 assert(offset < kMaxRequestPerKeyBlock);
-                col_info_[KB_OFFSET_LOC] += offset;
+                col_info_[KB_OFFSET_LOC] = offset;
             }
 
             void UpdateColumnNode(Manifest *mf, uint32_t kb_size, uint64_t ikey_seq, KeyBlockPrimaryMeta *kbpm);
@@ -2319,6 +2249,8 @@ retry:
             std::string* GetColInfo(){
                 return &col_info_;
             }
+
+            void CleanUp() {;}
         private:
             // No copying allowed
             ColumnNode(const ColumnNode&);
@@ -2333,18 +2265,8 @@ retry:
 #define ITER_KEY_BUFFER_FLAG        0x80000000
 #define ITER_KEY_BUFFER_OFFSET_MASK 0x7FFFFFFF
     class UserKey /*: public SKLData<KeySlice, UserKeyComparator> */{ /* 32 Byte */
-        private:
-            /*  Colocating a column's data into adjacent memory space.
-             *  For CPU Cache Prefetch Optimization
-             *  Access seq : latest_col_node_ => col_lock_ => col_list_
-             */
-            enum MoveDirection {
-                kForward= 0,
-                kBackward = 1,
-            };
         public:
-            SimpleLinkedNode link_;
-            class ColumnData{ // 40 Byte( Valid 38 Byte)
+            class ColumnData { // 40 Byte( Valid 38 Byte)
                 public:
                     friend class UserKey;
                     ColumnData() : latest_col_node_(NULL), col_list_(){}
@@ -2367,71 +2289,42 @@ retry:
                     SimpleLinkedList col_list_;     // 24Byte
                     /* To protect ColumnNode Modification such as get user value */
             };
-        private:
-            Spinlock col_lock_;             // 1 Byte
-            std::atomic<uint16_t> ref_cnt_;                             //8byte
-            uint16_t key_buffer_size_;
-            char* key_buffer_;
-            KeySlice user_key_;                                                         //8byte
-            std::atomic<bool> in_hash;
-            /*
-             * Make a structure for (col_date_ ~ lock_) to secure KeySlice Space within 32 byte UserKey
-             * If we use "user_key_and_keysize_" instead of "KeySlice", we have to allocate & copy 16 byte KeySlice for GetKey()
-             * for every accesses.
-             *
-             * But the user will get the pointer of "col_data & skt" before use it. and than accessing the object using the pointer
-             */
-            ColumnData *col_data_;                                                                  // 8byte
 
-            ObjectAllocator<UserKey>* allocator_;
 
-        public:
+            SimpleLinkedNode link_;
+
             /* For Free Key Registration */
-            UserKey(uint16_t key_size, ObjectAllocator<UserKey>* allocator) :
+            UserKey(uint32_t key_size, ObjectPoolShard<UserKey>* alloc) :
                 col_lock_(),
                 ref_cnt_(0), // Increase reference count for new key
                 key_buffer_size_(0),
                 key_buffer_(NULL),
                 user_key_(),
+                latest_ikey_(0),
                 in_hash(false),
                 col_data_(NULL),
-                allocator_(allocator),
-                link_()
-        {
-            col_data_= new ColumnData[kMaxColumnCount];
-            key_buffer_ = (char*)malloc(key_size+1);
-            key_buffer_size_ = key_size;
-        }
+                link_(),
+                alloc_(alloc)
+            {
+                col_data_ = new ColumnData[kMaxColumnCount];
+                key_buffer_ = (char*)alloc_->AllocBuf(key_size);
+                key_buffer_size_ = (uint16_t)key_size;
+            }
 
-       UserKey(uint32_t key_size) :
-                col_lock_(),
-                ref_cnt_(0), // Increase reference count for new key
-                key_buffer_size_(0),
-                key_buffer_(NULL),
-                user_key_(),
-                in_hash(false),
-                col_data_(NULL),
-                allocator_(NULL),
-                link_()
-        {
-            col_data_= new ColumnData[kMaxColumnCount];
-            key_buffer_ = (char*)malloc(key_size+1);
-            key_buffer_size_ = (uint16_t)key_size;
-        }
-
-            ~UserKey(){
+            ~UserKey() {
                 //assert(!IsDirty());
                 /* UserKey::Cleanup() must be executed before calling UserKey Destructor */
                 assert(col_data_);
                 assert(key_buffer_);
+                alloc_->FreeBuf(key_buffer_, key_buffer_size_);
                 delete [] col_data_;
-                free(key_buffer_);
             }
-
 #ifndef CODE_TRACE
             void ScanColumnInfo(std::string &str);
 #endif
-            bool BuildColumnInfo(Manifest *mf, uint16_t &ize, Slice buffer, SequenceNumber &largest_ikey, SequenceNumber &largest_seq, std::queue<KeyBlockPrimaryMeta*> &in_log_KBM_queue, bool &has_del);
+            void SetLatestiKey(SequenceNumber ikey){ latest_ikey_ = ikey; }
+            SequenceNumber GetLatestiKey(void ){return  latest_ikey_; }
+            bool BuildColumnInfo(Manifest *mf, uint16_t &size, Slice buffer, SequenceNumber &largest_ikey, std::queue<KeyBlockPrimaryMeta*> &in_log_KBM_queue, bool &has_del);
             void InitUserKey(const KeySlice& user_key);
             ColumnNode* GetColumnNodeContainerOf(SimpleLinkedNode *ikey_node);
 
@@ -2464,7 +2357,6 @@ retry:
 
             bool IsInHash(){
                 return in_hash.load(std::memory_order_seq_cst);
-            
             }
 
             int Compare(const Slice& key, Manifest *mf);
@@ -2479,7 +2371,7 @@ retry:
 #define TRXN_DEL_REQ 0x80
             void DoVerticalMerge(RequestNode *req_node, UserKey* uk, uint16_t col_id, uint8_t worker_id, uint8_t idx, Manifest *mf, KeyBlockPrimaryMeta* kbml);
             bool InsertColumnNode(ColumnNode* input_col_node, uint16_t col_id, bool &ignored, bool front_merge = false/*For the UserKey in iterator hash*/);
-            void InsertColumnNodes(Manifest *mf, uint8_t nr_column, Slice &col_info, bool front_merge = false);
+            bool InsertColumnNodes(Manifest *mf, uint8_t nr_column, Slice &col_info, bool front_merge = false);
             void UserKeyMerge(UserKey *old_uk, bool front_merge = false/*For the UserKey in iterator hash*/);
             bool UpdateColumn(Manifest *mf, RequestNode*& req_node, ColumnNode* new_col_node, uint16_t col_id, bool force, TrxnGroupID &old_tgid);
             /**
@@ -2502,33 +2394,33 @@ retry:
              */
 
 
-            uint16_t GetReferenceCount(){ return (uint16_t)(ref_cnt_.load(std::memory_order_relaxed)); }
-            void IncreaseReferenceCount(uint8_t cnt = 1)
+            uint32_t GetReferenceCount(){ return (uint32_t)(ref_cnt_.load(std::memory_order_relaxed)); }
+            void IncreaseReferenceCount(uint32_t cnt = 1)
             {
 #ifndef REFCNT_SANITY_CHECK
                 ref_cnt_.fetch_add(cnt, std::memory_order_relaxed);
 #else
-                uint16_t old = ref_cnt_.fetch_add(cnt, std::memory_order_relaxed);
+                uint32_t old = ref_cnt_.fetch_add(cnt, std::memory_order_relaxed);
                 if (old+1==0) abort();
 #endif
             }
-            uint16_t DecreaseReferenceCount()
+            uint32_t DecreaseReferenceCount()
             {
 #ifndef REFCNT_SANITY_CHECK
                 return (ref_cnt_.fetch_sub(1, std::memory_order_relaxed));
 #else
-                uint16_t ref_cnt = (ref_cnt_.fetch_sub(1, std::memory_order_seq_cst));
+                uint32_t ref_cnt = (ref_cnt_.fetch_sub(1, std::memory_order_seq_cst));
                 if (ref_cnt==0) abort();
                 return ref_cnt;
 #endif
             }
 
-            uint16_t DecreaseReferenceCount(uint16_t dec)
+            uint32_t DecreaseReferenceCount(uint32_t dec)
             {
 #ifndef REFCNT_SANITY_CHECK
                 return (ref_cnt_.fetch_sub(dec, std::memory_order_relaxed));
 #else
-                uint16_t ref_cnt = (ref_cnt_.fetch_sub(dec, std::memory_order_seq_cst));
+                uint32_t ref_cnt = (ref_cnt_.fetch_sub(dec, std::memory_order_seq_cst));
                 if (ref_cnt==0) abort();
                 return ref_cnt;
 #endif
@@ -2560,8 +2452,29 @@ retry:
                 return col_info_size;
             }
 
+            uint16_t GetKeyInfoSize(Manifest *mf, bool &submitted){
+                in_hash.store(false, std::memory_order_seq_cst);
+                if(GetReferenceCount()){
+                    in_hash.store(true, std::memory_order_seq_cst);
+                    submitted = false;
+                }
+                ColumnNode* col_node = NULL;
+                SimpleLinkedList* col_list = NULL;
+                SimpleLinkedNode* col_list_node = NULL;
+                uint16_t col_info_size = 0;
+                for( uint8_t col_id = 0 ; col_id < kMaxColumnCount ; col_id++){
+                    if(col_node = col_data_[col_id].latest_col_node_){
+                        col_info_size += col_node->GetColInfoSize();
+                        if(!col_node->IsSubmitted() || (!col_node->IsTRXNCommitted() && col_node->GetTGID() && !mf->IsTrxnGroupCompleted(col_node->GetTGID()))){
+                            in_hash.store(true, std::memory_order_seq_cst);
+                            submitted = false;
+                        }
+                    }
+                }
+                return col_info_size + 1/*To store nr column*/;
+            }
+
             uint16_t GetKeyInfoSize(Manifest *mf){
-                bool has_del = false;
                 in_hash.store(false, std::memory_order_seq_cst);
                 if(GetReferenceCount()){
                     in_hash.store(true, std::memory_order_seq_cst);
@@ -2572,7 +2485,6 @@ retry:
                 SimpleLinkedNode* col_list_node = NULL;
                 uint16_t col_info_size = 0;
                 for( uint8_t col_id = 0 ; col_id < kMaxColumnCount ; col_id++){
-#if 1
                     if(col_node = col_data_[col_id].latest_col_node_){
                         col_info_size += col_node->GetColInfoSize();
                         if(!col_node->IsSubmitted() || (!col_node->IsTRXNCommitted() && col_node->GetTGID() && !mf->IsTrxnGroupCompleted(col_node->GetTGID()))){
@@ -2580,22 +2492,9 @@ retry:
                             return 0; // If TRXN is not completed yet, does not move the key to flushed_key_hash
                         }
                     }
-
-#else
-                    col_list = GetColumnList(col_id);
-                    col_list_node = col_list->newest();
-                    if(col_list_node) {
-                        col_node = GetColumnNodeContainerOf(col_list_node);
-                        col_info_size += col_node->GetColInfoSize() + 1/*To store col info size*/;
-                    }
-#endif
                 }
-                col_info_size++;
-                return col_info_size;
+                return col_info_size+1/*To store nr column*/;
             }
-
-
-
 
             /*
              * In key remove/key insert function, The caller always knows whether the key is begin key or not.
@@ -2603,10 +2502,46 @@ retry:
              * return NULL    : eviction in progress
              */
             size_t GetSize();
-            void SetAllocator(ObjectAllocator<UserKey>* allocator){ allocator_ = allocator; }
-            ObjectAllocator<UserKey>* GetAllocator(){ return allocator_; }
+            void* GetAllocator() { return alloc_; }
 
+            void CleanUp() {
+                for (int i=0; i<kMaxColumnCount; i++) {
+                    assert(!col_data_[i].col_list_.Size());
+                }
+            }
+            unsigned Realloc(unsigned size) {
+                unsigned sz = 0;
+
+                if (size > key_buffer_size_) {
+                    sz = size - key_buffer_size_;
+                    alloc_->FreeBuf(key_buffer_, key_buffer_size_ + 1);
+                    key_buffer_ = static_cast<char*>(alloc_->AllocBuf(size));
+                    key_buffer_size_ = size;
+                }
+
+                return sz;
+            }
         private:
+            /*  Colocating a column's data into adjacent memory space.
+             *  For CPU Cache Prefetch Optimization
+             *  Access seq : latest_col_node_ => col_lock_ => col_list_
+             */
+            Spinlock col_lock_;             // 1 Byte
+            std::atomic<uint32_t> ref_cnt_;                             //8byte
+            uint16_t key_buffer_size_;
+            char* key_buffer_;
+            KeySlice user_key_;                                                         //8byte
+            SequenceNumber latest_ikey_;
+            std::atomic<bool> in_hash;
+            ObjectPoolShard<UserKey>* alloc_;
+            /*
+             * Make a structure for (col_date_ ~ lock_) to secure KeySlice Space within 32 byte UserKey
+             * If we use "user_key_and_keysize_" instead of "KeySlice", we have to allocate & copy 16 byte KeySlice for GetKey()
+             * for every accesses.
+             *
+             * But the user will get the pointer of "col_data & skt" before use it. and than accessing the object using the pointer
+             */
+            ColumnData *col_data_;                                                                  // 8byte
             // No copying allowed
             UserKey(const UserKey&);
             void operator=(const UserKey&);
@@ -2617,10 +2552,8 @@ retry:
      * And then reuse the allocated memory until DB termination 
      */
 
-#define COLUMN_NODE_REF_BIT 0xC0
-#define COLUMN_NODE_ID_MASK      0x3F
+#define COLUMN_NODE_ID_MASK      0x7F
 #define COLUMN_NODE_HAS_TTL_BIT 0x80
-#define COLUMN_NODE_OFFSET_MASK 0x7F
 
 #define NR_COL_MASK  0x3F
 #define RELOC_KEY_INFO  0x80
@@ -2643,8 +2576,9 @@ retry:
             //GCInfo gcinfo_;
             Keymap *keymap_;
             int32_t keymap_node_size_; /* size of keymap on device */
+#ifdef USE_HASHMAP_RANDOMREAD
             int32_t keymap_hash_size_; /* size of keymap hash on device */
-            int32_t keymap_mem_size_;
+#endif
             /* Mutex lock for loading SKTable Device Format from device(KVSSD) */
             port::Mutex sktdf_load_mu_;                    // 40 Byte
             /* Shared lock for replacing the SKTDF in FlushSKTableMem()
@@ -2688,6 +2622,9 @@ retry:
             SKTableMem(Manifest *mf, Keymap *kemap);
             ~SKTableMem();
 
+            uint32_t GetBufferSize(){
+                return keymap_->GetBufferSize();
+            }
             void SetSKTableID(uint32_t skt_id);
             void SetPreAllocSKTableID(uint32_t skt_id);
             void SetNextSKTableID(uint32_t skt_id);
@@ -2714,8 +2651,6 @@ retry:
 #ifdef USE_HASHMAP_RANDOMREAD
             uint32_t GetKeymapHashSize() { return keymap_hash_size_; /* size of keymap hash on device */ }
 #endif
-            void SetKeymapMemSize(int32_t size) { keymap_mem_size_ = size;} 
-            int32_t GetKeymapMemSize() { return keymap_mem_size_; /* size of keymap in memory */ }
             KeySlice GetBeginKeySlice() { return keymap_->GetKeymapBeginKey(); }
             void DeleteSKTDeviceFormatCache(Manifest* mf, bool skip = false);
 
@@ -2726,6 +2661,16 @@ retry:
                 return false;
             }
 
+            bool NeedToCleanup() {
+                if (!keymap_->HasArena()) return false;
+                if (keymap_->GetFreedMemorySize() > kMaxSKTableSize/4) return true;
+                return false;
+            }
+
+            uint32_t GetCount() {
+                assert(keymap_->HasArena());
+                return keymap_->GetCount();
+            }
 
             void InsertArena(Arena* arena) {
                 keymap_->InsertArena(arena);
@@ -2796,6 +2741,7 @@ retry:
                 }
                 return uk;
             }
+            void UpdateKeyInfoUsingUserKeyFromKeyQueue(Manifest *mf, SequenceNumber seq, bool acquirelock, std::string &col_info_table, SequenceNumber &largest_ikey, std::queue<KeyBlockPrimaryMeta*> &in_log_KBM_queue);
             bool InsertUserKeyToKeyMapFromInactiveKeyQueue(Manifest *mf, bool inactive, SequenceNumber seq, bool acquirelock = true);
             SequenceNumber GetSmallestSequenceInKeyQueue(uint8_t idx) { return key_queue_smallest_seq_[idx]; }
             void SetSmallestSequenceInKeyQueue(uint8_t idx, SequenceNumber seq) { if(key_queue_smallest_seq_[idx] > seq) key_queue_smallest_seq_[idx] = seq; }
@@ -2879,7 +2825,7 @@ retry:
             const static uint8_t flags_caching_in_progress     = 0x04;
             const static uint8_t flags_fetch_in_progress       = 0x08;
             const static uint8_t flags_deleted_skt             = 0x10;
-            const static uint8_t flags_prefetch_keyblock       = 0x20;
+            const static uint8_t flags_reference               = 0x20;
             const static uint8_t flags_split_sub               = 0x40;
             const static uint8_t flags_eviction_in_progress    = 0x80;
             //Evicting in progress
@@ -2937,9 +2883,9 @@ retry:
             void ClearDeletedSKT() { flags_.fetch_and(~flags_deleted_skt, std::memory_order_relaxed); }
             bool IsDeletedSKT() { return (flags_.load(std::memory_order_relaxed) & flags_deleted_skt); }
 
-            bool SetPrefetchKeyBlock() { return (flags_.fetch_or(flags_prefetch_keyblock, std::memory_order_relaxed) & flags_prefetch_keyblock); }
-            bool ClearPrefetchKeyBlock() { return flags_.fetch_and(~flags_prefetch_keyblock, std::memory_order_relaxed) & flags_prefetch_keyblock; }
-            bool IsPrefetchKeyBlock() { return (flags_.load(std::memory_order_relaxed) & flags_prefetch_keyblock); }
+            bool SetReference() { return (flags_.fetch_or(flags_reference, std::memory_order_relaxed) & flags_reference); }
+            bool ClearReference() { return flags_.fetch_and(~flags_reference, std::memory_order_relaxed) & flags_reference; }
+            bool HasReference() { return (flags_.load(std::memory_order_relaxed) & flags_reference); }
 
             bool SetSplitSub() { return (flags_.fetch_or(flags_split_sub, std::memory_order_relaxed) & flags_split_sub); }
             bool ClearSplitSub() { return flags_.fetch_and(~flags_split_sub, std::memory_order_relaxed) & flags_split_sub; }
@@ -2956,7 +2902,7 @@ retry:
             int32_t GetAllocatedSize() { return keymap_->GetAllocatedSize(); }
             int32_t GetFreedMemorySize() { return keymap_->GetFreedMemorySize(); }
 
-            Status FlushSKTableMem(Manifest *mf, std::string &col_info_table, Slice &comp_col_info_table, std::queue<KeyBlockPrimaryMeta*> &in_log_KBM_queue);
+            Status FlushSKTableMem(Manifest *mf, std::string &col_info_table, std::string &comp_col_info_table, std::queue<KeyBlockPrimaryMeta*> &in_log_KBM_queue);
 
             void SplitInactiveKeyQueue(Manifest* mf, std::vector<std::pair<SKTableMem*, Slice>> &sub_skt);
 
@@ -2966,7 +2912,7 @@ retry:
     /* 4B(comp size) + 4B(CRC)*/
 #define COL_INFO_TABLE_META 8 
 #define COMP_COL_INFO_TABLE_SIZE 4 
-            InSDBKey StoreColInfoTable(Manifest *mf, std::string &col_info_table, Slice &comp_col_info_table);
+            InSDBKey StoreColInfoTable(Manifest *mf, std::string &col_info_table, std::string &comp_col_info_table);
 #ifdef USE_HASHMAP_RANDOMREAD
             Status StoreKeymap(Manifest *mf, Keymap* sub, uint32_t &io_size, uint32_t &hash_data_size);
 #else
@@ -3021,39 +2967,69 @@ retry:
 #define KEYBLOCK_TTL_SHIFT      31
 #define KEYBLOCK_TTL_MASK       0x80000000
 #define KEYBLOCK_OFFSET_MASK    0x7fffffff
-    class KeyBlock{
+    class KeyBlock {
         private:
+            uint64_t ikey_seq_num_; /* For Discard*/
             std::atomic<uint32_t> kb_ref_cnt_;
+            char* raw_data_;
             uint32_t raw_data_size_;
             uint32_t data_size_;
-            char* raw_data_;
             uint8_t key_cnt_;
+            std::atomic<uint8_t> flags_;
+            Spinlock lock_;
+            ObjectPoolShard<KeyBlock>* alloc_;
 
+            const static uint8_t flags_reference        = 0x01;
+            const static uint8_t flags_prefetched       = 0x02;
+            const static uint8_t flags_dummy            = 0x04;
+            const static uint8_t flags_evicting         = 0x08;
+            
         public:
-            KeyBlock(Manifest *mf) : kb_ref_cnt_(0), raw_data_size_(0), data_size_(0), raw_data_(NULL), key_cnt_(0) {}
+            KeyBlock(unsigned size, ObjectPoolShard<KeyBlock>* alloc) :
+                kb_ref_cnt_(0), raw_data_size_(0), data_size_(0),
+                raw_data_(NULL), key_cnt_(0), alloc_(alloc) {}
             ~KeyBlock() {
-                if (raw_data_){
-                    free(raw_data_);
+                if (raw_data_)
+                    alloc_->FreeBuf(raw_data_, raw_data_size_);
+            }
+            void InitKB() {
+                ikey_seq_num_ = 0;
+                kb_ref_cnt_ = 1;
+                flags_ = 0;
+            }
+
+            void KeyBlockInit(uint32_t size) {
+                data_size_ = size = SizeAlignment(size);
+                if (size > raw_data_size_) {
+                    if (raw_data_size_)
+                        alloc_->FreeBuf(raw_data_, raw_data_size_);
+                    raw_data_ = static_cast<char*>(alloc_->AllocBuf(size));
+                    raw_data_size_ = size;
                 }
             }
-            void KeyBlockInit(uint32_t size) {
-                kb_ref_cnt_.store(1, std::memory_order_relaxed);
-                if (raw_data_size_) {
-                    data_size_ = size = SizeAlignment(size);
-                    if (size > raw_data_size_) {
-                        //raw_data_ = (char*)realloc((void*)raw_data_, size);
-                        free(raw_data_);
-                        raw_data_ = (char*)malloc(size);
-                        raw_data_size_ = size;
-                    }
-                // alloc memory
-                } else if (size){
-                    assert(!raw_data_);
-                    data_size_ = raw_data_size_ = SizeAlignment(size);
-                    raw_data_ = (char*)malloc(raw_data_size_);
-                }else
-                    data_size_ = 0;
-            }
+
+            void SetIKeySeqNum(SequenceNumber seq) { ikey_seq_num_ = seq; }
+            SequenceNumber GetIKeySeqNum() { return ikey_seq_num_;}
+
+            void KBLock(){ lock_.Lock(); }
+            void KBUnlock(){ lock_.Unlock(); }
+
+            bool SetReference() { return (flags_.fetch_or(flags_reference, std::memory_order_relaxed) & flags_reference); }
+            bool ClearReference() { return (flags_.fetch_and(~flags_reference, std::memory_order_relaxed) & flags_reference); }
+
+            void SetDummy() { assert(!IsDummy()); flags_.fetch_or(flags_dummy, std::memory_order_seq_cst); }
+            void ClearDummy() { flags_.fetch_and(~flags_dummy, std::memory_order_seq_cst); }
+            bool IsDummy() { return (flags_.load(std::memory_order_seq_cst) & flags_dummy); }
+
+            bool SetKBPrefetched() { return flags_.fetch_or(flags_prefetched, std::memory_order_relaxed) & flags_prefetched; }
+            bool ClearKBPrefetched() { return flags_.fetch_and(~flags_prefetched, std::memory_order_relaxed) & flags_prefetched; }
+            bool IsKBPrefetched() { return (flags_.load(std::memory_order_relaxed) & flags_prefetched); }
+
+
+            bool SetEvicting() { return flags_.fetch_or(flags_evicting, std::memory_order_seq_cst) & flags_evicting; }
+            void ClearEvicting() { flags_.fetch_and(~flags_evicting, std::memory_order_seq_cst); }
+            bool IsEvicting() { return (flags_.load(std::memory_order_seq_cst) & flags_evicting); }
+
             bool DecKBRefCnt(){ return (kb_ref_cnt_.fetch_sub(1, std::memory_order_relaxed) == 1);}
             void IncKBRefCnt(){ kb_ref_cnt_.fetch_add(1, std::memory_order_relaxed);}
             uint32_t GetKBRefCnt(){ return kb_ref_cnt_.load(std::memory_order_relaxed);}
@@ -3067,14 +3043,20 @@ retry:
                 assert(size < data_size_);
                 data_size_ = size;
             }
+
             uint32_t GetSize(void) {
                 //return data_size_;
                 return raw_data_size_;
             }
+
             void SetKeyCnt(uint8_t cnt) { key_cnt_ = cnt; }
             uint8_t GetKeyCnt() { return key_cnt_; }
             void CleanUp() { }
             bool DecodeAllKeyMeta(KeyBlockPrimaryMeta *kbpm, std::list<ColumnInfo> &key_list/*, uint64_t &largest_seq */);
+
+            //TODO: need to take data_size_ into account!!!
+            unsigned Realloc(unsigned size) { return 0; }
+            void* GetAllocator() { return alloc_; }
     };
 
 
@@ -3091,12 +3073,12 @@ retry:
             std::atomic<uint16_t> nrs_key_cnt_;               // 2 Byte
             std::atomic<uint64_t> kb_bitmap_;                       // 4 Byte
             std::atomic<uint64_t> ref_bitmap_;                      // 4 Byte
-            volatile KeyBlock* kb_ptr_;    // 8 Byte
             std::atomic<uint8_t> pending_updated_value_cnt_;                      // 8 Byte
 
             /* lock contention may be low because of fine grained locking. */
             //port::Mutex mu_;                                        //40 Byte
             Spinlock lock_;                                        //1 Byte
+            ObjectPoolShard<KeyBlockPrimaryMeta>* alloc_;
 
             /* Next ikey seq num will be added to end of data_ */
             //uint64_t next_ikey_seq_num_;                                            //8 Byte
@@ -3107,28 +3089,22 @@ retry:
             /* The Key Block only contains delete commands. In this case, KeyBlock is not created. only create KeyBlockMetas*/
             const static uint8_t flags_evicting                 = 0x08;
             const static uint8_t flags_in_log                   = 0x10;/* 1 is for in-log */
-            const static uint8_t flags_kb_prefetched            = 0x20;
+            const static uint8_t flags_in_cache                 = 0x20;/* 1 is for in-log */
             const static uint8_t flags_kbm_prefetched           = 0x40;
             const static uint8_t flags_need_to_update           = 0x80;//set in FlushSKTableMem, clean in KBMUpdateThread
         public:
 #define KBPM_HEADER_SIZE 7
-            KeyBlockPrimaryMeta(Manifest *mf): flags_(0), nrs_key_cnt_(0),
-            kb_bitmap_(0UL), ref_bitmap_(0UL), kb_ptr_(NULL), org_key_cnt_(0), ikey_seq_num_(0){
-            }
+            KeyBlockPrimaryMeta(unsigned size, ObjectPoolShard<KeyBlockPrimaryMeta>* alloc):
+                flags_(0),
+                nrs_key_cnt_(0),
+                kb_bitmap_(0UL),
+                ref_bitmap_(0UL),
+                org_key_cnt_(0),
+                ikey_seq_num_(0),
+                alloc_(alloc) {}
+
             void KBPMLock(){ lock_.Lock(); }
             void KBPMUnlock(){ lock_.Unlock(); }
-
-            KeyBlock*  LoadKeyBlock(Manifest* mf, uint64_t ikey, uint32_t ivalue_size, bool *ra_hit){
-                KeyBlock *kb = NULL;
-                KBPMLock();
-                if (!(kb = GetKeyBlockAddr())){
-                    kb = mf->LoadValue(ikey, ivalue_size, ra_hit, this);
-                    SetKeyBlockAddr(kb);
-                }
-                KBPMUnlock();
-                return kb;
-            }
-
             void InitInDummyState(uint8_t orig_keycnt) {
                 assert(IsDummy());
                 /* Set Out log*/
@@ -3146,14 +3122,13 @@ retry:
                 nrs_key_cnt_.store(0, std::memory_order_relaxed);
                 kb_bitmap_.store(0UL, std::memory_order_relaxed);
                 ref_bitmap_.store(0UL, std::memory_order_relaxed);
-                kb_ptr_ = NULL;
                 org_key_cnt_ = 0;
                 pending_updated_value_cnt_ = 0;
                 flags_.store(0, std::memory_order_relaxed);
                 ikey_seq_num_ = ikey_seq_num;
             }
 
-            void NewKBPMInit(uint8_t put_cnt, uint8_t del_cnt, uint64_t next_ikey_seq_num, uint8_t nr_trxn, KeyBlock *kb, char* kbm_dev_buf, bool set_refbits = true) {
+            void NewKBPMInit(uint8_t put_cnt, uint8_t del_cnt, uint64_t *put_iter_seq_num, uint64_t next_ikey_seq_num, uint8_t nr_trxn, KeyBlock *kb, char* kbm_dev_buf, bool set_refbits = true) {
                 /* Set In log*/
                 dev_data_ = kbm_dev_buf;
                 dev_data_size_ = 0;
@@ -3174,7 +3149,6 @@ retry:
                     if (set_refbits) ref_bitmap_.fetch_or(((uint64_t)(1UL << i)), std::memory_order_relaxed);
                 }
 
-                kb_ptr_ = kb; // kb can be NULL
                 /* 
                  * The initial value of pending_updated_value_cnt_ is 1
                  * It will be decreased after it becomes out-log
@@ -3188,7 +3162,12 @@ retry:
                 dev_data_size_ = KB_BITMAP_LOC;// 1 byte for org_key_cnt_ & 3 byte for reserved(GC??)
 
                 EncodeFixed64((dev_data_+dev_data_size_), kb_bitmap_.load(std::memory_order_relaxed));
-                dev_data_size_ += (KB_BITMAP_SIZE + 4/*to save KBM size*/);
+                dev_data_size_ += (KB_BITMAP_SIZE+4/*to save KBM size*/);
+                EncodeFixed64((dev_data_+dev_data_size_), next_ikey_seq_num);
+                dev_data_size_ += 8;
+                for( int i = 0 ; i < put_cnt ; i++){
+                    dev_data_size_ = (EncodeVarint64((dev_data_ + dev_data_size_), put_iter_seq_num[i]) - dev_data_);
+                } 
 #if 0
                 buf = buffer;
                 buffer = EncodeVarint64(buf, ts);
@@ -3196,8 +3175,6 @@ retry:
                 //////////////////////////////////////////////////////////////////////////////////////////////
                 dev_data_size_ = (EncodeVarint64((dev_data_ + dev_data_size_), next_ikey_seq_num) - dev_data_);
 #endif
-                *((uint64_t*)(dev_data_+dev_data_size_)) =  next_ikey_seq_num;
-                dev_data_size_ += 8/*sizeof(SequenceNumber)*/;
                 //next_ikey_seq_num_ = next_ikey_seq_num;
                 *(dev_data_ + dev_data_size_) = nr_trxn;
                 dev_data_size_++;
@@ -3216,17 +3193,9 @@ retry:
             void AddVarint16ToDeviceFormat(uint16_t data){
                 dev_data_size_ = (EncodeVarint16((dev_data_ + dev_data_size_), data) - dev_data_);
             }
-            void SetKeyBlockAddr(KeyBlock* kb){
-                assert(!kb_ptr_);
-                kb_ptr_ = kb;
+            void AddVarint64ToDeviceFormat(uint64_t data){
+                dev_data_size_ = (EncodeVarint64((dev_data_ + dev_data_size_), data) - dev_data_);
             }
-            void ClearKeyBlockAddr(){
-                assert(kb_ptr_);
-                kb_ptr_ = NULL;
-            }
-            /*KB pointer is only accessed with Lock or in deletion phase. So it does not need to be atomic */
-            KeyBlock* GetKeyBlockAddr(){ return (KeyBlock*)kb_ptr_; }
-
             uint8_t GetOriginalKeyCount() { assert(!IsDummy()); return org_key_cnt_; }
 
             bool SetWriteProtection() { return (flags_.fetch_or(flags_write_protection, std::memory_order_acquire) & flags_write_protection); }
@@ -3249,6 +3218,13 @@ retry:
             void SetInLog() { assert(!IsDummy()); flags_.fetch_or(flags_in_log, std::memory_order_seq_cst); }
             void SetOutLog() { flags_.fetch_and(~flags_in_log, std::memory_order_seq_cst); }
             void SetOutLogRelaxed() { flags_.fetch_and(~flags_in_log, std::memory_order_relaxed); }
+
+
+            void SetCache() { assert(!IsCache()); flags_.fetch_or(flags_in_cache, std::memory_order_seq_cst); }
+            void ClearCache() { flags_.fetch_and(~flags_in_cache, std::memory_order_seq_cst); }
+            bool IsCache() { return (flags_.load(std::memory_order_seq_cst) & flags_in_cache); }
+
+
             /* If it is evictable, return true*/
 #if 0
             bool SetOutLogAndCheckEvicable() { 
@@ -3259,10 +3235,6 @@ retry:
             bool IsInlog() { return (flags_.load(std::memory_order_seq_cst) & flags_in_log); }
 
             /* Under lock */
-            bool SetKBPrefetched() { return flags_.fetch_or(flags_kb_prefetched, std::memory_order_relaxed) & flags_kb_prefetched; }
-            bool ClearKBPrefetched() { return flags_.fetch_and(~flags_kb_prefetched, std::memory_order_relaxed) & flags_kb_prefetched; }
-            bool IsKBPrefetched() { return (flags_.load(std::memory_order_relaxed) & flags_kb_prefetched); }
-
             bool SetKBMPrefetched() { return (flags_.fetch_or(flags_kbm_prefetched, std::memory_order_relaxed) & flags_kbm_prefetched); }
             bool IsKBMPrefetched() { return (flags_.load(std::memory_order_relaxed) & flags_kbm_prefetched); }
             bool ClearKBMPrefetched() { return (flags_.fetch_and((uint8_t)~flags_kbm_prefetched, std::memory_order_relaxed) & flags_kbm_prefetched); }
@@ -3400,41 +3372,27 @@ retry:
 #else
 #endif
 
+            void* GetAllocator() { return alloc_; }
+            unsigned Realloc(unsigned size) { return 0; }
+
             void CleanUp() {
                 assert((flags_.load(std::memory_order_seq_cst)&(~(flags_evicting | flags_dummy))) == 0);
-                assert(!kb_ptr_);
                 kb_bitmap_.store(0UL,std::memory_order_relaxed);
                 org_key_cnt_ = 0;
            }
 
             bool EvictColdKBPM(Manifest *mf)
             {
-                if(CheckRefBitmap() == 0){
+                if(CheckRefBitmap() == 0 && !IsCache()){
                     /* If it is last one */
-                    KeyBlock *kb;
                     if(!SetEvicting()){
                         if(CheckRefBitmap() == 0) {
                             mf->ClearKBPMPad(this);
                             mf->RemoveKBPMFromHashMap(GetiKeySequenceNumber());
                             while(CheckRefBitmap() != 0);/* Wait until deref */
-                            kb = GetKeyBlockAddr();
-                            if(kb){
-                                mf->DecreaseMemoryUsage(kb->GetSize() + sizeof(KeyBlockPrimaryMeta));
 #ifdef MEM_TRACE
-                                mf->DecKBPM_MEM_Usage(kb->GetSize() + sizeof(KeyBlockPrimaryMeta));
+                            mf->DecKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
 #endif
-                                mf->FreeKB(kb);
-                                ClearKeyBlockAddr();
-                            }else{
-                                mf->DecreaseMemoryUsage(sizeof(KeyBlockPrimaryMeta));
-#ifdef MEM_TRACE
-                                mf->DecKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
-#endif
-                                if (ClearKBPrefetched()) {
-                                    InSDBKey kbkey = GetKBKey(mf->GetDBHash(), kKBlock, ikey_seq_num_);
-                                    (mf->GetEnv())->DiscardPrefetch(kbkey);
-                                }
-                            }
                             // Discard KBM prefetch if exist
                             if (ClearKBMPrefetched()){
                                 assert(IsDummy());
@@ -3448,25 +3406,71 @@ retry:
                 }
                 return false;
             }
-            void TryToEvictKB(Manifest *mf, uint8_t offset){
-                /* If it is last one */
-                KeyBlock *kb;
 
-                if(!SetEvicting()){
-                    KBPMLock();
-                    kb = GetKeyBlockAddr();
-                    if(kb && kb->GetKBRefCnt() == 1){
-                        mf->DecreaseMemoryUsage(kb->GetSize() + sizeof(KeyBlockPrimaryMeta));
+            bool CheckColdKBPM(Manifest *mf)
+            {
+                if(CheckRefBitmap() == 0 && !IsCache()){
+                    /* If it is last one */
+                    if(!SetEvicting()){
+                        if (TestKeyBlockBitmap()){
+                            mf->AddKBPMCache(GetiKeySequenceNumber(), this);
+                            ClearEvicting();
+                            return false;
+                        } else if(CheckRefBitmap() == 0) {
+                            mf->ClearKBPMPad(this);
+                            mf->RemoveKBPMFromHashMap(GetiKeySequenceNumber());
+                            while(CheckRefBitmap() != 0);/* Wait until deref */
 #ifdef MEM_TRACE
-                        mf->DecKBPM_MEM_Usage(kb->GetSize() + sizeof(KeyBlockPrimaryMeta));
+                            mf->DecKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
 #endif
-                        mf->FreeKB(kb);
-                        ClearKeyBlockAddr();
+                            // Discard KBM prefetch if exist
+                            if (ClearKBMPrefetched()){
+                                assert(IsDummy());
+                                InSDBKey kbmkey = GetKBKey(mf->GetDBHash(), kKBMeta, ikey_seq_num_);
+                                (mf->GetEnv())->DiscardPrefetch(kbmkey);
+                            }
+                            return true;
+                        }
+                        ClearEvicting();
                     }
-                    KBPMUnlock();
-                    ClearEvicting();
                 }
+                return false;
             }
+
+
+
+
+
+            bool EvictKBPMFromCache(Manifest *mf)
+            {
+                assert(IsCache());
+                if(CheckRefBitmap() == 0 && !IsNeedToUpdate() && !IsInlog()){
+                    /* If it is last one */
+                    if(!SetEvicting()){
+                        if(CheckRefBitmap() == 0 && !IsNeedToUpdate() && !IsInlog()){
+                            mf->ClearKBPMPad(this);
+                            mf->RemoveKBPMFromHashMap(GetiKeySequenceNumber());
+                            while(CheckRefBitmap() != 0);/* Wait until deref */
+#ifdef MEM_TRACE
+                            mf->DecKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
+#endif
+                            // Discard KBM prefetch if exist
+                            if (ClearKBMPrefetched()){
+                                assert(IsDummy());
+                                InSDBKey kbmkey = GetKBKey(mf->GetDBHash(), kKBMeta, ikey_seq_num_);
+                                (mf->GetEnv())->DiscardPrefetch(kbmkey);
+                            }
+                            return true;
+                        }
+                        ClearEvicting();
+                    }
+                }
+                return false;
+            }
+
+
+
+
             bool ClearRefBitAndTryEviction(Manifest *mf, uint8_t offset){
                 if(ClearRefBitmap(offset) == 0 && !IsNeedToUpdate() && !IsInlog() && !IsKBMPrefetched()){
                     /* If it is last one */
@@ -3477,24 +3481,9 @@ retry:
                             mf->ClearKBPMPad(this);
                             mf->RemoveKBPMFromHashMap(GetiKeySequenceNumber());
                             while(CheckRefBitmap() != 0);/* Wait until deref */
-                            kb = GetKeyBlockAddr();
-                            if(kb){
-                                mf->DecreaseMemoryUsage(kb->GetSize() + sizeof(KeyBlockPrimaryMeta));
 #ifdef MEM_TRACE
-                                mf->DecKBPM_MEM_Usage(kb->GetSize() + sizeof(KeyBlockPrimaryMeta));
+                            mf->DecKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
 #endif
-                                mf->FreeKB(kb);
-                                ClearKeyBlockAddr();
-                            }else{
-                                mf->DecreaseMemoryUsage(sizeof(KeyBlockPrimaryMeta));
-#ifdef MEM_TRACE
-                                mf->DecKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
-#endif
-                                if (ClearKBPrefetched()) {
-                                    InSDBKey kbkey = GetKBKey(mf->GetDBHash(), kKBlock, ikey_seq_num_);
-                                    (mf->GetEnv())->DiscardPrefetch(kbkey);
-                                }
-                            }
                             return true;
                         }
                         ClearEvicting();
@@ -3512,26 +3501,10 @@ retry:
                             mf->ClearKBPMPad(this);
                             mf->RemoveKBPMFromHashMap(GetiKeySequenceNumber());
                             while(CheckRefBitmap() != 0);/* Wait until deref */
-                            kb = GetKeyBlockAddr();
-                            if(kb){
-                                mf->DecreaseMemoryUsage(kb->GetSize() + sizeof(KeyBlockPrimaryMeta));
 #ifdef MEM_TRACE
-                                mf->DecKBPM_MEM_Usage(kb->GetSize() + sizeof(KeyBlockPrimaryMeta));
+                            mf->DecKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
 #endif
-                                reclaim_size-=kb->GetSize() + sizeof(KeyBlockPrimaryMeta);
-                                mf->FreeKB(kb);
-                                ClearKeyBlockAddr();
-                            }else{
-                                mf->DecreaseMemoryUsage(sizeof(KeyBlockPrimaryMeta));
-#ifdef MEM_TRACE
-                                mf->DecKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
-#endif
-                                reclaim_size-= sizeof(KeyBlockPrimaryMeta);
-                                if (ClearKBPrefetched()) {
-                                    InSDBKey kbkey = GetKBKey(mf->GetDBHash(), kKBlock, ikey_seq_num_);
-                                    (mf->GetEnv())->DiscardPrefetch(kbkey);
-                                }
-                            }
+                            reclaim_size-= sizeof(KeyBlockPrimaryMeta);
                             return true;
                         }
                         ClearEvicting();
@@ -3539,6 +3512,7 @@ retry:
                 }
                 return false;
             }
+
             uint64_t GetNextIKeySeqNum() { 
                 assert(IsInlog());
                 assert(dev_data_size_ == USE_DEV_DATA_FOR_NEXT_IKEY_SEQ);
@@ -3577,47 +3551,378 @@ retry:
             bool DecodeAllDeleteKeyMeta(std::list<ColumnInfo> &key_list/*, uint64_t &largest_seq */);
     };
 
+    class KBPM_Cache {
+        typedef std::list<std::pair<SequenceNumber, KeyBlockPrimaryMeta*>>     KBPMList;
+        KBPMList    _data;
+        size_t      _max_size;
+        size_t      _cum_size;
+        size_t      _low_bound;
+        size_t      _insert_count;
+        size_t      _evict_count;
+        Spinlock    _lock;
+        public:
+
+        explicit KBPM_Cache(size_t max_size)
+            : _max_size(max_size),
+            _insert_count(0),
+            _evict_count(0),
+            _cum_size(0),
+            _low_bound(0),
+            _lock()
+        {
+            assert(max_size);
+            _low_bound = (max_size - (max_size /8u));
+        }
+
+        KBPM_Cache(const KBPM_Cache&) = delete;
+        KBPM_Cache& operator=(const KBPM_Cache&) = delete;
+        
+        void Insert(SequenceNumber key, KeyBlockPrimaryMeta* kbpm) {
+            if (kbpm->IsCache()) return;
+            _lock.Lock();
+            kbpm->SetCache();
+            _data.push_back(std::make_pair(key, kbpm));
+            _cum_size ++;
+            _insert_count++;
+            _lock.Unlock();
+        }
+
+        void Evict(Manifest* mf)
+        {
+            KBPMList  tmp_data;
+            KBPMList  ref_data;
+            int64_t evicted_size = 0;
+            int64_t reclaim_size = 0;
+            if (_cum_size <  _max_size ) return;
+            _lock.Lock();
+            _data.swap(tmp_data);
+            reclaim_size = _cum_size - _low_bound;
+            _lock.Unlock();
+#ifdef CODE_TRACE
+            size_t old_count = _evict_count;
+            printf("< KBPM reclaim size %ld: - ", reclaim_size);
+#endif
+            for (auto it = tmp_data.cbegin(); it != tmp_data.cend() && reclaim_size > 0 ; ) {
+                KeyBlockPrimaryMeta* kbpm = it->second;
+                assert(kbpm);
+                if (!kbpm->EvictKBPMFromCache(mf)) {
+                    ref_data.push_back(std::make_pair(it->first, kbpm));
+                    it = tmp_data.erase(it);
+                } else {
+                    _evict_count++;
+                    evicted_size++;
+                    reclaim_size--;
+                    it = tmp_data.erase(it);
+                    kbpm->ClearCache();
+                    mf->FreeKBPM(kbpm);
+                }
+            }
+#ifdef CODE_TRACE
+            printf(" evicted_size %ld - evicted_count %ld >\n", evicted_size, _evict_count - old_count);
+#endif
+            _lock.Lock();
+            _cum_size -= evicted_size;
+            _data.splice(_data.cbegin(), tmp_data);
+            _data.splice(_data.cend(), ref_data);
+            _lock.Unlock();
+        }
+
+
+        void Clear(Manifest *mf) noexcept
+        {
+            _lock.Lock();
+            const size_t old_size = _data.size();
+            if (!_data.empty()) {
+                for (auto it = _data.cbegin(); it != _data.cend(); ) {
+                    KeyBlockPrimaryMeta* kbpm = it->second;
+                    assert(kbpm);
+                    mf->RemoveKBPMFromHashMap(it->first);
+                    kbpm->ClearCache();
+                    mf->FreeKBPM(kbpm);
+                    it = _data.erase(it);
+                }
+            }
+            //_evict_count -= old_size;
+            _cum_size = 0;
+            _lock.Unlock();
+        }
+
+        size_t insert_count()   const noexcept { return _insert_count; }
+        size_t evict_count()    const noexcept { return _evict_count; }
+        size_t max_size()       const noexcept { return _max_size; }
+        size_t size()           const noexcept { return _data.size(); } 
+        bool empty()            const noexcept { return _data.empty(); }
+
+
+        std::string to_string() const
+        {
+            std::stringstream KBPM_cache_string;
+
+            KBPM_cache_string << "KBPM_cache: { address: " << this << ", max_size: " << max_size() <<
+                ", size: " << size() << ", insert_count: " << insert_count() << ", evict_count: " << evict_count() << " }\n";
+            return KBPM_cache_string.str();
+        }
+    };
+
+
+
+    class LRU_Cache
+    {
+        typedef std::list<std::pair<SequenceNumber, KeyBlock*>>     KBList;
+        typedef folly::ConcurrentHashMap<SequenceNumber, KeyBlock*> KBHashmap;
+
+        size_t                      _max_size;
+        KBList                      _data;
+        KBHashmap                   *_keys;
+
+        std::atomic<size_t>         _hit_count;
+        std::atomic<size_t>         _miss_count;
+        std::atomic<size_t>         _ref_hit_count;
+        std::atomic<size_t>         _ref_miss_count;
+        std::atomic<size_t>         _insert_count;
+        std::atomic<size_t>         _evict_count;
+        size_t                      _cum_size;
+        size_t                      _low_bound;
+        Spinlock                    _lock;
+        public:
+
+        explicit LRU_Cache(size_t max_size)
+            : _max_size(max_size),
+            _hit_count(0),
+            _miss_count(0),
+            _ref_hit_count(0),
+            _ref_miss_count(0),
+            _insert_count(0),
+            _evict_count(0),
+            _cum_size(0),
+            _low_bound(0),
+            _lock()
+        {
+            assert(max_size);
+            _low_bound = (max_size - (max_size /8u));
+            _keys = new KBHashmap(1024*1024);
+        }
+
+        ~LRU_Cache()
+        {
+            delete _keys;
+        }
+
+
+
+
+
+        LRU_Cache(const LRU_Cache&) = delete;
+
+
+        LRU_Cache& operator=(const LRU_Cache&) = delete;
+
+
+        bool Insert(SequenceNumber key, KeyBlock* value)
+        {
+            auto it = _keys->insert(key, value);
+            if (it.second) {
+                _lock.Lock();
+                _data.push_back(std::make_pair(key, value));
+                _cum_size += value->GetSize();
+                _lock.Unlock();
+                _insert_count.fetch_add(1, std::memory_order_relaxed);
+            }
+            return it.second;
+        }
+
+        bool InsertHashOnly(SequenceNumber key, KeyBlock* value)
+        {
+            auto it = _keys->insert(key, value);
+            if (it.second) {
+                _insert_count.fetch_add(1, std::memory_order_relaxed);
+            }
+            return it.second;
+        }
+
+        void RemoveHashOnly(SequenceNumber key) {
+            _keys->erase(key);
+            _evict_count.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        void AppendDataOnly(SequenceNumber key, KeyBlock* value) {
+            _lock.Lock();
+            _data.push_back(std::make_pair(key, value));
+            _cum_size += value->GetSize();
+            _lock.Unlock();
+        }
+
+        KeyBlock* Find(SequenceNumber key)
+        {
+            auto it = _keys->find(key);
+            if (it == _keys->end())
+            {
+                _miss_count.fetch_add(1, std::memory_order_relaxed);
+                return nullptr;
+            }
+            assert(it->second);
+            it->second->IncKBRefCnt();
+            it->second->SetReference();
+            _hit_count.fetch_add(1, std::memory_order_relaxed);
+
+            return it->second;
+        }
+
+        KeyBlock* FindWithoutRef(SequenceNumber key)
+        {
+            auto it = _keys->find(key);
+            if (it == _keys->end())
+            {
+                _miss_count.fetch_add(1, std::memory_order_relaxed);
+                return nullptr;
+            }
+            assert(it->second);
+            it->second->SetReference();
+            _hit_count.fetch_add(1, std::memory_order_relaxed);
+
+            return it->second;
+        }
+
+
+        KeyBlock* Reference(SequenceNumber key)
+        {
+            auto it = _keys->find(key);
+            if (it == _keys->end())
+            {
+                _ref_miss_count.fetch_add(1, std::memory_order_relaxed);
+                return nullptr;
+            }
+            assert(it->second);
+            it->second->SetReference(); 
+            _ref_hit_count.fetch_add(1, std::memory_order_relaxed);
+            return it->second;
+        }
+
+        void Evict(Manifest* mf)
+        {
+            KBList  tmp_data;
+            KBList  ref_data;
+            int64_t evicted_size = 0;
+            int64_t reclaim_size = 0;
+            if (_cum_size <  _max_size ) return;
+            _lock.Lock();
+            _data.swap(tmp_data);
+            reclaim_size = _cum_size - _low_bound;
+            _lock.Unlock();
+#ifdef CODE_TRACE
+            size_t old_count = _evict_count.load(std::memory_order_relaxed);
+            printf("< reclaim size %ld: - ", reclaim_size);
+#endif
+            for (auto it = tmp_data.cbegin(); it != tmp_data.cend() && reclaim_size > 0 ; ) {
+                KeyBlock* kb = it->second;
+                assert(kb);
+                if (kb->ClearReference()) { /* has reference before */
+                    ref_data.push_back(std::make_pair(it->first, kb));
+                    it = tmp_data.erase(it);
+                } else {
+                    kb->SetEvicting();
+                    mf->ClearKBPad(kb);
+                    _evict_count.fetch_add(1, std::memory_order_relaxed);
+                    evicted_size += kb->GetSize();
+                    reclaim_size -= kb->GetSize();
+                    _keys->erase(it->first);
+                    it = tmp_data.erase(it);
+                    mf->FreeKB(kb);
+#ifdef MEM_TRACE
+                    mf->DecKBPM_MEM_Usage(kb->GetSize());
+#endif
+                }
+            }
+#ifdef CODE_TRACE
+            printf(" evicted_size %ld - evicted_count %ld >\n", evicted_size, _evict_count.load(std::memory_order_relaxed) - old_count);
+#endif
+            _lock.Lock();
+            _cum_size -= evicted_size;
+            _data.splice(_data.cbegin(), tmp_data);
+            _data.splice(_data.cend(), ref_data);
+            _lock.Unlock();
+        }
+
+
+        void Clear(Manifest *mf) noexcept
+        {
+            _lock.Lock();
+            const size_t old_size = size();
+            if (!_keys->empty()) {
+                for (auto it = _keys->cbegin(); it != _keys->cend(); ) {
+                    KeyBlock *kb = it->second;
+                    assert(kb);
+                    kb->SetEvicting();
+                    mf->ClearKBPad(kb);
+                    it = _keys->erase(it);
+                    mf->FreeKB(kb);
+                }
+            }
+            _data.clear();
+            //_evict_count.fetch_add(old_size, std::memory_order_relaxed);
+            _cum_size = 0;
+            _lock.Unlock();
+        }
+
+
+        size_t hit_count()      const noexcept { return _hit_count.load(std::memory_order_relaxed); }
+        size_t miss_count()     const noexcept { return _miss_count.load(std::memory_order_relaxed); }
+        size_t ref_hit_count()  const noexcept { return _ref_hit_count.load(std::memory_order_relaxed); }
+        size_t ref_miss_count() const noexcept { return _ref_miss_count.load(std::memory_order_relaxed); }
+        size_t insert_count()   const noexcept { return _insert_count.load(std::memory_order_relaxed); }
+        size_t evict_count()    const noexcept { return _evict_count.load(std::memory_order_relaxed); }
+
+
+        size_t max_size()       const noexcept { return _max_size; }
+        size_t size()           const noexcept { return _keys->size(); }
+        bool empty()            const noexcept { return _keys->empty(); }
+
+
+        std::string to_string() const
+        {
+            std::stringstream lru_cache_string;
+
+            lru_cache_string << "lru_cache: { address: " << this << ", max_size: " << max_size() <<
+                ", size: " << size() << ", hit_count: " << hit_count() << ", miss_count: " << miss_count() <<
+                ", reference hit_count: " << ref_hit_count() << ", reference miss_count: " << ref_miss_count() <<
+                ", insert_count: " << insert_count() << ", evict_count: " << evict_count() << " }\n";
+
+            return lru_cache_string.str();
+        }
+    };
+
 
 #define UV_BUF_SIZE_SHIFT 5
 #define UV_BUF_SIZE_MASK 0x000000000000FFFF
 #define PINMASK 0x0FFFFFFF
+#define UVAlign(s)  P2ROUNDUP((s), 1ULL << UV_BUF_SIZE_SHIFT)
 
-    class UserValue{ //16 Byte
+    class UserValue { //16 Byte
         private:
-            /* Maximum Buffer size is 2MB(21bit) 
+            /* Maximum Buffer size is 2MB(21bit)
              *  => 32Byte Alignment(16 bit) */
             /* | 6 Byte = buffer address || 2 Byte = size | */
             char* buf_;
+            uint32_t buf_size_;
             uint32_t value_size_;// max 21 bit
-            uint16_t buf_size_;
             /*
              * First 4 bits are used for flags
              * the least 28 bits are for pin.
              */
             std::atomic<int16_t> pinned_;
-            ObjectAllocator<UserValue>* allocator_;
+            ObjectPoolShard<UserValue>* alloc_;
+
         public:
-                                    
-            /*For Free UserValue Registration */
-            UserValue(uint32_t size, ObjectAllocator<UserValue>* allocator) : buf_(NULL), value_size_(0), buf_size_(0), pinned_(0), allocator_(allocator_) { 
-                if(size){
-                    size = ((size + 0x1F)  & 0xFFFFFFE0);// For 32byte alignment
-                    buf_ = (char*)calloc(1, size);
-                    buf_size_ = (uint16_t)(size >>  UV_BUF_SIZE_SHIFT); 
-
+            UserValue(uint32_t size, ObjectPoolShard<UserValue>* alloc) :
+                buf_(NULL), buf_size_(0), value_size_(0), pinned_(1), alloc_(alloc) {
+                if (size) {
+                    size = UVAlign(size);
+                    buf_ = static_cast<char*>(alloc_->AllocBuf(size));
+                    buf_size_ = size;
                 }
             }
 
-            UserValue(uint32_t size) : buf_(NULL), value_size_(0), buf_size_(0), pinned_(1), allocator_(NULL) { 
-                if(size){
-                    size = ((size + 0x1F)  & 0xFFFFFFE0);// For 32byte alignment
-                    buf_ = (char*)calloc(1, size);
-                    buf_size_ = (uint16_t)(size >>  UV_BUF_SIZE_SHIFT); 
-
-                }
-            }
-
-            ~UserValue() { 
+            ~UserValue() {
                 /*TODO : decrease count in cache or prefetch/iterator buffer */
                 /**
                  * Lock ColumnNode in RemoveUserValue()
@@ -3625,45 +3930,43 @@ retry:
                  *
                  * owner_->RemoveUserValue(); 
                  */
-                if (buf_) free((void*)buf_);
-            }
-            char* GetBuffer(){ return buf_; }
-
-            void InitUserValue(const Slice& uval){
-                assert(pinned_ == 1);
-                value_size_ = uval.size();
-                uint32_t buf_size = ((uint32_t)buf_size_ << UV_BUF_SIZE_SHIFT);
-
-                if(value_size_){
-                    if(buf_size < value_size_){
-                        free((void*)buf_);
-                        buf_size = ((value_size_ + 0x1F)  & 0xFFFFFFE0);// For 32byte alignment
-                        buf_ = (char*)calloc(1, buf_size);
-                        buf_size_ = buf_size >> UV_BUF_SIZE_SHIFT;
-                    }
-                    memcpy((void*)buf_, uval.data(), value_size_);
+                if (buf_) {
+                    alloc_->FreeBuf(buf_, buf_size_);
+                    buf_ = nullptr;
                 }
             }
 
-            void InitUserValue(const Slice& uval, const Slice& key, uint8_t col_id, uint64_t ttl){
+            void InitUserValue(const Slice& val, const Slice& key, uint8_t col_id, uint64_t ttl) {
+                char* dst = buf_;
+                value_size_ = val.size();
+
                 assert(pinned_ == 1);
-                value_size_ = uval.size();
-                uint32_t buf_size = ((uint32_t)buf_size_ << UV_BUF_SIZE_SHIFT);
-                if(buf_size < value_size_ + key.size() + 1/*sizeof(col_id)*/ + (ttl?8:0)){
-                    buf_size = value_size_ + key.size() + 1/*sizeof(col_id)*/ + (ttl?8:0);
-                    buf_size = ((buf_size + 0x1F)  & 0xFFFFFFE0);// For 32byte alignment
-                    free((void*)buf_);
-                    buf_ = (char*)calloc(1, buf_size);
-                    buf_size_ = buf_size >> UV_BUF_SIZE_SHIFT;
-                }
+                assert(buf_size_ >= (val.size() + key.size() + 1/*sizeof(col_id)*/ + (ttl?8:0)));
+                assert(val.size() <= 1ULL << 21);
+
                 /* Copy "User value" + "User Key" + "Column ID" + ("TTL") for data compression in BuildKeyBlock() */
-                memcpy((void*)buf_, uval.data(), value_size_);
-                buf_size = uval.size();
-                memcpy((void*)(buf_ + buf_size), key.data(), key.size());
-                buf_size += key.size();
-                *(buf_+buf_size) = col_id;
-                buf_size += 1;/* size of col id */
-                if(ttl) memcpy((void*)(buf_ + buf_size),(void *) &ttl, 8);
+                memcpy((void*)dst, val.data(), val.size());
+                dst += val.size();
+                memcpy((void*)dst, key.data(), key.size());
+                dst += key.size();
+                memcpy((void*)dst, &col_id, 1);
+                dst += 1;/* size of col id */
+                if (ttl)
+                    memcpy((void*)dst, &ttl, sizeof (ttl));
+            }
+
+            unsigned Realloc(unsigned size) {
+                unsigned sz = 0;
+                unsigned aligned_sz = UVAlign(size);
+
+                if (aligned_sz > buf_size_) {
+                    sz = aligned_sz - buf_size_;
+                    alloc_->FreeBuf(buf_, buf_size_);
+                    buf_ = static_cast<char*>(alloc_->AllocBuf(aligned_sz));
+                    buf_size_ = aligned_sz;
+                }
+
+                return sz;
             }
 
             void InitPinAndFlag() { pinned_.store(1, std::memory_order_relaxed); }
@@ -3690,13 +3993,15 @@ retry:
                 return new_pinned != 0;
             }
             Slice GetKeySlice(uint16_t key_size) {
-                assert(value_size_ + key_size <= (buf_size_ << UV_BUF_SIZE_SHIFT));
+                assert(value_size_ + key_size <= buf_size_);
                 return Slice((buf_ + value_size_), key_size);
             }
-            Slice ReadValue() { return Slice(buf_, value_size_);  }
+            Slice GetValueSlice() { return Slice(buf_, value_size_); }
             uint32_t GetValueSize() { return value_size_; }
-            void SetAllocator(ObjectAllocator<UserValue>* allocator){ allocator_ = allocator; }
-            ObjectAllocator<UserValue>* GetAllocator(){ return allocator_; }
+            char* GetBuffer() { return buf_; }
+
+            void CleanUp() {;}
+            void* GetAllocator() { return alloc_; }
 
         private:
             // No copying allowed
@@ -3777,6 +4082,7 @@ retry:
         SKTableMem *skt;
         // immutable
         Keymap *keymap;
+        KeyBlock* iter_kb;
         Slice userkey_buff;
 
         // valid when keyhandle != 0
@@ -3789,6 +4095,7 @@ retry:
         uint8_t skt_ref:1;
 
         void InitAfterCopy(Manifest *mf) {
+            iter_kb = nullptr;
             skt_ref = 0;
             userkey_buff = Slice(0);
             uv_or_kbpm = nullptr;
@@ -3821,6 +4128,12 @@ retry:
                 mf->FreeUserValue((UserValue*)uv_or_kbpm);
             uv_or_kbpm = nullptr;
         }
+        void CleanupKB(Manifest* mf) {
+            if (iter_kb) {
+                if (iter_kb->IsDummy()) mf->RemoveDummyKB(iter_kb);
+                mf->FreeKB(iter_kb);
+            }
+        }
         void Cleanup(Manifest *mf) {
             CleanupSkt();
             CleanupUserkeyBuff();
@@ -3850,7 +4163,6 @@ retry:
                 last_key_(lkey.data(), lkey.size()), 
                 comparator_(const_cast<Comparator*>(mf_->GetComparator())),
                 last_kb_ikey_seq_(0),
-                last_kbpm_(nullptr),
                 prefix_size_(0),
                 prefix_{},
                 iter_history_(0), prefetch_window_shift_(0), prefetch_scanned_queue_(), prefetched_skt_(nullptr), free_pf_node_(), pf_hit_history_(0), kb_(NULL)
@@ -3928,7 +4240,6 @@ retry:
             // curent user key
             IterKey cur_;
             uint64_t last_kb_ikey_seq_;
-            KeyBlockPrimaryMeta *last_kbpm_;
 
             /**
             Prefetch management.

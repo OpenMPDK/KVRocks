@@ -95,11 +95,15 @@ static inline struct kv_async_request *kv_hash_search(struct hlist_head *head, s
  * If request hash does not have same key, insert a new async request 
  */
 #define UNLOCK_AND_RESTART(rq, hash) \
-            if(atomic_dec_and_test(&rq->refcount)) free_kv_async_rq(rq); \
-            else spin_unlock(&rq->lock); \
+        if(atomic_dec_and_test(&rq->refcount)) { \
             spin_unlock(&hash->hash_lock[rq->hash_key]); \
-            rq=NULL; \
-            goto restart;
+            free_kv_async_rq(rq); \
+         } else { \
+            spin_unlock(&rq->lock); \
+            spin_unlock(&hash->hash_lock[rq->hash_key]); \
+         } \
+        rq=NULL; \
+        goto restart;
 struct kv_async_request *kv_hash_insert(struct kv_hash *hash, struct kv_async_request *rq)
 {
     struct kv_async_request *buffered_rq;
@@ -271,7 +275,6 @@ bool kv_decrease_req_refcnt(struct kv_async_request *rq, bool lock)
         spin_lock(&rq->lock);
     if(atomic_dec_and_test(&rq->refcount)){
         free_kv_async_rq(rq);
-        rq = NULL;
         return true;
     }
     if(lock)
@@ -279,13 +282,11 @@ bool kv_decrease_req_refcnt(struct kv_async_request *rq, bool lock)
     return false;
 }
 
-
 /*
  * Check whether same key exists in the hash or not for sync request
  */
 struct kv_async_request *kv_hash_find_and_lock(struct kv_hash *hash, void *key, u32 key_length, u32 hash_key, bool *inFlight)
 {
-
     struct kv_async_request *rq;
 
 restart:
@@ -321,13 +322,18 @@ restart:
 #endif
             UNLOCK_AND_RESTART(rq, hash);
         }else if(test_bit(KV_async_inFlight_rq, &rq->state)){
+            spin_unlock(&rq->lock);
             spin_unlock(&hash->hash_lock[hash_key]);
+
+            wait_on_bit(&rq->state, KV_async_inFlight_rq, TASK_UNINTERRUPTIBLE);
+
+            spin_lock(&rq->lock);
             if(atomic_dec_and_test(&rq->refcount)){
                 pr_err("[%d:%s]ERROR : retcount of inFlight_rq must not be 0\n", __LINE__, __func__);
                 free_kv_async_rq(rq);
-            }else
+            }else {
                 spin_unlock(&rq->lock);
-            wait_on_bit(&rq->state, KV_async_inFlight_rq, TASK_KILLABLE);
+            }
             /* 
              * Do not check RQ again because the others were requested after this request.
              * In this case, it is necessary to check RA hash again 
@@ -340,18 +346,22 @@ restart:
             *inFlight = true;
             rq = NULL;
         }else if(rq->blocking_rq){/* nvme_cmd_kv_store*/
+            spin_unlock(&rq->lock);
             spin_unlock(&hash->hash_lock[hash_key]);
+
+            wait_on_bit(&rq->blocking_rq->state, KV_async_inFlight_rq, TASK_UNINTERRUPTIBLE);
+
             /*
              * Must release lock at here for the completion daemon. 
              * The daemon need to acquire pending rq lock while having inFlight_rq lock.
              */
+            spin_lock(&rq->lock);
             if(atomic_dec_and_test(&rq->refcount)){
                 pr_err("[%d:%s]ERROR : retcount of pending rq must not be 0\n", __LINE__, __func__);
                 free_kv_async_rq(rq);
-            }else
+            }else {
                 spin_unlock(&rq->lock); 
-
-            wait_on_bit(&rq->blocking_rq->state, KV_async_inFlight_rq, TASK_KILLABLE);
+            }
             rq = NULL;
             goto restart;
         }else{
@@ -407,13 +417,18 @@ restart:
 #endif
             UNLOCK_AND_RESTART(rq, hash);
         }else if(test_bit(KV_async_inFlight_rq, &rq->state)){
+            spin_unlock(&rq->lock);
             spin_unlock(&hash->hash_lock[hash_key]);
+
+            wait_on_bit(&rq->state, KV_async_inFlight_rq, TASK_UNINTERRUPTIBLE);
+
+            spin_lock(&rq->lock);
             if(atomic_dec_and_test(&rq->refcount)){
                 pr_err("[%d:%s]ERROR : retcount of inFlight_rq must not be 0\n", __LINE__, __func__);
                 free_kv_async_rq(rq);
-            }else
+            }else {
                 spin_unlock(&rq->lock);
-            wait_on_bit(&rq->state, KV_async_inFlight_rq, TASK_KILLABLE);
+            }
             /* 
              * Do not check RQ again because the others were requested after this request.
              * In this case, it is necessary to check RA hash again 
@@ -425,18 +440,22 @@ restart:
              */
             rq = NULL;
         }else if(rq->blocking_rq){/* nvme_cmd_kv_store*/
+            spin_unlock(&rq->lock);
             spin_unlock(&hash->hash_lock[hash_key]);
+
+            wait_on_bit(&rq->blocking_rq->state, KV_async_inFlight_rq, TASK_UNINTERRUPTIBLE);
+
             /*
              * Must release lock at here for the completion daemon. 
              * The daemon need to acquire pending rq lock while having inFlight_rq lock.
              */
+            spin_lock(&rq->lock);
             if(atomic_dec_and_test(&rq->refcount)){
                 pr_err("[%d:%s]ERROR : retcount of pending rq must not be 0\n", __LINE__, __func__);
                 free_kv_async_rq(rq);
-            }else
+            }else {
                 spin_unlock(&rq->lock); 
-
-            wait_on_bit(&rq->blocking_rq->state, KV_async_inFlight_rq, TASK_KILLABLE);
+            }
             rq = NULL;
             goto restart;
         }else{

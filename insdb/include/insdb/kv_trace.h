@@ -46,6 +46,16 @@
 namespace insdb {
     typedef unsigned long long cycles_t;
 
+#ifdef KV_TIME_MEASURE 
+    extern volatile cycles_t updatekeyinfo_cycle;
+    extern volatile cycles_t split_cycle;
+    extern volatile uint32_t updatekeyinfo_cnt;
+    extern volatile uint32_t split_cnt;
+    extern volatile cycles_t insertuk_cycle;
+    extern volatile uint32_t insertuk_cnt;
+    extern volatile cycles_t insertuk_in_split_cycle;
+    extern volatile uint32_t insertuk_in_split_cnt;
+#endif
 #define DECLARE_ARGS(val, low, high)	unsigned low, high
 #define EAX_EDX_VAL(val, low, high)	((low) | ((unsigned long)(high) << 32))
 #define EAX_EDX_ARGS(val, low, high)	"a" (low), "d" (high)

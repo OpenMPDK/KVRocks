@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="33" failures="1" disabled="0" errors="0" timestamp="2019-06-05T13:42:06" time="12.09" name="AllTests">
+  <testsuite name="CFTest_PUT" tests="7" failures="0" disabled="0" errors="0" time="6.12">
+    <testcase name="PutKVWithCF" status="run" time="0.357" classname="CFTest_PUT" />
+    <testcase name="PutKVWithDropedCF" status="run" time="1.304" classname="CFTest_PUT" />
+    <testcase name="PutNullCF" status="run" time="0.572" classname="CFTest_PUT" />
+    <testcase name="PutInvalidKVWithCF" status="run" time="0.403" classname="CFTest_PUT" />
+    <testcase name="PutSameKVInDiffCF" status="run" time="0.534" classname="CFTest_PUT" />
+    <testcase name="PutSameKVInFiveCF" status="run" time="1.292" classname="CFTest_PUT" />
+    <testcase name="PutSameKVInMaxCF" status="run" time="1.658" classname="CFTest_PUT" />
+  </testsuite>
+  <testsuite name="ts_kv_put" tests="26" failures="1" disabled="0" errors="0" time="5.97">
+    <testcase name="PutRightData" status="run" time="0.132" classname="ts_kv_put" />
+    <testcase name="PutWithoutKey" status="run" time="0.168" classname="ts_kv_put">
+      <failure message="../kvdbapi/kvdb_put.cc:1325&#x0A;Value of: PutWithInvalidKV(0, 64, &quot;/tmp/ddtest&quot;, 1)&#x0A;  Actual: 0&#x0A;Expected: -1&#x0A;kvdb-put-withoutkey-002&#x0A;" type=""><![CDATA[../kvdbapi/kvdb_put.cc:1325
+Value of: PutWithInvalidKV(0, 64, "/tmp/ddtest", 1)
+  Actual: 0
+Expected: -1
+kvdb-put-withoutkey-002
+]]></failure>
+    </testcase>
+    <testcase name="PutWithoutValue" status="run" time="0.146" classname="ts_kv_put" />
+    <testcase name="PutWithSameKey" status="run" time="0.154" classname="ts_kv_put" />
+    <testcase name="PutWithSameKV" status="run" time="0.164" classname="ts_kv_put" />
+    <testcase name="PutDiffKeySameValue" status="run" time="0.164" classname="ts_kv_put" />
+    <testcase name="PutKey15B" status="run" time="0.156" classname="ts_kv_put" />
+    <testcase name="PutKey16B" status="run" time="0.143" classname="ts_kv_put" />
+    <testcase name="PutKey17B" status="run" time="0.147" classname="ts_kv_put" />
+    <testcase name="PutKey255B" status="run" time="0.2" classname="ts_kv_put" />
+    <testcase name="PutKey256B" status="run" time="0.153" classname="ts_kv_put" />
+    <testcase name="PutValue63B" status="run" time="0.199" classname="ts_kv_put" />
+    <testcase name="PutMinValue" status="run" time="0.158" classname="ts_kv_put" />
+    <testcase name="PutNormalValue" status="run" time="0.18" classname="ts_kv_put" />
+    <testcase name="PutValueLess2MB" status="run" time="0.136" classname="ts_kv_put" />
+    <testcase name="PutValue2MB" status="run" time="0.148" classname="ts_kv_put" />
+    <testcase name="PutValueMore2MB" status="run" time="1.936" classname="ts_kv_put" />
+    <testcase name="PutToDeletedkey" status="run" time="0.147" classname="ts_kv_put" />
+    <testcase name="Put3KV" status="run" time="0.178" classname="ts_kv_put" />
+    <testcase name="Put100KV" status="run" time="0.199" classname="ts_kv_put" />
+    <testcase name="Put1000KV" status="run" time="0.178" classname="ts_kv_put" />
+    <testcase name="PutKeySpeChar" status="run" time="0.185" classname="ts_kv_put" />
+    <testcase name="PutKey3B" status="run" time="0.157" classname="ts_kv_put" />
+    <testcase name="PutKey4B" status="run" time="0.144" classname="ts_kv_put" />
+    <testcase name="PutSync" status="run" time="0.152" classname="ts_kv_put" />
+    <testcase name="PutValue4G" status="run" time="0.146" classname="ts_kv_put" />
+  </testsuite>
+</testsuites>

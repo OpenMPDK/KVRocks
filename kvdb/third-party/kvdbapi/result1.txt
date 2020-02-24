@@ -1,0 +1,364 @@
+[==========] Running 154 tests from 9 test cases.
+[----------] Global test environment set-up.
+[----------] 23 tests from CFTest
+[ RUN      ] CFTest.NullNameCF
+open
+before DB::Open 
+The open is 
+OK
+opened
+--------------START-----------
+The cf name is :one
+The created cf id is :0
+The cf name is :one
+The cf name is :
+The created cf id is :1
+The cf name is :
+before DB::Open 
+The open status is 
+OK
+close 1
+close 2
+close 3
+close 4
+---------------~DBOpenTest--------------------
+[       OK ] CFTest.NullNameCF (602 ms)
+[ RUN      ] CFTest.CreateNullCFAndNotOpen
+before DB::Open 
+The open is 
+OK
+--------------START-----------
+The cf name is :one
+The created cf id is :0
+The cf name is :one
+The cf name is :
+The created cf id is :1
+The cf name is :
+before DB::Open 
+Invalid argument: You have to open all column families. Column families not opened:
+---------------~DBOpenTest--------------------
+[       OK ] CFTest.CreateNullCFAndNotOpen (301 ms)
+[ RUN      ] CFTest.OpenWithInvalidCF
+before DB::Open 
+Invalid argument: Column family not found:Invalid_CF
+---------------~DBOpenTest--------------------
+[       OK ] CFTest.OpenWithInvalidCF (0 ms)
+[ RUN      ] CFTest.closeTwice
+before DB::Open 
+The open is 
+OK
+close 1
+close 2
+close 3
+close 4
+close 1
+close 2
+close 3
+close 4
+---------------~DBOpenTest--------------------
+[       OK ] CFTest.closeTwice (202 ms)
+[ RUN      ] CFTest.closeBeforeOpen
+close 1
+close 2
+close 3
+close 4
+before DB::Open 
+The open is 
+OK
+close 1
+close 2
+close 3
+close 4
+---------------~DBOpenTest--------------------
+[       OK ] CFTest.closeBeforeOpen (183 ms)
+[ RUN      ] CFTest.OpenWith2Of4CF
+before DB::Open 
+The open is 
+OK
+--------------START-----------
+The cf name is :one
+The created cf id is :0
+The cf name is :one
+The cf name is :two
+The created cf id is :1
+The cf name is :two
+The cf name is :three
+The created cf id is :2
+The cf name is :three
+The cf name is :four
+The created cf id is :3
+The cf name is :four
+before DB::Open 
+Invalid argument: You have to open all column families. Column families not opened:four, three
+---------------~DBOpenTest--------------------
+[       OK ] CFTest.OpenWith2Of4CF (695 ms)
+[ RUN      ] CFTest.OpenWithoutDefaultCF
+before DB::Open 
+The open is 
+OK
+--------------START-----------
+The cf name is :one
+The created cf id is :0
+The cf name is :one
+The cf name is :two
+The created cf id is :1
+The cf name is :two
+The cf name is :three
+The created cf id is :2
+The cf name is :three
+The cf name is :four
+The created cf id is :3
+The cf name is :four
+close 1
+close 2
+close 3
+close 4
+before DB::Open 
+Invalid argument: Default column family not specified
+close 1
+close 2
+close 3
+close 4
+---------------~DBOpenTest--------------------
+[       OK ] CFTest.OpenWithoutDefaultCF (921 ms)
+[ RUN      ] CFTest.CreateDefaultCF
+before DB::Open 
+The open is 
+OK
+Invalid argument: duplicate column name
+close 1
+close 2
+close 3
+close 4
+---------------~DBOpenTest--------------------
+[       OK ] CFTest.CreateDefaultCF (152 ms)
+[ RUN      ] CFTest.OpenMaxCF
+before DB::Open 
+The open is 
+OK
+--------------START-----------
+The cf name is :cf1-1
+The created cf id is :0
+The cf name is :cf1-1
+The cf name is :cf1-2
+The created cf id is :1
+The cf name is :cf1-2
+The cf name is :cf1-3
+The created cf id is :2
+The cf name is :cf1-3
+The cf name is :cf1-4
+The created cf id is :3
+The cf name is :cf1-4
+The cf name is :cf1-5
+The created cf id is :4
+The cf name is :cf1-5
+The cf name is :cf1-6
+The created cf id is :5
+The cf name is :cf1-6
+The cf name is :cf1-7
+The created cf id is :6
+The cf name is :cf1-7
+before DB::Open 
+OK
+close 1
+close 2
+close 3
+close 4
+---------------~DBOpenTest--------------------
+[       OK ] CFTest.OpenMaxCF (2158 ms)
+[ RUN      ] CFTest.OpenMaxMoreCF
+before DB::Open 
+The open is 
+OK
+--------------START-----------
+The cf name is :cf1-1
+The created cf id is :0
+The cf name is :cf1-1
+The cf name is :cf1-2
+The created cf id is :1
+The cf name is :cf1-2
+The cf name is :cf1-3
+The created cf id is :2
+The cf name is :cf1-3
+The cf name is :cf1-4
+The created cf id is :3
+The cf name is :cf1-4
+The cf name is :cf1-5
+The created cf id is :4
+The cf name is :cf1-5
+The cf name is :cf1-6
+The created cf id is :5
+The cf name is :cf1-6
+The cf name is :cf1-7
+The created cf id is :6
+The cf name is :cf1-7
+IO error: No space left on deviceReached maximum of column families
+close 1
+close 2
+close 3
+close 4
+---------------~DBOpenTest--------------------
+[       OK ] CFTest.OpenMaxMoreCF (1600 ms)
+[ RUN      ] CFTest.PutKVWithCF
+/usr/src/gtest/src/gtest.cc:1989: Failure
+Failed
+All tests in the same test case must use the same test fixture
+class.  However, in test case CFTest,
+you defined test NullNameCF and test PutKVWithCF
+using two different test fixture classes.  This can happen if
+the two classes are from different namespaces or translation
+units and have the same name.  You should probably rename one
+of the classes to put the tests into different test cases.
+---------------~DBOpenTest--------------------
+[  FAILED  ] CFTest.PutKVWithCF (18 ms)
+[ RUN      ] CFTest.PutKVWithDropedCF
+/usr/src/gtest/src/gtest.cc:1989: Failure
+Failed
+All tests in the same test case must use the same test fixture
+class.  However, in test case CFTest,
+you defined test NullNameCF and test PutKVWithDropedCF
+using two different test fixture classes.  This can happen if
+the two classes are from different namespaces or translation
+units and have the same name.  You should probably rename one
+of the classes to put the tests into different test cases.
+---------------~DBOpenTest--------------------
+[  FAILED  ] CFTest.PutKVWithDropedCF (16 ms)
+[ RUN      ] CFTest.PutNullCF
+/usr/src/gtest/src/gtest.cc:1989: Failure
+Failed
+All tests in the same test case must use the same test fixture
+class.  However, in test case CFTest,
+you defined test NullNameCF and test PutNullCF
+using two different test fixture classes.  This can happen if
+the two classes are from different namespaces or translation
+units and have the same name.  You should probably rename one
+of the classes to put the tests into different test cases.
+---------------~DBOpenTest--------------------
+[  FAILED  ] CFTest.PutNullCF (17 ms)
+[ RUN      ] CFTest.PutInvalidKVWithCF
+/usr/src/gtest/src/gtest.cc:1989: Failure
+Failed
+All tests in the same test case must use the same test fixture
+class.  However, in test case CFTest,
+you defined test NullNameCF and test PutInvalidKVWithCF
+using two different test fixture classes.  This can happen if
+the two classes are from different namespaces or translation
+units and have the same name.  You should probably rename one
+of the classes to put the tests into different test cases.
+---------------~DBOpenTest--------------------
+[  FAILED  ] CFTest.PutInvalidKVWithCF (17 ms)
+[ RUN      ] CFTest.PutSameKVInDiffCF
+/usr/src/gtest/src/gtest.cc:1989: Failure
+Failed
+All tests in the same test case must use the same test fixture
+class.  However, in test case CFTest,
+you defined test NullNameCF and test PutSameKVInDiffCF
+using two different test fixture classes.  This can happen if
+the two classes are from different namespaces or translation
+units and have the same name.  You should probably rename one
+of the classes to put the tests into different test cases.
+---------------~DBOpenTest--------------------
+[  FAILED  ] CFTest.PutSameKVInDiffCF (18 ms)
+[ RUN      ] CFTest.PutSameKVInFiveCF
+/usr/src/gtest/src/gtest.cc:1989: Failure
+Failed
+All tests in the same test case must use the same test fixture
+class.  However, in test case CFTest,
+you defined test NullNameCF and test PutSameKVInFiveCF
+using two different test fixture classes.  This can happen if
+the two classes are from different namespaces or translation
+units and have the same name.  You should probably rename one
+of the classes to put the tests into different test cases.
+---------------~DBOpenTest--------------------
+[  FAILED  ] CFTest.PutSameKVInFiveCF (20 ms)
+[ RUN      ] CFTest.PutSameKVInMaxCF
+/usr/src/gtest/src/gtest.cc:1989: Failure
+Failed
+All tests in the same test case must use the same test fixture
+class.  However, in test case CFTest,
+you defined test NullNameCF and test PutSameKVInMaxCF
+using two different test fixture classes.  This can happen if
+the two classes are from different namespaces or translation
+units and have the same name.  You should probably rename one
+of the classes to put the tests into different test cases.
+---------------~DBOpenTest--------------------
+[  FAILED  ] CFTest.PutSameKVInMaxCF (20 ms)
+[ RUN      ] CFTest.GetKVWithCF
+/usr/src/gtest/src/gtest.cc:1989: Failure
+Failed
+All tests in the same test case must use the same test fixture
+class.  However, in test case CFTest,
+you defined test NullNameCF and test GetKVWithCF
+using two different test fixture classes.  This can happen if
+the two classes are from different namespaces or translation
+units and have the same name.  You should probably rename one
+of the classes to put the tests into different test cases.
+[  FAILED  ] CFTest.GetKVWithCF (20 ms)
+[ RUN      ] CFTest.GetSameKVInDiffCF
+/usr/src/gtest/src/gtest.cc:1989: Failure
+Failed
+All tests in the same test case must use the same test fixture
+class.  However, in test case CFTest,
+you defined test NullNameCF and test GetSameKVInDiffCF
+using two different test fixture classes.  This can happen if
+the two classes are from different namespaces or translation
+units and have the same name.  You should probably rename one
+of the classes to put the tests into different test cases.
+[  FAILED  ] CFTest.GetSameKVInDiffCF (20 ms)
+[ RUN      ] CFTest.GetSameKVInMaxCF
+/usr/src/gtest/src/gtest.cc:1989: Failure
+Failed
+All tests in the same test case must use the same test fixture
+class.  However, in test case CFTest,
+you defined test NullNameCF and test GetSameKVInMaxCF
+using two different test fixture classes.  This can happen if
+the two classes are from different namespaces or translation
+units and have the same name.  You should probably rename one
+of the classes to put the tests into different test cases.
+[  FAILED  ] CFTest.GetSameKVInMaxCF (20 ms)
+[ RUN      ] CFTest.ReadFromOneSnapshot_CF
+/usr/src/gtest/src/gtest.cc:1989: Failure
+Failed
+All tests in the same test case must use the same test fixture
+class.  However, in test case CFTest,
+you defined test NullNameCF and test ReadFromOneSnapshot_CF
+using two different test fixture classes.  This can happen if
+the two classes are from different namespaces or translation
+units and have the same name.  You should probably rename one
+of the classes to put the tests into different test cases.
+../kvdbapi/kvdb_snapshot2.cc:421: Failure
+DestroyDB(dbname_, Options(db_options_, column_family_options_))
+NotFound: NotFound: super sktable is not exist
+[  FAILED  ] CFTest.ReadFromOneSnapshot_CF (39 ms)
+[ RUN      ] CFTest.ReadFromOneSnapshot_CFs
+/usr/src/gtest/src/gtest.cc:1989: Failure
+Failed
+All tests in the same test case must use the same test fixture
+class.  However, in test case CFTest,
+you defined test NullNameCF and test ReadFromOneSnapshot_CFs
+using two different test fixture classes.  This can happen if
+the two classes are from different namespaces or translation
+units and have the same name.  You should probably rename one
+of the classes to put the tests into different test cases.
+../kvdbapi/kvdb_snapshot2.cc:421: Failure
+DestroyDB(dbname_, Options(db_options_, column_family_options_))
+NotFound: NotFound: super sktable is not exist
+[  FAILED  ] CFTest.ReadFromOneSnapshot_CFs (40 ms)
+[ RUN      ] CFTest.UpdateKeyThenReadFromSnapshot_CFs
+/usr/src/gtest/src/gtest.cc:1989: Failure
+Failed
+All tests in the same test case must use the same test fixture
+class.  However, in test case CFTest,
+you defined test NullNameCF and test UpdateKeyThenReadFromSnapshot_CFs
+using two different test fixture classes.  This can happen if
+the two classes are from different namespaces or translation
+units and have the same name.  You should probably rename one
+of the classes to put the tests into different test cases.
+../kvdbapi/kvdb_snapshot2.cc:421: Failure
+DestroyDB(dbname_, Options(db_options_, column_family_options_))
+NotFound: NotFound: super sktable is not exist
+[  FAILED  ] CFTest.UpdateKeyThenReadFromSnapshot_CFs (40 ms)
+[----------] 23 tests from CFTest (7121 ms total)
+
+[----------] 9 tests from ts_kv_open
+[ RUN      ] ts_kv_open.OpenIsOk

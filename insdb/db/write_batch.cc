@@ -353,7 +353,7 @@ namespace insdb {
    tmpkey[16] = '\0';
    printf("[%d :: %s]Delete CMD exist uk : %s || uk addr : %p\n", __LINE__, __func__, tmpkey, uk);
 #endif
-   void WriteBatchInternal::Store(const KeySlice& key, const Slice& value, const uint16_t col_id, RequestType type ){
+   void WriteBatchInternal::Store(const KeySlice& key, const Slice& value, const uint16_t col_id, RequestType type ) {
        Status s;
        UserKey *uk = NULL; 
        UserValue *uv = NULL;
@@ -383,7 +383,7 @@ namespace insdb {
            SKTableMem *skt = mf_->FindSKTableMem(key);
            seq = mf_->GenerateSequenceNumber();
            skt->PushUserKeyToActiveKeyQueue(uk,seq);
-           if(mf_->MemoryUsage() < kCacheSizeLowWatermark){
+           if (mf_->MemUseLow()) {
                if(!skt->IsKeymapLoaded() && !skt->IsFetchInProgress()) 
                    skt->PrefetchSKTable(mf_, true);
            }else

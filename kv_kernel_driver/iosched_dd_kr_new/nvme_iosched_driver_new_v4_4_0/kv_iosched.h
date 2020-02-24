@@ -270,11 +270,11 @@ extern inline u32 get_hash_key(void *key, u32 key_length);
  * The device hangs when requesting get in async mode(burst I/O) 
  * But no requests are blocked in this configuration
  */
-#define KV_MAX_INFLIGHT_REQUEST 0x2000
+#define KV_MAX_INFLIGHT_REQUEST 512
 #endif
 #define DEFAULT_NR_REQ_PER_MEMQ 256
 
-#define KV_PENDING_QUEU_LOW_WATERMARK (KV_MAX_INFLIGHT_REQUEST  << 1)
+#define KV_PENDING_QUEU_LOW_WATERMARK (KV_MAX_INFLIGHT_REQUEST  << 3)
 #define KV_PENDING_QUEU_HIGH_WATERMARK (KV_PENDING_QUEU_LOW_WATERMARK + (KV_MAX_INFLIGHT_REQUEST >> 1))
 
 

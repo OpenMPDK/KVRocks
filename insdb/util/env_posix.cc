@@ -159,6 +159,9 @@ class PosixEnv : public Env {
 #endif
 
     if (value.size() > kDeviceRquestMaxSize) abort();
+    // kernel driver does not support 1 byte alignment
+    if (value.size() & 0x3) abort();
+
 
     Status s;
     int ret = 0;
@@ -256,6 +259,9 @@ class PosixEnv : public Env {
         port::Crash(__FILE__,__LINE__);
     }
     */
+    // kernel driver does not support 1 byte alignment
+    if (*size & 0x3) abort();
+
     cmd.data_length = (__u32)*size;
     cmd.key_length = EMBED_KEYSIZE;
     memcpy(cmd.key, (char *)&key, EMBED_KEYSIZE);
@@ -386,11 +392,14 @@ struct dev_buffer {
         // Set flags
         if (opcode == nvme_cmd_kv_retrieve)
             dev_buf[dev_idx].cmd->cdw11 |= ((__u32)flags<<8);
-        // Set size
+        // Buffer size check
         if ( opcode == nvme_cmd_kv_store && size[i] > kDeviceRquestMaxSize) abort();
-        if(i < size.size())
+
+        if(i < size.size()) {
             dev_buf[dev_idx].cmd->cdw10 = ((__u32)size[i] >> 2);
-        else
+            // kernel driver does not support 1 byte alignment
+            if (size[i] & 0x3) abort();
+        } else
             dev_buf[dev_idx].cmd->cdw10 = 0;
 
         // increase command count

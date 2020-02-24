@@ -68,8 +68,8 @@ namespace insdb {
     int kMaxKeySize = 40;
     const uint16_t kMaxAllocatorPool = 8;
     //  Max preferred User value size
-    uint64_t kMaxCacheSize = 16*1024*1024*1024UL;
-    uint64_t kCacheSizeLowWatermark = 0;/*Set it to 80% of kMaxCacheSize in Manifest*/
+    int64_t kMaxCacheSize = 16*1024*1024*1024UL;
+    int64_t kCacheSizeLowWatermark = 0;/*Set it to 80% of kMaxCacheSize in Manifest*/
     // Max threshold size to flush
     //Minimun update count for triggering SKTableMem Flush
     uint32_t  kSlowdownTrigger = 64*1024;
@@ -258,7 +258,9 @@ namespace insdb {
         /*Free UserValue in the UpdateColumnNode()*/
         latest_col_node_->UpdateColumnNode(mf, kb_size, ikey_seq, kbpm);
         latest_col_node_->SetSubmitted();
+        uk->SetLatestiKey(ikey_seq);
         uk->DecreaseReferenceCount();
+
         uk->ColumnUnlock(col_id_);
 
     }
@@ -275,7 +277,9 @@ namespace insdb {
     }
 
     void DBRecoveryThread::ThreadFn() {
-
+        uint32_t new_uk = 0;
+        uint32_t removed_uk = 0;
+        uint32_t replace_uk = 0;
         Env *env_ = recovery_->GetEnv();
         Manifest *mf_ = recovery_->GetManifest();
         std::list<TrxnGroupRange> &completed_trxn_groups_ = recovery_->GetCompletedTrxnGroup();
@@ -296,50 +300,77 @@ namespace insdb {
                 char kbm_buf[kDeviceRquestMaxSize];
                 int kbm_buf_size = kDeviceRquestMaxSize;
                 Status s = env_->Get(GetKBKey(mf_->GetDBHash(), kKBMeta, ikey_seq), kbm_buf, &kbm_buf_size);
-                if(s.IsNotFound())
+                if(s.IsNotFound()) {
                     break;
+                }
                 else if(!s.ok()) {
                     printf("recovery(%u): cannot read key block meta. %s\n", worker_id_, s.ToString().data());
                     status_ = s;
                     return;
                 }
-                assert(kbm_buf_size > kOutLogKBMSize);
-                char *inLogBuffer = (char*)malloc(kbm_buf_size); /* will be freed whenc FreeKBPM() */
-                assert(inLogBuffer);
-                memcpy(inLogBuffer, kbm_buf, kbm_buf_size);
-                kbpm->InitWithDeviceFormatForInLog(mf_, inLogBuffer, kbm_buf_size);
+                if (kbm_buf_size <= kOutLogKBMSize) {
+                    kbpm->InitWithDeviceFormat(mf_, kbm_buf, (uint16_t)kbm_buf_size);
+                } else {
+                    char *inLogBuffer = (char*)malloc(kbm_buf_size); /* will be freed whenc FreeKBPM() */
+                    assert(inLogBuffer);
+                    memcpy(inLogBuffer, kbm_buf, kbm_buf_size);
+                    kbpm->InitWithDeviceFormatForInLog(mf_, inLogBuffer, kbm_buf_size);
+                }
                 mf_->InsertKBPMToHashMap(kbpm); 
             } else if (kbpm->IsDummy()) {
-                char kbm_buf[kDeviceRquestMaxSize];
-                int kbm_buf_size = kDeviceRquestMaxSize;
-                Status s = env_->Get(GetKBKey(mf_->GetDBHash(), kKBMeta, ikey_seq), kbm_buf, &kbm_buf_size);
-                if(s.IsNotFound())
-                    break;
-                else if(!s.ok()) {
-                    printf("recovery(%u): cannot read key block meta. %s\n", worker_id_, s.ToString().data());
-                    status_ = s;
-                    return;
+                while(kbpm->SetWriteProtection());
+                if (kbpm->IsDummy()) {
+                    char kbm_buf[kDeviceRquestMaxSize];
+                    int kbm_buf_size = kDeviceRquestMaxSize;
+                    Status s = env_->Get(GetKBKey(mf_->GetDBHash(), kKBMeta, ikey_seq), kbm_buf, &kbm_buf_size);
+                    if(s.IsNotFound()) {
+                        kbpm->ClearWriteProtection();
+                        break;
+                    }
+                    else if(!s.ok()) {
+                        kbpm->ClearWriteProtection();
+                        printf("recovery(%u): cannot read key block meta. %s\n", worker_id_, s.ToString().data());
+                        status_ = s;
+                        return;
+                    }
+                    if (kbm_buf_size <= kOutLogKBMSize) {
+                        kbpm->InitWithDeviceFormat(mf_, kbm_buf, (uint16_t)kbm_buf_size);
+                    } else {
+                        char *inLogBuffer = (char*)malloc(kbm_buf_size); /* will be freed whenc FreeKBPM() */
+                        assert(inLogBuffer);
+                        memcpy(inLogBuffer, kbm_buf, kbm_buf_size);
+                        kbpm->InitWithDeviceFormatForInLog(mf_, inLogBuffer, kbm_buf_size);
+                    }
                 }
-                assert(kbm_buf_size > kOutLogKBMSize);
-                char *inLogBuffer = (char*)malloc(kbm_buf_size); /* will be freed whenc FreeKBPM() */
-                assert(inLogBuffer);
-                memcpy(inLogBuffer, kbm_buf, kbm_buf_size);
-                kbpm->InitWithDeviceFormatForInLog(mf_, inLogBuffer, kbm_buf_size);
-                mf_->InsertKBPMToHashMap(kbpm);  
+                kbpm->ClearWriteProtection();
+            }
+            if (!kbpm->IsInlog()) {
+                /* It may happen retry recover. and we may have already recovered this .. ignore */
+                break;
             }
 
             bool rh_hit = false;
             // Read key block from the device
             std::list<ColumnInfo> orphan_col_list;
             if(kbpm->GetOriginalKeyCount()) {
-                KeyBlock * kb = nullptr;
-                if (!(kb = kbpm->GetKeyBlockAddr())) {
-                    kbpm->KBPMLock();
-                    if (!(kb = kbpm->GetKeyBlockAddr()))  {
-                        kb = mf_->LoadValue(ikey_seq, kDeviceRquestMaxSize, &rh_hit, kbpm, true);
-                        if (kb) kbpm->SetKeyBlockAddr(kb);
+                KeyBlock * kb = mf_->FindKBCache(ikey_seq);
+                assert(kb);
+                if (kb->IsDummy()) {
+                    bool b_load = false;
+                    kb->KBLock();
+                    if (kb->IsDummy()) {
+                        b_load = mf_->LoadValue(ikey_seq, kDeviceRquestMaxSize, &rh_hit, kb, true);
+                        if (b_load) {
+                            mf_->DummyKBToActive(ikey_seq, kb);
+                        } else {
+                            mf_->RemoveDummyKB(kb);
+                        }
                     }
-                    kbpm->KBPMUnlock();
+                    kb->KBUnlock();
+                    if (!b_load) {
+                        mf_->FreeKB(kb);
+                        kb = nullptr;
+                    }
                 }
                 if (!kb) {
                     kbpm->ClearAllKeyBlockBitmap();
@@ -354,6 +385,7 @@ namespace insdb {
                     status_ = Status::Corruption("cannot decode key block");
                     return;
                 }
+                mf_->FreeKB(kb);
             } else {
                 if (kbpm->DecodeAllDeleteKeyMeta(orphan_col_list/*, largest_seq_ */)) {
                     printf("recovery(%u): cannot decode key block\n", worker_id_);
@@ -362,12 +394,14 @@ namespace insdb {
                 }
             }
 
+            if (ikey_seq > largest_ikey_) largest_ikey_ = ikey_seq; /* keep track largest ikey */
             // Recover keys in completed transaction groups
             for(auto colinfo : orphan_col_list){
+                if (colinfo.iter_seq > largest_seq_) largest_seq_ = colinfo.iter_seq;
                 TrxnInfo *trxninfo = colinfo.trxninfo;
                 if (!trxninfo) {
                     /* non transaction columne */
-                    recovery_->InsertRecoveredKeyToKeymap(mf_, colinfo);
+                    recovery_->InsertRecoveredKeyToKeymap(mf_, colinfo, new_uk, removed_uk, replace_uk);
                     continue;
                 }
                 TrxnGroupID tgid = trxninfo->GetTrxnGroupID();
@@ -375,7 +409,7 @@ namespace insdb {
 
                 // If in completed transaction group, add the user key to keymap
                 if(mf_->IsCompletedTrxnGroupRange(completed_trxn_groups_, tgid)) {
-                    recovery_->InsertRecoveredKeyToKeymap(mf_, colinfo);
+                    recovery_->InsertRecoveredKeyToKeymap(mf_, colinfo, new_uk, removed_uk, replace_uk);
                     delete trxninfo;
                 } else {
                     // Collect column nodes and transactions to further inspect in the next step
@@ -399,6 +433,9 @@ namespace insdb {
             ikey_seq = kbpm->GetNextIKeySeqNumFromDeviceFormat();
             if (ikey_seq > largest_ikey_) largest_ikey_ = ikey_seq; /* keep track largest ikey */
         } //while(true)
+        new_uk_ = new_uk;
+        removed_uk_ = removed_uk;
+        replace_uk_ = replace_uk;
         status_ = Status::OK();
     }
 
@@ -474,15 +511,19 @@ namespace insdb {
         }
         /* update manifest's next sktable id */
         if (mf_->GetCurNextSKTableID() < max_used_skt_id) mf_->SetNextSKTableID(max_used_skt_id);
+        printf("[%s:%d] -- Update skt id --\n\t new next skt id (%d)\n", __func__, __LINE__, max_used_skt_id);
 
         return;
     }
 
-    Status Manifest::LoadColInfoFromDevice(uint32_t skt_id, uint32_t cur_col_id, std::string &col_info) {
+    Status Manifest::LoadColInfoFromDevice(uint32_t skt_id, uint32_t &cur_col_id, std::string &col_info) {
         Status s;
         char* dest = nullptr;
         col_info.resize(0);
+        std::string io_buf;
         char buffer[kDeviceRquestMaxSize];
+        char* cmp_buffer = nullptr;
+        char* src = nullptr;
         int size = kDeviceRquestMaxSize;
         InSDBKey colkey = GetColInfoKey(dbhash_, skt_id, cur_col_id);
         s = env_->Get(colkey, buffer, &size, kSyncGet);
@@ -490,23 +531,58 @@ namespace insdb {
         uint32_t col_info_size = DecodeFixed32(buffer);
         if (col_info_size & KEYMAP_COMPRESS) {
             col_info_size = (col_info_size & KEYMAP_SIZE_MASK);
+            if (col_info_size > kDeviceRquestMaxSize) {
+                io_buf.append(buffer, size);
+                uint16_t nr_cnt = (col_info_size + kDeviceRquestMaxSize -1) / kDeviceRquestMaxSize;
+                for (uint16_t i = 1; i < nr_cnt; i++) {
+                    int size = kDeviceRquestMaxSize;
+                    cur_col_id++;
+                    InSDBKey colkey = GetColInfoKey(dbhash_, skt_id, cur_col_id);
+                    s = env_->Get(colkey, buffer, &size, kSyncGet);
+                    if (!s.ok()) {
+                        return s;
+                    }
+                    io_buf.append(buffer, size);
+                }
+                cmp_buffer = const_cast<char*>(io_buf.data());
+            } else {
+                cmp_buffer = buffer;
+            }
+
             size_t ulength = 0;
-            if (!port::Snappy_GetUncompressedLength(buffer + COMP_COL_INFO_TABLE_SIZE, col_info_size, &ulength)) {
+            if (!port::Snappy_GetUncompressedLength(cmp_buffer + COMP_COL_INFO_TABLE_SIZE, col_info_size, &ulength)) {
                 printf("[%d :: %s] corrupted compressed data\n", __LINE__, __func__);
                 abort();
             } else {
                 col_info.append(ulength, 0x0);
                 dest = const_cast<char*>(col_info.data());
-                if (!port::Snappy_Uncompress(buffer + COMP_COL_INFO_TABLE_SIZE, col_info_size, dest)) {
+                if (!port::Snappy_Uncompress(cmp_buffer + COMP_COL_INFO_TABLE_SIZE, col_info_size, dest)) {
                     printf("[%d :: %s] corrupted compressed data\n", __LINE__, __func__);
                     abort();
                 }
-
             }
         } else {
+            if (col_info_size > kDeviceRquestMaxSize) {
+                io_buf.append(buffer, size);
+                uint16_t nr_cnt = (col_info_size + kDeviceRquestMaxSize -1) / kDeviceRquestMaxSize;
+                for (uint16_t i = 1; i < nr_cnt; i++) {
+                    int size = kDeviceRquestMaxSize;
+                    cur_col_id++;
+                    InSDBKey colkey = GetColInfoKey(dbhash_, skt_id, cur_col_id);
+                    s = env_->Get(colkey, buffer, &size, kSyncGet);
+                    if (!s.ok()) {
+                        return s;
+                    }
+                    io_buf.append(buffer, size);
+                }
+                src = const_cast<char*>(io_buf.data());
+            } else {
+                src = buffer;
+            }
+
             col_info.append(col_info_size, 0x0);
             dest = const_cast<char*>(col_info.data());
-            memcpy(dest, buffer, col_info_size); 
+            memcpy(dest, src, col_info_size); 
         }
         uint32_t total_size = DecodeFixed32(dest);
         assert(total_size == col_info.size());
@@ -523,10 +599,12 @@ namespace insdb {
 #ifdef INSDB_USE_HASHMAP
     void DBRecovery::UpdateColInfoToUk(std::string &col_info, KeyHashMap *key_hashmap, uint64_t &largest_ikey, uint64_t &largest_seq) {
         char* data = const_cast<char*>(col_info.data());
+        KeyBlock * kb = nullptr;
         uint32_t size = col_info.size();
         data += COL_INFO_TABLE_META;
         size -= COL_INFO_TABLE_META;
         while(size) {
+            kb = nullptr;
             KeySlice user_key(0);
             bool has_key = false;
             bool found_key = false;
@@ -553,19 +631,29 @@ namespace insdb {
                     has_key = true;
                 } else if (!has_key && !found_key) {
                    bool rh_hit = false;
-                   KeyBlockPrimaryMeta *kbpm =  mf_->GetKBPMWithiKey(colinfo.ikey_sequence, colinfo.kb_offset);
-                   assert(kbpm); 
-                   KeyBlock * kb = nullptr;
-                   if (!(kb = kbpm->GetKeyBlockAddr())) {
-                        kbpm->KBPMLock();
-                        if (!(kb = kbpm->GetKeyBlockAddr()))  {
-                            kb = mf_->LoadValue(colinfo.ikey_sequence, colinfo.ikey_size, &rh_hit, kbpm, true);
-                            if (kb) kbpm->SetKeyBlockAddr(kb);
-                        }
-                        kbpm->KBPMUnlock();
+                   kb = mf_->FindKBCache(colinfo.ikey_sequence);
+                   assert(kb);
+                   if (kb->IsDummy()) {
+                       bool b_load = false;
+                       kb->KBLock();
+                       if (kb->IsDummy()) {
+                           b_load = mf_->LoadValue(colinfo.ikey_sequence, colinfo.ikey_size, &rh_hit, kb, true);
+                           if (b_load) {
+                               mf_->DummyKBToActive(colinfo.ikey_sequence, kb);
+                           } else {
+                               mf_->RemoveDummyKB(kb);
+                           }
+                       }
+                       kb->KBUnlock();
+                       if (!b_load) {
+                           mf_->FreeKB(kb);
+                           kb = nullptr;
+                       }
                    }
-                   if (kb) user_key = kb->GetKeyFromKeyBlock(mf_, colinfo.kb_offset);
-                   found_key = true;
+                   if (kb) { 
+                       user_key = kb->GetKeyFromKeyBlock(mf_, colinfo.kb_offset);
+                       found_key = true;
+                   }
                 }
                 data += col->GetColSize();
                 size -= col->GetColSize();
@@ -608,6 +696,7 @@ namespace insdb {
                 assert(uk);
                 uk->InsertColumnNodes(mf_, nr_col, column_info, true);
                 assert(size >= 0);
+                if (kb) mf_->FreeKB(kb);
             }
         }
     }
@@ -649,40 +738,40 @@ namespace insdb {
 
                 if(kbpm->IsDummy()){
                     while(kbpm->SetWriteProtection());
-                    char kbm_buf[kOutLogKBMSize] = {0,};
-                    int kbm_buf_size = kOutLogKBMSize;
-                    kbpm->SetInSDBKeySeqNum(ikey);
-                    if(kbpm->IsKBMPrefetched()) kbpm->ClearKBMPrefetched();
-                    if (!kbpm->LoadKBPMDeviceFormat(mf_, kbm_buf, kbm_buf_size, false)) { /* try sync */
-                        /*
-                         * key may already deleted.. 
-                         */
-                        kbpm->ClearKeyBlockBitmap(col_node->GetKeyBlockOffset());
-                        col_list->Delete(col_node->GetColumnNodeNode());
-                        col_node->InvalidateUserValue(mf_);
+                    if (kbpm->IsDummy()) {
+                        char kbm_buf[kOutLogKBMSize] = {0,};
+                        int kbm_buf_size = kOutLogKBMSize;
+                        kbpm->SetInSDBKeySeqNum(ikey);
+                        if(kbpm->IsKBMPrefetched()) kbpm->ClearKBMPrefetched();
+                        if (!kbpm->LoadKBPMDeviceFormat(mf_, kbm_buf, kbm_buf_size, false)) { /* try sync */
+                            /*
+                             * key may already deleted.. 
+                             */
+                            kbpm->ClearKeyBlockBitmap(col_node->GetKeyBlockOffset());
+                            col_list->Delete(col_node->GetColumnNodeNode());
+                            col_node->InvalidateUserValue(mf_);
 
-                        if(uk->GetLatestColumnNode(col_id) == col_node)
-                            uk->SetLatestColumnNode(col_id, col_list_node ? uk->GetColumnNodeContainerOf(col_list_node): NULL);
+                            if(uk->GetLatestColumnNode(col_id) == col_node)
+                                uk->SetLatestColumnNode(col_id, col_list_node ? uk->GetColumnNodeContainerOf(col_list_node): NULL);
 #ifndef NDEBUG
-                        if(col_node->GetRequestNode()) {
-                            assert(col_node->GetRequestNode()->GetRequestNodeLatestColumnNode() != col_node);
-                        }
+                            if(col_node->GetRequestNode()) {
+                                assert(col_node->GetRequestNode()->GetRequestNodeLatestColumnNode() != col_node);
+                            }
 #endif
-                        col_node->SetRequestNode(nullptr);
-                        mf_->FreeColumnNode(col_node);
-                        kbpm->ClearWriteProtection();
-                        continue;
+                            col_node->SetRequestNode(nullptr);
+                            mf_->FreeColumnNode(col_node);
+                            kbpm->ClearWriteProtection();
+                            continue;
+                        }
+                        if (kbm_buf_size <= kOutLogKBMSize) {
+                            kbpm->InitWithDeviceFormat(mf_, kbm_buf, (uint16_t)kbm_buf_size);
+                        } else {
+                            char *inLogBuffer = (char*)malloc(kbm_buf_size); /* will be freed whenc FreeKBPM() */
+                            assert(inLogBuffer);
+                            kbpm->LoadKBPMDeviceFormat(mf_, inLogBuffer, kbm_buf_size, false);
+                            kbpm->InitWithDeviceFormatForInLog(mf_, inLogBuffer, kbm_buf_size);
+                        }
                     }
-                    if (kbm_buf_size <= kOutLogKBMSize) {
-                        kbpm->InitWithDeviceFormat(mf_, kbm_buf, (uint16_t)kbm_buf_size);
-                    } else {
-                        char *inLogBuffer = (char*)malloc(kbm_buf_size); /* will be freed whenc FreeKBPM() */
-                        assert(inLogBuffer);
-                        kbpm->LoadKBPMDeviceFormat(mf_, inLogBuffer, kbm_buf_size, false);
-                        kbpm->InitWithDeviceFormatForInLog(mf_, inLogBuffer, kbm_buf_size);
-                    }
-                    // KBML should not be created for normal dummy state KBM.
-
                     kbpm->ClearWriteProtection();
                 }
 
@@ -732,7 +821,7 @@ namespace insdb {
 
 
 
-    void DBRecovery::LoadKeymapAndProcessColTable(std::vector<KEYMAP_HDR*> &keymap_hdrs, SequenceNumber &largest_ikey, SequenceNumber &largest_seq, uint32_t start_index, uint32_t count){
+    void DBRecovery::LoadKeymapAndProcessColTable(std::vector<KEYMAP_HDR*> &keymap_hdrs, SequenceNumber &largest_ikey, SequenceNumber &largest_seq, uint32_t &new_uk, uint32_t &removed_uk, uint32_t &replace_uk, uint32_t start_index, uint32_t count){
         /* create sktable */
         bool has_updated_col_info_table = false;
         uint32_t end = start_index + count;
@@ -763,17 +852,13 @@ namespace insdb {
 #endif
             SKTableMem *skt = new SKTableMem(mf_, keymap);
             assert(skt);
-            skt->SetKeymapMemSize(skt->GetAllocatedSize());
 #ifdef USE_HASHMAP_RANDOMREAD
             skt->SetKeymapNodeSize(keymap_size, hdr->hashmap_data_size);
 #else
             skt->SetKeymapNodeSize(keymap_size);
 #endif
             skt->SetSKTableID(keymap->GetSKTableID());
-            mf_->IncreaseMemoryUsage(skt->GetAllocatedSize());
-#ifdef MEM_TRACE
-            mf_->incSKTDF_MEM_Usage(skt->GetAllocatedSize());
-#endif
+
             mf_->InsertSKTableMem(skt);
             rdb_mu_.Lock();
             SKTableMem* prev = mf_->Prev(skt);
@@ -815,14 +900,18 @@ namespace insdb {
                         key_info.remove_prefix(1); /* skip nr_col */
                         uk->InsertColumnNodes(mf_, (nr_col & NR_COL_MASK) + 1, key_info);
                         keymap->Remove(uk->GetKeySlice());
+                        replace_uk++;
+                    } else {
+                        new_uk++;
                     }
 
                     uint16_t new_key_info_size = uk->GetKeyInfoSizeForNew();
                     assert(new_key_info_size);
-                    Slice keyinfo = keymap->Insert(uk->GetKeySlice(), new_key_info_size, handle);
-                    assert(keyinfo.size());
+                    bool is_old = false;
+                    Slice keyinfo = keymap->Insert(uk->GetKeySlice(), new_key_info_size, handle, is_old);
+                    assert(!is_old/*keyinfo.size()*/ );
                     bool has_del = false;
-                    uk->BuildColumnInfo(mf_, new_key_info_size, keyinfo, largest_ikey, largest_seq,  in_log_KBPM_queue, has_del);
+                    uk->BuildColumnInfo(mf_, new_key_info_size, keyinfo, largest_ikey, in_log_KBPM_queue, has_del);
                     /*
                      * in_log_KBPM_queue maybe clean at this time.
                      * Need to check manually with uk.
@@ -834,9 +923,8 @@ namespace insdb {
             }
             delete key_hashmap;
 #endif
+
             /* CleanupAndStore keymap */
-            uint32_t orig_size = skt->GetKeymapMemSize();
-            uint32_t new_size = 0;
 #ifdef USE_HASHMAP_RANDOMREAD
             KeyHashMap* hashmap = new KeyMapHashMap(1024*32);
             Arena* new_arena = skt->MemoryCleanupSKTDeviceFormat(mf_, hashmap);
@@ -844,27 +932,18 @@ namespace insdb {
             Arena* new_arena = skt->MemoryCleanupSKTDeviceFormat(mf_);
 #endif
             if (new_arena) {
-                new_size = new_arena->AllocatedMemorySize();
-                if (orig_size > new_size) {
-
-#ifdef MEM_TRACE
-                    mf_->DecSKTDF_MEM_Usage(orig_size - new_size);
-#endif                
-                    mf_->DecreaseMemoryUsage(orig_size - new_size);
-                } else {
-#ifdef MEM_TRACE
-                    mf_->IncSKTDF_MEM_Usage(new_size - orig_size);
-#endif                
-                    mf_->IncreaseMemoryUsage(new_size - orig_size);
-                }
 #ifdef USE_HASHMAP_RANDOMREAD
                 skt->InsertArena(new_arena, hashmap);
 #else
                 skt->InsertArena(new_arena);
 #endif
-                skt->SetKeymapMemSize(new_size);
             }
-            /*
+
+            if (skt->GetSKTableID() != 1 && !skt->GetCount()) {
+                skt->SetDeletedSKT(mf_);
+                continue;
+            }
+           /*
              * Check whether it is possible to flush ..
              * if possible, flush keymap and remove memory.
              * else insert to dirty cache by expecting after recover will be flushed by flush thread.
@@ -872,7 +951,7 @@ namespace insdb {
             if (!skt->NeedToSplit()) {
                 uint32_t io_size = 0;
                 if (has_updated_col_info_table && cur_col_id) {
-                    skt->ResetCurColInfoID(cur_col_id -1, cur_col_id -1); /* reset col info table range */
+                    skt->ResetCurColInfoID(cur_col_id, cur_col_id); /* reset col info table range */
                 }
 #ifdef USE_HASHMAP_RANDOMREAD
                 uint32_t hash_data_size = 0;
@@ -890,20 +969,27 @@ namespace insdb {
                 skt->SetKeymapNodeSize(io_size);
 #endif
                 skt->InsertArena(nullptr); /* remove memory */
-#ifdef MEM_TRACE
-                mf_->DecSKTDF_MEM_Usage(skt->GetKeymapMemSize());
-#endif                
-                mf_->DecreaseMemoryUsage(skt->GetKeymapMemSize());
- 
-                mf_->InsertSKTableMemCache(skt, kDirtySKTCache, SKTableMem::flags_in_dirty_cache);
-            } else {
-                /* split sktable */
+
                 if (has_updated_col_info_table && cur_col_id) {
-                    skt->ResetCurColInfoID(cur_col_id -1, cur_col_id -1); /* reset col info table range, flush will remove col info tables */
+                    for(uint32_t colid = prev_col_id; colid < cur_col_id; colid++) {
+                        InSDBKey prekey = GetColInfoKey(GetManifest()->GetDBHash(), skt->GetSKTableID(), colid);
+                        GetEnv()->Delete(prekey);
+                    }
                 }
                 mf_->InsertSKTableMemCache(skt, kDirtySKTCache, SKTableMem::flags_in_dirty_cache);
-                char cmp_buff[kDeviceRquestMaxSize];
-                Slice comp_col_info_table(cmp_buff, kDeviceRquestMaxSize);
+            } else {
+#ifdef MEM_TRACE
+                mf_->IncSKTDF_MEM_Usage(skt->GetBufferSize());
+#endif                
+                mf_->IncreaseSKTDFNodeSize(skt->GetBufferSize());
+ 
+                /* split sktable */
+                if (has_updated_col_info_table && cur_col_id) {
+                    skt->ResetCurColInfoID(prev_col_id, cur_col_id); /* reset col info table range, flush will remove col info tables */
+                }
+                mf_->InsertSKTableMemCache(skt, kDirtySKTCache, SKTableMem::flags_in_dirty_cache);
+                std::string comp_col_info_table;
+                comp_col_info_table.reserve(kDeviceRquestMaxSize);
                 std::string col_info_table;
                 std::queue<KeyBlockPrimaryMeta*> in_log_KBM_queue;
                 skt->FlushSKTableMem(mf_, col_info_table, comp_col_info_table, in_log_KBM_queue);
@@ -952,17 +1038,18 @@ namespace insdb {
     }
 
 
-    void DBRecovery::InsertRecoveredKeyToKeymap(Manifest *mf, ColumnInfo &colinfo) {
+    void DBRecovery::InsertRecoveredKeyToKeymap(Manifest *mf, ColumnInfo &colinfo, uint32_t &new_uk, uint32_t &removed_uk, uint32_t &replace_uk) {
         SKTableMem* skt = mf_->FindSKTableMem(colinfo.key);
         assert(skt);
         if (!skt->IsKeymapLoaded()) {
             if (!skt->LoadSKTableDeviceFormat(mf)) {
                 if (!skt->IsCached()) { 
-                    mf->InsertSKTableMemCache(skt, kCleanSKTCache, SKTableMem::flags_in_clean_cache);
+                    mf->InsertSKTableMemCache(skt, kDirtySKTCache, SKTableMem::flags_in_dirty_cache);
                 }
             }
         }
         Keymap* keymap = skt->GetKeyMap();
+        int32_t old_size = skt->GetBufferSize();
         skt->KeyMapGuardLock();
         KeyMapHandle handle = keymap->Search(colinfo.key);
         if (handle) {
@@ -975,15 +1062,10 @@ namespace insdb {
                 ColMeta* colmeta = (ColMeta*)(const_cast<char*>(col_info_slice.data()));
                 colmeta->ColInfo(col_data);
                 /* if colinfo is older information  .... nothing to do */
-#if 0 
-                if (col_data.iter_sequence >= colinfo.iter_seq) return;
-#else
-                /* unsafe need to fix to use iter_squence */
-                if (col_data.ikey_sequence >= colinfo.ikey_seq)  {
+                if (col_data.iter_sequence >= colinfo.iter_seq) {
                     skt->KeyMapGuardUnLock();
                     return;
                 }
-#endif
             }
             /* rebuild key info */
             ColumnData col_data[kMaxColumnCount];
@@ -1008,6 +1090,37 @@ namespace insdb {
             }
             /* update col info */
             assert(colinfo.col_id <= kMaxColumnCount);
+            /* clear kbpm bitmap for old column node */
+            if (col_data[colinfo.col_id].ikey_sequence && !col_data[colinfo.col_id].is_deleted) {
+                KeyBlockPrimaryMeta *kbpm =  mf_->GetKBPMWithiKey(col_data[colinfo.col_id].ikey_sequence, col_data[colinfo.col_id].kb_offset);
+                assert(kbpm); 
+                if(kbpm->IsDummy()){
+                    while(kbpm->SetWriteProtection());
+                    if (kbpm->IsDummy()) {
+                        char kbm_buf[kOutLogKBMSize] = {0,};
+                        int kbm_buf_size = kOutLogKBMSize;
+                        kbpm->SetInSDBKeySeqNum(col_data[colinfo.col_id].ikey_sequence);
+                        if(kbpm->IsKBMPrefetched()) kbpm->ClearKBMPrefetched();
+                        if (!kbpm->LoadKBPMDeviceFormat(mf_, kbm_buf, kbm_buf_size, false)) { /* try sync */
+                            kbpm->ClearWriteProtection();
+                            goto update_col_info;
+                        }
+                        if (kbm_buf_size <= kOutLogKBMSize) {
+                            kbpm->InitWithDeviceFormat(mf_, kbm_buf, (uint16_t)kbm_buf_size);
+                        } else {
+                            char *inLogBuffer = (char*)malloc(kbm_buf_size); /* will be freed whenc FreeKBPM() */
+                            assert(inLogBuffer);
+                            kbpm->LoadKBPMDeviceFormat(mf_, inLogBuffer, kbm_buf_size, false);
+                            kbpm->InitWithDeviceFormatForInLog(mf_, inLogBuffer, kbm_buf_size);
+                        }
+                    }
+
+                    kbpm->ClearWriteProtection();
+                }
+                assert(!kbpm->IsDummy());
+                kbpm->ClearKeyBlockBitmap(col_data[colinfo.col_id].kb_offset);
+            }
+update_col_info: 
             col_data[colinfo.col_id].init();
             if (colinfo.type == kDelType) col_data[colinfo.col_id].is_deleted = true;
             else col_data[colinfo.col_id].kb_offset = colinfo.kb_index;
@@ -1016,11 +1129,7 @@ namespace insdb {
                 col_data[colinfo.col_id].has_ttl = true;
                 col_data[colinfo.col_id].ttl = colinfo.ttl;
             }
-#if 0
             col_data[colinfo.col_id].iter_sequence = colinfo.iter_seq;
-#else
-            col_data[colinfo.col_id].iter_sequence = 0;
-#endif
             col_data[colinfo.col_id].ikey_sequence = colinfo.ikey_seq;
             col_data[colinfo.col_id].ikey_size = colinfo.kb_size;
             col_data[colinfo.col_id].col_size = 12; /* dummy stuff to recognize valid col */
@@ -1035,11 +1144,10 @@ namespace insdb {
                     uint32_t start_offset = new_col_info.size();
                     new_col_info.append(1, 0x0); /* reserve for column size */
                     uint8_t colid = col_data[i].column_id;
-                    if (col_data[i].referenced) colid |= 0xC0;
+                    if (col_data[i].has_ttl) colid |= 0x80;
                     new_col_info.append(1, colid);
-                    uint8_t ttl_offset = col_data[i].kb_offset;
-                    if (col_data[i].has_ttl) ttl_offset |= 0x80;
-                    new_col_info.append(1, ttl_offset);
+                    uint8_t kb_offset = col_data[i].kb_offset;
+                    new_col_info.append(1, kb_offset);
                     PutVarint64(&new_col_info, col_data[i].iter_sequence);
                     if (col_data[i].has_ttl) PutVarint64(&new_col_info, col_data[i].ttl);
                     PutVarint64(&new_col_info, col_data[i].ikey_sequence);
@@ -1050,13 +1158,22 @@ namespace insdb {
                     nr_col++;
                 }
             }
-            new_col_info[0] = nr_col -1;
-            /* update keymap */
-            Slice new_col_slice(new_col_info);
-            Slice new_keyinfo = keymap->ReplaceOrInsert(colinfo.key, new_col_slice.size(), handle);
-            assert(new_keyinfo.size() >= new_col_slice.size() && handle);
-            memcpy(const_cast<char*>(new_keyinfo.data()), const_cast<char*>(new_col_slice.data()), new_col_slice.size());
-        } else if (colinfo.type != kDelType) { 
+            if (nr_col ==0) {
+                keymap->Remove(colinfo.key);
+                removed_uk++;
+            } else {
+                replace_uk++;
+                new_col_info[0] = nr_col -1;
+                /* update keymap */
+                Slice new_col_slice(new_col_info);
+                keymap->Remove(colinfo.key);
+                bool key_info_exist = false;
+                Slice new_keyinfo = keymap->Insert(colinfo.key, new_col_slice.size(), handle, key_info_exist);
+                assert(!key_info_exist/*new_keyinfo.size() >= new_col_slice.size() && handle*/);
+                memcpy(const_cast<char*>(new_keyinfo.data()), const_cast<char*>(new_col_slice.data()), new_col_slice.size());
+            }
+        } else if (colinfo.type != kDelType) {
+            new_uk++; 
             /* rebuild column info */
             std::string new_col_info;
             new_col_info.resize(0);
@@ -1064,15 +1181,11 @@ namespace insdb {
             uint32_t start_offset = new_col_info.size();
             new_col_info.append(1, 0x0); /* reserve for column size */
             uint8_t colid = colinfo.col_id;
+            if (colinfo.ttl) colid |= 0x80;
             new_col_info.append(1, colid);
-            uint8_t ttl_offset = colinfo.kb_index;
-            if (colinfo.ttl) ttl_offset |= 0x80;
-            new_col_info.append(1, ttl_offset);
-#if 0
-            PutVarint64(&new_col_info, col_info.iter_seq);
-#else
-            PutVarint64(&new_col_info, 0);
-#endif
+            uint8_t kb_offset = colinfo.kb_index;
+            new_col_info.append(1, kb_offset);
+            PutVarint64(&new_col_info, colinfo.iter_seq);
             if (colinfo.ttl) PutVarint64(&new_col_info, colinfo.ttl);
             PutVarint64(&new_col_info, colinfo.ikey_seq);
             PutVarint32(&new_col_info, colinfo.kb_size);
@@ -1081,10 +1194,14 @@ namespace insdb {
             new_col_info[start_offset] = col_size;
             /* insert keymap */
             Slice new_col_slice(new_col_info);
-            Slice new_keyinfo = keymap->Insert(colinfo.key, new_col_slice.size(), handle);
+            bool is_old = false;
+            Slice new_keyinfo = keymap->Insert(colinfo.key, new_col_slice.size(), handle, is_old);
+            assert(!is_old);
             assert(new_keyinfo.size() >= new_col_slice.size() && handle);
             memcpy(const_cast<char*>(new_keyinfo.data()), const_cast<char*>(new_col_slice.data()), new_col_slice.size());
         }
+        int32_t new_size = skt->GetBufferSize();
+        mf_->IncreaseSKTDFNodeSize(new_size - old_size);
         skt->KeyMapGuardUnLock();
    }
 
@@ -1129,6 +1246,9 @@ namespace insdb {
         uint32_t skt_id = 0;
         uint64_t largest_seq = 0;
         uint64_t largest_ikey = 0;
+        uint32_t new_uk = 0;
+        uint32_t removed_uk = 0;
+        uint32_t replace_uk = 0;
         // decode the log record
         // note that it's already loaded when checking log record existence.
         bool success = logkey_.DecodeBuffer(workers_next_ikey_seqs_, completed_trxn_groups_);
@@ -1136,10 +1256,30 @@ namespace insdb {
             printf("cannot decode the log record\n");
             return Status::Corruption("could not decode log record");
         }
+        for (uint32_t i = 0; i < workers_next_ikey_seqs_.size(); i++) {
+            if (workers_next_ikey_seqs_[i] > largest_ikey) largest_ikey = workers_next_ikey_seqs_[i];
+        }
+        std::string recover_log;
+        recover_log.append(RECOVER_LOG_SIZE, 0x0);
+        char* recover_log_buf = const_cast<char*>(recover_log.data());
+        int size = RECOVER_LOG_SIZE;
+        s = mf_->GetEnv()->Get(GetMetaKey(mf_->GetDBHash(), kRecoverLog, 0), recover_log_buf, &size);
+        if (s.ok() && size == RECOVER_LOG_SIZE) {
+            uint32_t orig_crc = crc32c::Unmask(DecodeFixed32(recover_log_buf)); //get crc
+            uint32_t size = DecodeFixed32(recover_log_buf + RECOVER_LOG_SIZE_OFFSET);
+            uint32_t actual_crc = crc32c::Value(recover_log_buf + RECOVER_LOG_SIZE_OFFSET, size - RECOVER_LOG_SIZE_OFFSET);
+            if (orig_crc == actual_crc) {
+               uint64_t recovered_largest_ikey = DecodeFixed64(recover_log_buf + RECOVER_LOG_IKEY_OFFSET);
+               uint64_t recovered_largest_seq = DecodeFixed64(recover_log_buf + RECOVER_LOG_SEQ_OFFSET);
+               if (recovered_largest_ikey > largest_ikey) largest_ikey = recovered_largest_ikey;
+               if (recovered_largest_seq > largest_seq) largest_seq = recovered_largest_seq;
+            }
+        }
+
         /*
          * prefetch sktable 2K
          */
-        int size = 0;
+        size = 0;
         for (uint32_t i = 1; i < 1000; i++) {
             size = 2048;
             InSDBKey prekey = GetMetaKey(GetManifest()->GetDBHash(), kSKTable, i);
@@ -1186,6 +1326,9 @@ namespace insdb {
                 recover_ctxs[i].start_index = index;
                 recover_ctxs[i].largest_ikey = 0;
                 recover_ctxs[i].largest_seq = 0;
+                recover_ctxs[i].new_uk = 0;
+                recover_ctxs[i].removed_uk = 0;
+                recover_ctxs[i].replace_uk = 0;
                 GetEnv()->StartThread(DBRecovery::RecoverSKTableWrapper, (void*)&recover_ctxs[i]);
                 index += req;
                 remains -= req;
@@ -1200,7 +1343,13 @@ namespace insdb {
             for (uint32_t i = 0; i < thread_count; i++) {
                 if (recover_ctxs[i].largest_ikey > largest_ikey) largest_ikey = recover_ctxs[i].largest_ikey;
                 if (recover_ctxs[i].largest_seq > largest_seq) largest_seq = recover_ctxs[i].largest_seq;
+                new_uk += recover_ctxs[i].new_uk;
+                removed_uk += recover_ctxs[i].removed_uk;
+                replace_uk += recover_ctxs[i].replace_uk;
             }
+
+            printf("[%s:%d] --Recover Keymap--\n\t detected largest ikey (%ld) : largest seq (%ld) found new uk(%d) removed uk(%d) replace uk(%d)\n",
+                    __func__, __LINE__,  largest_ikey, largest_seq, new_uk, removed_uk, replace_uk);
 
             for (uint32_t i = 0; i < keymap_hdrs_.size(); i++) {
                 KEYMAP_HDR* hdr = keymap_hdrs_[i];
@@ -1209,6 +1358,18 @@ namespace insdb {
             keymap_hdrs_.clear();
             delete [] recover_ctxs;
         }
+        recover_log.resize(RECOVER_LOG_SIZE); //skip crc
+        recover_log_buf = const_cast<char*>(recover_log.data());
+        EncodeFixed32(recover_log_buf + RECOVER_LOG_SIZE_OFFSET, RECOVER_LOG_SIZE);
+        EncodeFixed64(recover_log_buf + RECOVER_LOG_IKEY_OFFSET, largest_ikey);
+        EncodeFixed64(recover_log_buf + RECOVER_LOG_SEQ_OFFSET, largest_seq);
+        uint32_t crc = crc32c::Value(recover_log_buf + RECOVER_LOG_SIZE_OFFSET, RECOVER_LOG_SIZE - RECOVER_LOG_SIZE_OFFSET);
+        EncodeFixed32(recover_log_buf, crc32c::Mask(crc));
+        Slice recover_log_slice(recover_log);
+        mf_->GetEnv()->Put(GetMetaKey(mf_->GetDBHash(), kRecoverLog, 0), recover_log_slice, true);
+
+
+
         //
         // Redo logs and delete incomplete transactions
         //
@@ -1236,9 +1397,10 @@ namespace insdb {
                 auto worker_key_list = recovery_threads[worker_idx]->GetUncompletedKeyList();
                 UncompletedKeyList.splice(UncompletedKeyList.end(), worker_key_list);
                 if (recovery_threads[worker_idx]->GetLargestIKey() > largest_ikey) largest_ikey = recovery_threads[worker_idx]->GetLargestIKey();
-#if 0
-                if (recovery_threads[worker_idx]->GerLargestSeq() > largest_seq) largest_seq = recovery_threads[worker_idx]->GerLargestSeq();
-#endif
+                if (recovery_threads[worker_idx]->GetLargestSeq() > largest_seq) largest_seq = recovery_threads[worker_idx]->GetLargestSeq();
+                new_uk += recovery_threads[worker_idx]->GetNewUK();
+                removed_uk += recovery_threads[worker_idx]->GetRemovedUK();
+                replace_uk += recovery_threads[worker_idx]->GetReplaceUK();
             }
             else
             {
@@ -1266,9 +1428,10 @@ namespace insdb {
                 auto worker_key_list = recovery_threads[worker_idx]->GetUncompletedKeyList();
                 UncompletedKeyList.splice(UncompletedKeyList.end(), worker_key_list);
                 if (recovery_threads[worker_idx]->GetLargestIKey() > largest_ikey) largest_ikey = recovery_threads[worker_idx]->GetLargestIKey();
-#if 0
-                if (recovery_threads[worker_idx]->GerLargestSeq() > largest_seq) largest_seq = recovery_threads[worker_idx]->GerLargestSeq();
-#endif
+                if (recovery_threads[worker_idx]->GetLargestSeq() > largest_seq) largest_seq = recovery_threads[worker_idx]->GetLargestSeq();
+                new_uk += recovery_threads[worker_idx]->GetNewUK();
+                removed_uk += recovery_threads[worker_idx]->GetRemovedUK();
+                replace_uk += recovery_threads[worker_idx]->GetReplaceUK();
             }
             else
             {
@@ -1319,7 +1482,7 @@ restart_all_workers:
         // the lefover is completed trasactions
         // Add them to keymap
         for (auto colinfo : UncompletedKeyList)
-            InsertRecoveredKeyToKeymap(mf_, colinfo);
+            InsertRecoveredKeyToKeymap(mf_, colinfo, new_uk, removed_uk, replace_uk);
 
         // Flush all key block meta updates
         //Do not delete KBM even if it has no valid bit in the bitmap
@@ -1330,71 +1493,92 @@ restart_all_workers:
 
         /* update manifest sequence & ikeys */
 
-        printf("[%s:%d] detected largest ikey (%ld) : largest seq (%ld)\n", __func__, __LINE__,  largest_ikey, largest_seq);
+        printf("[%s:%d] --Recover worker's next id--\n\t\t detected largest ikey (%ld) : largest seq (%ld) found new uk(%d) removed uk(%d) replace uk(%d)\n",
+                __func__, __LINE__,  largest_ikey, largest_seq, new_uk, removed_uk, replace_uk);
+
+        recover_log.resize(RECOVER_LOG_SIZE); //skip crc
+        recover_log_buf = const_cast<char*>(recover_log.data());
+        EncodeFixed32(recover_log_buf + RECOVER_LOG_SIZE_OFFSET, RECOVER_LOG_SIZE);
+        EncodeFixed64(recover_log_buf + RECOVER_LOG_IKEY_OFFSET, largest_ikey);
+        EncodeFixed64(recover_log_buf + RECOVER_LOG_SEQ_OFFSET, largest_seq);
+        crc = crc32c::Value(recover_log_buf + RECOVER_LOG_SIZE_OFFSET, RECOVER_LOG_SIZE - RECOVER_LOG_SIZE_OFFSET);
+        EncodeFixed32(recover_log_buf, crc32c::Mask(crc));
+        recover_log_slice = Slice(recover_log);
+        mf_->GetEnv()->Put(GetMetaKey(mf_->GetDBHash(), kRecoverLog, 0), recover_log_slice, true);
+
 
         uint64_t next_ikeys[kWriteWorkerCount];
         for (uint32_t i = 0; i < kWriteWorkerCount; i++) next_ikeys[i] = ++largest_ikey;
         mf_->InitNextInSDBKeySeqNum(kWriteWorkerCount, next_ikeys);
         mf_->SetNextInSDBKeySeqNum(largest_ikey);
         mf_->SetLastSequenceNumber(largest_seq); 
+
+
+        SKTableMem* skt = mf_->GetFirstSKTable();
+        while(skt) { // set sktable infomation.
+            if (skt->IsDeletedSKT()) {
+                SKTableMem* next_skt = skt->Next(mf_);
+                SKTableMem* prev = mf_->Prev(skt);
+                assert(prev);
+
+                if (!prev->IsKeymapLoaded()) {
+                    if (!prev->LoadSKTableDeviceFormat(mf_)) {
+                        if (!prev->IsCached()) { 
+                            mf_->InsertSKTableMemCache(prev, kDirtySKTCache, SKTableMem::flags_in_dirty_cache);
+                        }
+                    }
+                }
+
+                mf_->RemoveFromSKTableSortedList(skt->GetSKTableSortedListNode());
+                prev->SetPreAllocSKTableID(skt->GetSKTableID());
+                prev->SetNextSKTableID(skt->GetNextSKTableID());
+                skt->DeleteSKTDeviceFormatCache(mf_);
+                mf_->DeleteSKTableMeta(kSKTable, skt->GetSKTableID()); // remove sktale
+                delete skt;
+                uint32_t io_size = 0;
+#ifdef USE_HASHMAP_RANDOMREAD
+                uint32_t hash_data_size = 0;
+                Status s = prev->StoreKeymap(mf_, prev->GetKeyMap(), io_size, hash_data_size);
+#else
+                Status s = prev->StoreKeymap(mf_, prev->GetKeyMap(), io_size);
+#endif
+                if (!s.ok()) {
+                    printf("[%d :: %s] fail to flush sub key %d\n", __LINE__, __func__, skt->GetSKTableID());
+                    abort();
+                }
+#ifdef USE_HASHMAP_RANDOMREAD
+                prev->SetKeymapNodeSize(io_size, hash_data_size);
+#else
+                prev->SetKeymapNodeSize(io_size);
+#endif
+                prev->DeleteSKTDeviceFormatCache(mf_);
+                skt = next_skt;
+                continue;
+            }
+            if (skt->IsKeymapLoaded()) {
+                if (skt->NeedToSplit()) {
+                    /* split sktable */
+                    std::string comp_col_info_table;
+                    comp_col_info_table.reserve(kDeviceRquestMaxSize);
+                    std::string col_info_table;
+                    std::queue<KeyBlockPrimaryMeta*> in_log_KBM_queue;
+                    skt->FlushSKTableMem(mf_, col_info_table, comp_col_info_table, in_log_KBM_queue);
+                } 
+            }
+            skt = skt->Next(mf_);
+        }
+
         // write manifest
         mf_->BuildManifest();
         mf_->ResetTrxn();
         // Delete the log record
         // If it exists when InDB is restarted, DB is dirty and needs a recovery.
         s = mf_->GetEnv()->Delete(GetMetaKey(mf_->GetDBHash(), kLogRecord), false);
+        mf_->GetEnv()->Delete(GetMetaKey(mf_->GetDBHash(), kRecoverLog, 0), false);
         /* remove log key */
         return Status::OK();
     }
 
-    ObjectAllocator<UserValue>* UVAllocatorPool::GetUVAllocator(){
-
-        ObjectAllocator<UserValue>* uv_allocator = reinterpret_cast<ObjectAllocator<UserValue>*>(pthread_getspecific(pool_id_));
-        if(!uv_allocator){
-            uint16_t id = ++id_;
-            if(id == kMaxAllocatorPool) id_ = 0;
-            uv_allocator = mf_->GetUVAllocator(id - 1);
-            pthread_setspecific(pool_id_, uv_allocator);
-        }
-        return uv_allocator;
-    }
-    SimpleObjectAllocator<ColumnNode>* CNAllocatorPool::GetCNAllocator(){
-
-        SimpleObjectAllocator<ColumnNode>* cn_allocator = reinterpret_cast<SimpleObjectAllocator<ColumnNode>*>(pthread_getspecific(pool_id_));
-        if(!cn_allocator){
-            uint16_t id = ++id_;
-            if(id == kMaxAllocatorPool) id_ = 0;
-            cn_allocator = mf_->GetCNAllocator(id - 1);
-            pthread_setspecific(pool_id_, cn_allocator);
-        }
-        return cn_allocator;
-    }
-    ObjectAllocator<UserKey>* UKAllocatorPool::GetUKAllocator(){
-
-        ObjectAllocator<UserKey>* uk_allocator = reinterpret_cast<ObjectAllocator<UserKey>*>(pthread_getspecific(pool_id_));
-        if(!uk_allocator){
-            uint16_t id = ++id_;
-            if(id == kMaxAllocatorPool) id_ = 0;
-            uk_allocator = mf_->GetUKAllocator(id - 1);
-            pthread_setspecific(pool_id_, uk_allocator);
-        }
-        return uk_allocator;
-    }
-
-    ObjectAllocator<RequestNode>* RequestNodeAllocatorPool::GetRequestNodeAllocator(){
-
-        ObjectAllocator<RequestNode>* rn_allocator = reinterpret_cast<ObjectAllocator<RequestNode>*>(pthread_getspecific(pool_id_));
-        if(!rn_allocator){
-            uint16_t id = ++id_;
-            if(id == kMaxAllocatorPool) id_ = 0;
-            rn_allocator = mf_->GetRequestNodeAllocator(id - 1);
-            pthread_setspecific(pool_id_, rn_allocator);
-        }
-        return rn_allocator;
-    }
-
-
-    
     /////////////////////////////////////////// START: Manifest Functions ///////////////////////////////////////////
     Manifest::Manifest(const Options& option, std::string& dbname)
         : env_(option.env), options_(option), dbname_(dbname),
@@ -1411,7 +1595,8 @@ restart_all_workers:
         sequence_number_(1),/* Must be stored in ~Manifest and reuse the number */
         next_trxn_id_(1 << TGID_SHIFT), // Trxn ID 0 is researved for non-TRXN request. and only this has 0 TGID.
         next_sktable_id_(0),
-        memory_usage_(0),
+        mem_use_(0),
+        mem_use_cached_(0),
         skt_memory_usage_(0),
 #ifdef MEM_TRACE
         skt_usage_(0),
@@ -1450,12 +1635,12 @@ restart_all_workers:
         congestion_control_(false),
         congestion_control_mu_(),
         congestion_control_cv_(&congestion_control_mu_),
-        kbpm_hashmap_(new KBPMHashMap(256*1024)),
-        kbpm_pad_(nullptr),
+        kbpm_hashmap_(new KBPMHashMap(1024*1024)),
         kbpm_pad_size_(0),
+        kbpm_pad_(nullptr),
+        kb_pad_(nullptr),
         flushed_key_hashmap_(new KeyHashMap(256*1024)),
         kbpm_cnt_(0), 
-        kb_cnt_(0), 
         flushed_key_cnt_(0),
         enable_blocking_read_(false),
 #endif
@@ -1505,13 +1690,10 @@ restart_all_workers:
         max_iter_key_buffer_size_(kMinSKTableSize),
         max_iter_key_offset_buffer_size_(kMinSKTableSize),
 
-        uv_allocator_(NULL),
-        uk_allocator_(NULL),
-        request_node_allocator_(NULL),
-        uv_allocator_pool_(this),
-        cn_allocator_pool_(this),
-        uk_allocator_pool_(this),
-        request_node_allocator_pool_(this),
+        uv_pool_(NULL),
+        uk_pool_(NULL),
+        req_pool_(NULL),
+        cn_pool_(NULL),
         //free_request_node_spinlock_(NULL),
         //free_request_node_(NULL),
 
@@ -1561,9 +1743,11 @@ restart_all_workers:
             printf ("kbpm_pad_size %u\n", kbpm_pad_size_);
 #endif
             kbpm_pad_ = new std::atomic<KeyBlockPrimaryMeta*>[kbpm_pad_size_];
-            for (int i = 0; i< kbpm_pad_size_; ++i)
+            kb_pad_ = new std::atomic<KeyBlock*>[kbpm_pad_size_];
+            for (int i = 0; i< kbpm_pad_size_; ++i) {
                 kbpm_pad_[i].store(nullptr, std::memory_order_relaxed);
-
+                kb_pad_[i].store(nullptr, std::memory_order_relaxed);
+            }
 
             TtlList_ = new uint64_t[kMaxColumnCount];
             memset(TtlList_, 0, kMaxColumnCount*8);
@@ -1571,7 +1755,9 @@ restart_all_workers:
             TtlEnabledList_ = new bool[kMaxColumnCount];
             memset(TtlEnabledList_, 0, kMaxColumnCount);
 
-            CreateMemoryPool();
+            kb_cache_ = new KBCache((kMaxCacheSize - (kMaxCacheSize/4)));
+            kbpm_cache_ = new KBPM_Cache(1024*1024);
+
             /*
              * For New design(packing)
              * TODO it must be initialized with worker's last ikey(read from MF or max ikey+worker_id(recovery) 
@@ -1608,12 +1794,12 @@ restart_all_workers:
              * snapshot_list_.SetThreshold(0);
              */
             /* 140 is average key count per 4KB SKTable */
-
-            uv_allocator_ = new ObjectAllocator<UserValue>[kMaxAllocatorPool];  
-            cn_allocator_ = new SimpleObjectAllocator<ColumnNode>[kMaxAllocatorPool];
-            uk_allocator_ = new ObjectAllocator<UserKey>[kMaxAllocatorPool];  
-            request_node_allocator_ = new ObjectAllocator<RequestNode>[kMaxAllocatorPool];  
-
+            uk_pool_    = new ObjectPool<UserKey>(kMaxAllocatorPool, def_uk_entry_cnt, -1, "uk");
+            uv_pool_    = new ObjectPool<UserValue>(kMaxAllocatorPool, def_uv_entry_cnt, 1ULL << 35, "uv");
+            cn_pool_    = new ObjectPool<ColumnNode>(kMaxAllocatorPool, def_cn_entry_cnt, -1, "cn");
+            req_pool_   = new ObjectPool<RequestNode>(kMaxAllocatorPool, def_req_entry_cnt, -1, "req");
+            kb_pool_    = new ObjectPool<KeyBlock>(kMaxAllocatorPool, 1024, /*1ULL << 35*/-1, "kb");
+            kbpm_pool_  = new ObjectPool<KeyBlockPrimaryMeta>(kMaxAllocatorPool, 1024, /*1ULL << 32*/-1, "kbpm");
 #if 0
             UserKey uk(16);
             uint32_t key_size = uk.GetSize();
@@ -1670,10 +1856,6 @@ restart_all_workers:
                 }
             }
 #endif
-
-
-
-
             //free_request_node_spinlock_ = new Spinlock[kWriteWorkerCount];
             //free_request_node_ = new std::deque<RequestNode*>[kWriteWorkerCount];
             logcleanup_data_ = new WorkerData[kWriteWorkerCount];
@@ -1805,15 +1987,64 @@ restart_all_workers:
 
         if(nr_node || nr_stale_node)
             printf("[%d :: %s]%u nodes are deleted from lockfree_prefetch_buffer_ %u failed\n", __LINE__, __func__, nr_node, nr_stale_node);
-        delete [] uv_allocator_;
-        delete [] cn_allocator_;
-        delete [] uk_allocator_;
-        delete [] request_node_allocator_;
+
+        kb_cache_->Clear(this);
+        kbpm_cache_->Clear(this);
+        uint32_t total_kbpm_in_hash = 0;
+        uint32_t total_kbpm_has_ref = 0;
+        uint32_t total_kbpm_has_ref_bit = 0;
+        uint32_t total_kbpm_has_prefetch = 0;
+        uint32_t total_kbpm_has_dummy = 0;
+        uint32_t total_kbpm_has_origin = 0;
+        uint32_t total_kbpm_has_no_origin = 0;
+        uint32_t total_kbpm_has_pending_update = 0;
+        uint32_t total_kbpm_has_set_w_protection = 0;
+        uint32_t total_kbpm_has_none = 0;
+        if (!kbpm_hashmap_->empty()) {
+            for (auto it = kbpm_hashmap_->cbegin(); it != kbpm_hashmap_->cend();) {
+                KeyBlockPrimaryMeta *kbpm = it->second;
+                if (kbpm) {
+                    total_kbpm_in_hash++;
+                    if (kbpm->CheckRefBitmap() !=0 ) total_kbpm_has_ref_bit++;
+                    if (kbpm->IsKBMPrefetched()) total_kbpm_has_prefetch++;
+                    if (kbpm->IsDummy()) {
+                        total_kbpm_has_dummy++;
+                    } else {
+                        if (kbpm->GetOriginalKeyCount()) total_kbpm_has_origin++;
+                        else total_kbpm_has_no_origin++;
+                    }
+                    if (kbpm->GetPendingUpdatedValueCnt()) total_kbpm_has_pending_update++;
+                    if (kbpm->SetWriteProtection()) total_kbpm_has_set_w_protection++;
+                    kbpm->ClearWriteProtection();
+                    if (kbpm->CheckRefBitmap() == 0) total_kbpm_has_none++;
+                    FreeKBPM(kbpm);
+                    it = kbpm_hashmap_->erase(it);
+                    kbpm_cnt_.fetch_sub(1, std::memory_order_relaxed);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        if (total_kbpm_in_hash) {
+#ifdef MEM_TRACE
+            printf("total kbpm in hash (%d): ref (%d) bit(%d) prefetch(%d) none(%d) dummy(%d) has_orig(%d) has_no_orig(%d) has_pending_update(%d) has_w_protection(%d)\n",
+                    total_kbpm_in_hash, total_kbpm_has_ref, total_kbpm_has_ref_bit, total_kbpm_has_prefetch, total_kbpm_has_none,
+                    total_kbpm_has_dummy, total_kbpm_has_origin, total_kbpm_has_no_origin, total_kbpm_has_pending_update, total_kbpm_has_set_w_protection);
+        std::cout << kb_cache_->to_string(); 
+        std::cout << kbpm_cache_->to_string();
+#endif
+        }
+
+        delete uv_pool_;
+        delete cn_pool_;
+        delete uk_pool_;
+        delete req_pool_;
+        delete kb_pool_;
+        delete kbpm_pool_;
         delete [] logcleanup_data_;
         CleanupFreeSKTableBuffer();
         //delete [] free_request_node_;
         //delete [] free_request_node_spinlock_;
-        DestroyMemoryPool();
         Status s = Env::Default()->Flush(kWriteFlush);
         if(!s.ok()){
             printf("[%d :: %s]Flush Fail \n", __LINE__, __func__);
@@ -1830,60 +2061,20 @@ restart_all_workers:
         delete hopscotch_key_hashmap_;
 #endif
         delete [] kbpm_pad_;
+        delete [] kb_pad_;
         if(!key_hashmap_->empty())
             abort();
         delete key_hashmap_;
         if(!flushed_key_hashmap_->empty())
             abort();
         delete flushed_key_hashmap_;
-        uint32_t total_kbpm_in_hash = 0;
-        uint32_t total_kbpm_has_ref = 0;
-        uint32_t total_kbpm_has_ref_bit = 0;
-        uint32_t total_kbpm_has_prefetch = 0;
-        uint32_t total_kbpm_has_dummy = 0;
-        uint32_t total_kbpm_has_origin = 0;
-        uint32_t total_kbpm_has_no_origin = 0;
-        uint32_t total_kbpm_has_pending_update = 0;
-        uint32_t total_kbpm_has_set_w_protection = 0;
-        uint32_t total_kbpm_has_none = 0;
-        if (!kbpm_hashmap_->empty()) {
-            for (auto it = kbpm_hashmap_->cbegin(); it != kbpm_hashmap_->cend();) {
-                KeyBlockPrimaryMeta *kbpm = it->second;
-                if (kbpm) {
-                    KeyBlock* kb = kbpm->GetKeyBlockAddr();
-                    if (kb) delete kb;
-                    total_kbpm_in_hash++;
-                    if (kbpm->CheckRefBitmap() !=0 ) total_kbpm_has_ref_bit++;
-                    if (kbpm->IsKBPrefetched()) total_kbpm_has_prefetch++;
-                    if (kbpm->IsDummy()) {
-                        total_kbpm_has_dummy++;
-                    } else {
-                        if (kbpm->GetOriginalKeyCount()) total_kbpm_has_origin++;
-                        else total_kbpm_has_no_origin++;
-                    }
-                    if (kbpm->GetPendingUpdatedValueCnt()) total_kbpm_has_pending_update++;
-                    if (kbpm->SetWriteProtection()) total_kbpm_has_set_w_protection++;
-                    kbpm->ClearWriteProtection();
-                    if (kbpm->CheckRefBitmap() == 0) total_kbpm_has_none++;
-                    delete kbpm;
-                    it = kbpm_hashmap_->erase(it);
-                    kbpm_cnt_.fetch_sub(1, std::memory_order_relaxed);
-                } else {
-                    ++it;
-                }
-            }
-        }
-        if (total_kbpm_in_hash) {
-#ifdef MEM_TRACE
-            printf("total kbpm in hash (%d): ref (%d) bit(%d) prefetch(%d) none(%d) dummy(%d) has_orig(%d) has_no_orig(%d) has_pending_update(%d) has_w_protection(%d)\n",
-                    total_kbpm_in_hash, total_kbpm_has_ref, total_kbpm_has_ref_bit, total_kbpm_has_prefetch, total_kbpm_has_none,
-                    total_kbpm_has_dummy, total_kbpm_has_origin, total_kbpm_has_no_origin, total_kbpm_has_pending_update, total_kbpm_has_set_w_protection);
-#endif
-        }
+
 #ifdef MEM_TRACE
         printf("total flush miss %ld, hit %ld\n", GetMissFlush(), GetHitFlush());
 #endif
         delete kbpm_hashmap_;
+        delete kb_cache_;
+        delete kbpm_cache_;
         delete[] TtlList_;
         delete[] TtlEnabledList_;
     }
@@ -2527,7 +2718,7 @@ restart_all_workers:
         int hash_size = ReadSKTableMeta(hash_buf, kHashMap, skt_id, type, hash_data_size);
         if (hash_size) { 
             if (hash_size != hash_data_size) {
-                printf("[%d :: %s] The SKT Hash size is different to recorded size in SKTableMem(actual size : %d || given size : %d)\n", __LINE__, __func__,
+                printf("[%d :: %s] The SKT %u Hash size is different to recorded size in SKTableMem(actual size : %d || given size : %d)\n", __LINE__, __func__, skt_id,
                         hash_size, hash_data_size);
                 hash_data_size = hash_size;
             }
@@ -3232,28 +3423,26 @@ exit:
         } 
     }
     void Manifest::ResetKBPMHashMap() {
+
+        kb_cache_->Clear(this);
+        kbpm_cache_->Clear(this);
+
         if (!kbpm_hashmap_->empty()) {
             for (auto it = kbpm_hashmap_->cbegin(); it != kbpm_hashmap_->cend();) {
                 KeyBlockPrimaryMeta *kbpm = it->second;
                 if (kbpm) {
-                    KeyBlock* kb = kbpm->GetKeyBlockAddr();
-                    if (kb)  {
-                        DecreaseMemoryUsage(kb->GetSize() + sizeof(KeyBlockPrimaryMeta));
 #ifdef MEM_TRACE
-                        DecKBPM_MEM_Usage(kb->GetSize() + sizeof(KeyBlockPrimaryMeta));
+                    DecKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
 #endif
-                        FreeKB(kb);
-                        kbpm->ClearKeyBlockAddr();
-                    } else {
-                        DecreaseMemoryUsage(sizeof(KeyBlockPrimaryMeta));
-#ifdef MEM_TRACE
-                        DecKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
-#endif
-                    }
                     FreeKBPM(kbpm);
                 }
                 it = kbpm_hashmap_->erase(it); 
             }
+        }
+
+        for (int i = 0; i< kbpm_pad_size_; ++i) {
+            kbpm_pad_[i].store(nullptr, std::memory_order_relaxed);
+            kb_pad_[i].store(nullptr, std::memory_order_relaxed);
         } 
     }
 
@@ -3295,7 +3484,7 @@ exit:
     void Manifest::SignalSKTEvictionThread(bool move_to_dirty)
     {
         if(move_to_dirty) SetCleanToDirty();
-        if( (MemoryUsage() > kMaxCacheSize && !IsInMemoryReclaim()) || cache_thread_shutdown_ || move_to_dirty)
+        if ((MemUseHigh() && !IsInMemoryReclaim()) || cache_thread_shutdown_ /*|| move_to_dirty*/)
         {
             skt_eviction_mu_.Lock();
             skt_eviction_cv_.SignalAll();
@@ -3535,22 +3724,25 @@ finish_this_worker:
                             kbpm_io_buf += size;
                             /* To update vector */
                         }else{
+                            bool IsInCache = kbpm->IsCache();
                             kbpm->ClearNeedToUpdate();
                             kbpm->ClearWriteProtection();//It may not be needed because no one accesses the KBPM.
                             delete_key_vec->push_back(GetKBKey(GetDBHash(), kKBMeta, ikey));
                             if(kbpm->GetOriginalKeyCount()){
                                 delete_key_vec->push_back(GetKBKey(GetDBHash(), kKBlock, ikey));
                             }
-                            if(kbpm->EvictColdKBPM(this)){
+
+#ifdef CODE_TRACE
+                            printf("[%d :: %s]Before check EvictColdKBPM() (kbpm : %p), ikey = %ld\n", __LINE__, __func__, kbpm, kbpm->GetiKeySequenceNumber());
+#endif
+                            if(!IsInCache && kbpm->EvictColdKBPM(this)){
 #ifdef CODE_TRACE
                                 printf("[%d :: %s]Free (kbpm : %p), ikey = %ld\n", __LINE__, __func__, kbpm, kbpm->GetiKeySequenceNumber());
 #endif
                                 FreeKBPM(kbpm);
                             }
+
                         }
-#ifdef CODE_TRACE
-                        printf("[%d :: %s]Before check EvictColdKBPM() (kbpm : %p), ikey = %ld\n", __LINE__, __func__, kbpm, kbpm->GetiKeySequenceNumber());
-#endif
                         
                     }else {
                         kbpm->ClearWriteProtection();//It may not be needed because no one accesses the KBPM.
@@ -3571,7 +3763,7 @@ finish_this_worker:
     uint64_t no_load_for_memory = 0;
     uint64_t evict_dirty_skt_loaded_for_read = 0;
 #endif
-    bool Manifest::SKTableReclaim(SKTableMem *skt){
+    bool Manifest::SKTableReclaim(SKTableMem *skt) {
         bool flushable = false;
         uint32_t put_col = 0, del_col = 0;
         int64_t reclaim_size = 0;
@@ -3579,16 +3771,19 @@ finish_this_worker:
         bool referenced = skt->SKTDFReclaim(this);
 
         // Eviction loop
-        if(!options_.table_eviction || referenced || skt->GetSKTRefCnt() || skt->IsSKTDirty(this) || skt->NeedToSplit()){
+        if(!options_.table_eviction || skt->IsSKTDirty(this) || skt->NeedToSplit()){
             //Do flush 
             flushable = true;
-        }else{
-            assert(!skt->IsKeyQueueEmpty());
-            //Do not flush even if it has dirty userkey in key_queue_.
-            skt->DeleteSKTDeviceFormatCache(this);
+        } else {
+            if (!skt->GetSKTRefCnt() && !skt->ClearReference()) {
+                assert(!skt->IsKeyQueueEmpty());
+                //Do not flush even if it has dirty userkey in key_queue_.
+                skt->DeleteSKTDeviceFormatCache(this);
+            }
             flushable = false;
-        }
+        } 
         skt->ClearEvictionInProgress();
+        return flushable;
     }
 
     void Manifest::SKTableReclaim(SKTableMem *skt, int64_t &reclaim_size, bool force_reclaim, std::list<SKTableMem*> &clean_list, std::list<SKTableMem*> &dirty_list){
@@ -3602,7 +3797,8 @@ finish_this_worker:
 #ifdef CODE_TRACE
                 printf("[%d :: %s] put : %d, del : %d\n", __LINE__, __func__, put_col, del_col);
 #endif
-                int32_t orig_size = skt->GetKeymapMemSize();
+                //int32_t orig_size = skt->GetAllocatedSize();
+                int32_t orig_size = skt->GetBufferSize();
                 int32_t new_size = 0;
 #ifdef USE_HASHMAP_RANDOMREAD
                 KeyMapHashMap* hashmap = new KeyMapHashMap(1024*32);
@@ -3611,20 +3807,20 @@ finish_this_worker:
                 Arena* new_arena = skt->MemoryCleanupSKTDeviceFormat(this);
 #endif
                 if (new_arena) {
-                    new_size = new_arena->AllocatedMemorySize();
+                    //new_size = new_arena->AllocatedMemorySize();
+                    new_size = new_arena->GetBufferSize();
 #ifdef MEM_TRACE
                     if (orig_size > new_size) DecSKTDF_MEM_Usage(orig_size - new_size);
                     else IncSKTDF_MEM_Usage(new_size - orig_size);
 #endif                
                     IncreaseSKTDFNodeSize(new_size - orig_size);
-                    reclaim_size+= (new_size - orig_size);
+                    reclaim_size -= (orig_size - new_size);
                     /* lock */
 #ifdef USE_HASHMAP_RANDOMREAD
                     skt->InsertArena(new_arena, hashmap);
 #else
                     skt->InsertArena(new_arena);
 #endif
-                    skt->SetKeymapMemSize(new_size);
                     /* unlock */
                 }
             }
@@ -3644,10 +3840,10 @@ finish_this_worker:
             clean_insert++;
 #endif
             clean_list.push_back(skt);
-            skt->ClearPrefetchKeyBlock();
-        } else if (put_col == 0  && !skt->IsKeyQueueEmpty() && skt->GetSKTableID() != 1) {
+        } else if (put_col == 0 && skt->IsKeyQueueEmpty() && skt->GetSKTableID() != 1) {
             /* delete sktable */
-            reclaim_size-=skt->GetKeymapMemSize();
+            //reclaim_size-=skt->GetAllocatedSize();
+            reclaim_size-=skt->GetBufferSize();
             /*
              * Move to FlushSKTableMem to reduce additioanl load.
              * skt->DeleteSKTDeviceFormatCache(this, true);
@@ -3681,14 +3877,11 @@ finish_this_worker:
             dirty_insert++;
 #endif
             dirty_list.push_back(skt);
-        } else {
+        } else if (!skt->GetSKTRefCnt() && !skt->ClearReference()) {
 #ifdef MEM_TRACE
-            if (skt->ClearPrefetchKeyBlock()) {
-                IncEvictWithPr();
-            }
             IncEvictedSKT();
 #endif
-            reclaim_size-=skt->GetKeymapMemSize();
+            reclaim_size-=skt->GetBufferSize();
             skt->DeleteSKTDeviceFormatCache(this);
             if(!skt->IsKeyQueueEmpty()){
                 if(skt->IsInCleanCache())
@@ -3704,46 +3897,137 @@ finish_this_worker:
                 skt->ClearCached();
             }
             /* The SKTable has been added to SKTable cache */
+        } else {
+            clean_list.push_back(skt);
         }
         skt->ClearEvictionInProgress();
+    }
+
+
+    void Manifest::SKTableCleanup(SKTableMem *skt, int64_t &reclaim_size, std::list<SKTableMem*> &clean_list, std::list<SKTableMem*> &dirty_list){
+        skt->SetEvictionInProgress();
+#if 0
+        if (skt->NeedToCleanup() && !skt->GetSKTRefCnt()) {
+
+            int32_t orig_size = skt->GetBufferSize();
+            int32_t new_size = 0;
+#ifdef USE_HASHMAP_RANDOMREAD
+            KeyHashMap* hashmap = new KeyMapHashMap(1024*32);
+            Arena* new_arena = skt->MemoryCleanupSKTDeviceFormat(this, hashmap);
+#else
+            Arena* new_arena = skt->MemoryCleanupSKTDeviceFormat(this);
+#endif
+
+            if (new_arena) {
+                new_size = new_arena->GetBufferSize();
+#ifdef MEM_TRACE
+                if (orig_size > new_size) DecSKTDF_MEM_Usage(orig_size - new_size);
+                else IncSKTDF_MEM_Usage(new_size - orig_size);
+#endif                
+                IncreaseSKTDFNodeSize(new_size - orig_size);
+                reclaim_size -= (orig_size - new_size);
+
+#ifdef USE_HASHMAP_RANDOMREAD
+                skt->InsertArena(new_arena, hashmap);
+#else
+                skt->InsertArena(new_arena);
+#endif
+
+
+            }
+            if (skt->GetCount() == 0 && skt->IsKeyQueueEmpty() && skt->GetSKTableID() != 1) {
+                /* delete sktable */
+                //reclaim_size-=skt->GetAllocatedSize();
+                reclaim_size-=skt->GetBufferSize();
+                /*
+                 * Move to FlushSKTableMem to reduce additioanl load.
+                 * skt->DeleteSKTDeviceFormatCache(this, true);
+                 */
+                skt->SetDeletedSKT(this);
+                skt->ClearCached();
+                while(skt->GetSKTRefCnt());
+                RemoveSKTableMemFromSkiplist(skt);
+                SKTableMem *prev = skt;
+                while(1) {
+                    SKTableMem *prev_prev = prev;
+                    prev = PrevSKTableInSortedList(prev->GetSKTableSortedListNode());
+                    if (!prev->IsDeletedSKT()) {
+                        /* Fetched status will be checked in PrefetchSKTable() */
+                        if (!prev->IsKeymapLoaded()) {
+                            prev->PrefetchSKTable(this);
+                            assert(prev->IsCached());
+                        } else if (!prev->IsCached()) {
+                            printf("[%s:%d] the previous skt(%d) of deleted skt(%d) has not been cached\n",
+                                    __func__, __LINE__, prev->GetSKTableID(), skt->GetSKTableID());
+                            InsertSKTableMemCache(prev, kDirtySKTCache, SKTableMem::flags_in_dirty_cache);
+                        }
+                        break;
+                    }
+                } 
+                skt->ClearEvictionInProgress();
+                return;
+            }
+        }
+#endif
+        if (skt->IsSKTDirty(this) || !skt->IsKeyQueueEmpty()) {
+            skt->ChangeStatus(SKTableMem::flags_in_clean_cache/*From*/, SKTableMem::flags_in_dirty_cache/*To*/);
+            dirty_list.push_back(skt);
+        } else if (!skt->GetSKTRefCnt() && !skt->ClearReference()) {
+#ifdef MEM_TRACE
+            IncEvictedSKT();
+#endif
+            reclaim_size-=skt->GetBufferSize();
+            skt->DeleteSKTDeviceFormatCache(this);
+            if(!skt->IsKeyQueueEmpty()){
+                if(skt->IsInCleanCache())
+                    skt->ChangeStatus(SKTableMem::flags_in_clean_cache/*From*/, SKTableMem::flags_in_dirty_cache/*To*/);
+#ifdef CACHE_TRACE
+                dirty_wo_keymap_insert++;
+#endif
+                dirty_list.push_back(skt);
+            }else{
+#ifdef CACHE_TRACE
+                evict_skt++;
+#endif
+                skt->ClearCached();
+            }
+
+        } else {
+            clean_list.push_back(skt);
+        } 
+        skt->ClearEvictionInProgress();
+        return;
     }
 
     void Manifest::EvictUserKeys(std::list<SKTableMem*> &skt_list, int64_t &reclaim_size, bool cleanup)
     {
         // Start eviction with the oldest sktable
         SKTableMem *skt = NULL;
-        bool cleanup_dirty_cache_needed = false;
         bool force_reclaim = false;
+        std::list<SKTableMem*> clean_list, dirty_list;
 
-        std::list<SKTableMem*> clean_list;
-        std::list<SKTableMem*> dirty_list;
-
-        while(!skt_list.empty() && (reclaim_size > 0 || cleanup) && (MemoryUsage() >= kCacheSizeLowWatermark))
-        {
-            if(MemoryUsage() > kMaxCacheSize)
-                force_reclaim = true;
-            else
-                force_reclaim = false;
+        while (!skt_list.empty() &&  (cleanup || (reclaim_size > 0 && !MemUseLow()))) {
+            force_reclaim = MemUseHigh() ? true : false;
+           // TODO: skip internal key sktable?
             skt = skt_list.front();
             skt_list.pop_front();
-            // TODO: skip internal key sktable?
             assert(skt);
-            if(skt->GetSKTRefCnt()){
-                if(skt->IsSKTDirty(this) || !skt->IsKeyQueueEmpty()){
+            if (skt->GetSKTRefCnt()) {
+                if (skt->IsSKTDirty(this) || !skt->IsKeyQueueEmpty()) {
                     skt->ChangeStatus(SKTableMem::flags_in_clean_cache/*From*/, SKTableMem::flags_in_dirty_cache/*To*/);
                     dirty_list.push_back(skt);
                 } else {
                     clean_list.push_back(skt);
                 }
                 continue;
-            }else if(!skt->IsKeymapLoaded()){
-                if(skt->IsSKTDirty(this)  || !skt->IsKeyQueueEmpty()){
+            } else if (!skt->IsKeymapLoaded()) {
+                if (skt->IsSKTDirty(this) || !skt->IsKeyQueueEmpty()) {
                     skt->ChangeStatus(SKTableMem::flags_in_clean_cache/*From*/, SKTableMem::flags_in_dirty_cache/*To*/);
                     dirty_list.push_back(skt);
-                }else if(cleanup || force_reclaim){
+                } else if (cleanup || force_reclaim) {
                     skt->ClearInCleanCache();
                     skt->DiscardSKTablePrefetch(this);
-                }else{
+                } else {
                     clean_list.push_back(skt);
                 }
                 continue;
@@ -3752,9 +4036,14 @@ finish_this_worker:
 #ifdef CODE_TRACE
             printf("[%d :: %s]skt_id : %d\n", __LINE__, __func__,skt->GetSKTableID());
 #endif
-
-            SKTableReclaim(skt, reclaim_size, cleanup || force_reclaim, clean_list, dirty_list);
+            if (cleanup) {
+                SKTableReclaim(skt, reclaim_size, cleanup || force_reclaim, clean_list, dirty_list);
+            } else {
+                SKTableCleanup(skt, reclaim_size, clean_list, dirty_list);
+            }
             // Unlock sktables
+            EvictKBCache();
+            EvictKBPMCache();
         }
 
         while(!skt_list.empty()){
@@ -3817,7 +4106,8 @@ finish_this_worker:
         char* dev_buffer = (char*)malloc(kDeviceRquestMaxSize);
         std::string col_info_table;
         col_info_table.reserve(kDeviceRquestMaxSize);
-        Slice comp_col_info_table(dev_buffer, kDeviceRquestMaxSize);
+        std::string comp_col_info_table;
+        comp_col_info_table.reserve(kDeviceRquestMaxSize);
         std::list<KeyBlockPrimaryMeta*> kbpm_list;
         std::queue<KeyBlockPrimaryMeta*> in_log_KBM_queue;
         KeyBlockPrimaryMeta *in_log_kbm = NULL;
@@ -3841,7 +4131,7 @@ finish_this_worker:
                 break;
             }
             bool skt_force_load = false;
-            if(update_cnt_ >= kSKTableFlushWatermark || CheckKeyEvictionThreshold() || MemoryUsage() > kMaxCacheSize || cache_thread_shutdown_.load(std::memory_order_relaxed)) {
+            if(/*update_cnt_ >= kSKTableFlushWatermark || CheckKeyEvictionThreshold() || MemoryUsage() > kMaxCacheSize ||*/ cache_thread_shutdown_.load(std::memory_order_relaxed)) {
                 SignalSKTEvictionThread(true);
                 skt_force_load = true;
             }
@@ -3855,6 +4145,9 @@ finish_this_worker:
 #endif
             update_cnt_ = 0;
             bool del_skt = false;
+#ifdef KV_TIME_MEASURE
+            uint32_t flush_call = 0;
+#endif
             if(!IsSKTDirtyListEmpty()){
                 SwapSKTCacheList(skt_list, kDirtySKTCache);
                 SKTableMem *flush_skt = NULL;
@@ -3871,7 +4164,7 @@ finish_this_worker:
                     }
 #endif
 #if 1
-                    while((uk_count_.load(std::memory_order_relaxed) > (kCongestionControl >> 2)) && skt_list.size() > 1 && offload_cnt_.load(std::memory_order_relaxed) < GetWorkerCount()) {
+                    while((uk_count_.load(std::memory_order_relaxed) > (kCongestionControl >> 2)) && skt_list.size() > 1 && offload_cnt_.load(std::memory_order_relaxed) < GetWorkerCount()*2) {
                         sktable = skt_list.front();
                         skt_list.pop_front();
 #if 0
@@ -3896,7 +4189,7 @@ finish_this_worker:
                     bool loaded_skt = true;
                     if(!flush_skt->IsKeymapLoaded()){
                         if(!flush_skt->IsFetchInProgress()){
-                            if(/*flush_skt->KeyQueueKeyCount() > (kMinUpdateCntForTableFlush>>1) || */SKTMemoryUsage() < kCacheSizeLowWatermark || cache_thread_shutdown_.load(std::memory_order_relaxed))
+                            if(/*flush_skt->KeyQueueKeyCount() > (kMinUpdateCntForTableFlush>>1) || */SKTMemoryUsage() < kMaxCacheSize || cache_thread_shutdown_.load(std::memory_order_relaxed))
                                 flush_skt->PrefetchSKTable(this, true, true);
                             loaded_skt  = false;
 #ifdef CACHE_TRACE
@@ -3928,9 +4221,12 @@ finish_this_worker:
 #ifdef MEM_TRACE
                         IncHitFlush();
 #endif
+#ifdef KV_TIME_MEASURE
+                        flush_call++;
+#endif
                         flush_skt->FlushSKTableMem(this, col_info_table, comp_col_info_table, in_log_KBM_queue);
                         assert(!flush_skt->IsDeletedSKT());
-                        if(MemoryUsage() > kMaxCacheSize){
+                        if (MemUseHigh()){
                             //flush_skt->EvictKBPM(this);
                             int64_t reclaim_size = 0;
                             SKTableReclaim(flush_skt, reclaim_size, true, clean_list, dirty_list);
@@ -3942,7 +4238,9 @@ finish_this_worker:
                             clean_list.push_back(flush_skt);
                         }
                     }
-                    FlushUserKey(in_log_KBM_queue, kbpm_list); //Cleanup flushed_key_hash_
+                    if (!GetOffloadFlushCount()){
+                        FlushUserKey(in_log_KBM_queue, kbpm_list); //Cleanup flushed_key_hash_
+                    }
                     bool wake_kbpm_updater = false;
                     while(!in_log_KBM_queue.empty()) {
                         in_log_kbm = in_log_KBM_queue.front();
@@ -3954,6 +4252,7 @@ finish_this_worker:
                             wake_kbpm_updater= true;
                             /*Use extra NRS count in order to prevent log cleaning*/
                             in_log_kbm->DecNRSCount();
+                            kbpm_cache_->Insert(in_log_kbm->GetiKeySequenceNumber(), in_log_kbm);
                             /* 
                              * Increase Cleanupable count 
                              * If the count reaches a treshold, wake LogCleanupThread up 
@@ -3970,7 +4269,6 @@ finish_this_worker:
                     if(wake_kbpm_updater) SignalKBPMUpdateThread();
 
                 }
-
                 if(!clean_list.empty()){
                     SpliceCacheList(clean_list, kCleanSKTCache);
                     SignalSKTEvictionThread(del_skt);
@@ -3984,7 +4282,9 @@ finish_this_worker:
             }else{
             
                 if(!flushed_key_hashmap_->empty()){
-                    FlushUserKey(in_log_KBM_queue, kbpm_list); //Cleanup flushed_key_hash_
+                    if (!GetOffloadFlushCount()){
+                        FlushUserKey(in_log_KBM_queue, kbpm_list); //Cleanup flushed_key_hash_
+                    }
                     bool log_stat_change = false;
                     while(!in_log_KBM_queue.empty()) {
                         in_log_kbm = in_log_KBM_queue.front();
@@ -3996,6 +4296,7 @@ finish_this_worker:
                             log_stat_change= true;
                             /*Use extra NRS count in order to prevent log cleaning*/
                             in_log_kbm->DecNRSCount();
+                            kbpm_cache_->Insert(in_log_kbm->GetiKeySequenceNumber(), in_log_kbm);
                             /* 
                              * Increase Cleanupable count 
                              * If the count reaches a treshold, wake LogCleanupThread up 
@@ -4012,6 +4313,18 @@ finish_this_worker:
                     SignalKBPMUpdateThread();
                 }
             }
+#ifdef KV_TIME_MEASURE
+            if(flush_call)
+                printf("\n[%d :: %s](flush call : %u)UpdateKeyInfo : %lld ms(%u), InsertUserKeyToKeyMap : %lld ms(%u), Split SKT : %lld ms(%u), InsertUKduring Split : %lld ms(%u)\n", __LINE__, __func__, flush_call, cycle_to_msec(updatekeyinfo_cycle), updatekeyinfo_cnt, cycle_to_msec(insertuk_cycle), insertuk_cnt, cycle_to_msec(split_cycle), split_cnt, cycle_to_msec(insertuk_in_split_cycle), insertuk_in_split_cnt);
+            updatekeyinfo_cycle = 0;
+            split_cycle = 0;
+            updatekeyinfo_cnt = 0;
+            split_cnt = 0;
+            insertuk_cycle = 0;
+            insertuk_cnt = 0;
+            insertuk_in_split_cycle = 0;
+            insertuk_in_split_cnt = 0;
+#endif
             assert(skt_list.empty() && clean_list.empty() && dirty_list.empty());
             ClearFlushThreadBusy();
         }
@@ -4089,8 +4402,8 @@ finish_this_worker:
                     SwapKBPMCacheList(kbpm_list);
                     kbpm_count = InsertUpdatedKBPMToMap(&kbpm_list, &kbpm_map);
                     assert(kbpm_list.empty());
-                    kbpm_io_actual_size += kbpm_count*12; // 8 = SizeAlignment(kbpm->GetEstimatedBufferSize() : KBPM_HEADER_SIZE);
                 }
+                kbpm_io_actual_size = kbpm_map.size()*12; // 8 = SizeAlignment(kbpm->GetEstimatedBufferSize() : KBPM_HEADER_SIZE);
 #endif
 #if 1 /* I/O Buffer Allocation */
                 /* KBPM I/O Buffer Allocation */
@@ -4104,7 +4417,6 @@ finish_this_worker:
 #if 1 /* Build KBPM update list & KBPM vectors for device submission */
                 std::deque<KeyBlockPrimaryMeta*> updated_kbpm;
                 kbpm_count = BuildKBPMUpdateData(&kbpm_map, &kbpm_update, &delete_key_vec, updated_kbpm, kbpm_io_buf);
-                kbpm_io_actual_size -= (kbpm_count*8);
 #endif
 
 #if 1 /* Write update list, KBPM(update or delete)*/
@@ -4136,14 +4448,17 @@ finish_this_worker:
                     assert(!kbpm->IsInlog());
                     if(!kbpm->SetWriteProtection()/* The other threads try to change KBPM */){
                         if(!kbpm->GetPendingUpdatedValueCnt()){
+                            bool IsInCache = kbpm->IsCache();
                             kbpm->ClearNeedToUpdate();
                             kbpm->ClearWriteProtection();
-                            if(kbpm->EvictColdKBPM(this)){
+
+                            if(!IsInCache && kbpm->CheckColdKBPM(this)){
 #ifdef CODE_TRACE
                                 printf("[%d :: %s]Free (kbpm : %p), ikey = %ld\n", __LINE__, __func__, kbpm, kbpm->GetiKeySequenceNumber());
 #endif
                                 FreeKBPM(kbpm);
                             }
+
                         }  else {
                             kbpm->ClearWriteProtection();//It may not be needed because no one accesses the KBPM.
                         }
@@ -4160,34 +4475,30 @@ finish_this_worker:
 
     void Manifest::SKTEvictionThread()
     {
-        int ret;
-        ret = pthread_setname_np(pthread_self(), "eviction");
+        int ret = pthread_setname_np(pthread_self(), "eviction");
 #if 0
         ret = nice(-20);
         if (!ret) {
             printf("nice ret %d\n", ret);
         }
 #endif
-
-
-        /*?? Is it needed??*/
-        bool cleanup = false;
-        while(true){
+        while (true) {
             skt_eviction_mu_.Lock();
-            /** Wait for a signal */
-            while(!cache_thread_shutdown_ && (MemoryUsage() <= kMaxCacheSize && !IsCleanToDirty()))
-            {
+            /* Make sure MemUseHighUpdate() is called on every evaluation
+               since it internally updates mem_use_cached_ which in turn,
+               is used by other parts to decide on memory pressure */
+            while (((!MemUseHighUpdate() || IsSKTCleanListEmpty()) && !IsCleanToDirty()) &&
+                    !cache_thread_shutdown_) {
+                std::list<SKTableMem*> skt_list, dirty_list;
+
                 ClearMemoryReclaim();
-                skt_eviction_cv_.TimedWait(env_->NowMicros() + 2000000/*Wake up every 2 second*/);
+                skt_eviction_cv_.TimedWait(env_->NowMicros() + 500000/*Wake up every 0.5 second*/);
                 SetMemoryReclaim();
 
-                std::list<SKTableMem*> dirty_list;
-                std::list<SKTableMem*> skt_list;
-                SKTableMem *skt = NULL;
                 SwapSKTCacheList(skt_list, kCleanSKTCache);
-                for(auto it = skt_list.begin(); it != skt_list.end(); ){
-                    skt = (*it);
-                    if(skt->IsSKTDirty(this) || !skt->IsKeyQueueEmpty()){
+                for (auto it = skt_list.begin(); it != skt_list.end(); ) {
+                    SKTableMem *skt = (*it);
+                    if (skt->IsSKTDirty(this) || !skt->IsKeyQueueEmpty()) {
                         it = skt_list.erase(it);
                         skt->ChangeStatus(SKTableMem::flags_in_clean_cache/*From*/, SKTableMem::flags_in_dirty_cache/*To*/);
                         dirty_list.push_back(skt);
@@ -4195,7 +4506,7 @@ finish_this_worker:
                         it++;
                     }
                 }
-                if(!dirty_list.empty()){
+                if (!dirty_list.empty()) {
                     SpliceCacheList(dirty_list, kDirtySKTCache);
                     if(update_cnt_ >= kSKTableFlushWatermark)
                         SignalSKTFlushThread();
@@ -4203,36 +4514,41 @@ finish_this_worker:
                 if(!skt_list.empty()){
                     SpliceCacheList(skt_list, kCleanSKTCache);
                 }
-
+                EvictKBCache();
+                EvictKBPMCache();
+#if 0
+                printf("wakeup Memory usage %ld - kCacheSizeLowWatermark %ld  dirty_list %ld skt_list %ld-->\n",
+                        MemoryUsage(), kCacheSizeLowWatermark, dirty_list.size(), skt_list.size());
+#endif
             }
             skt_eviction_mu_.Unlock();
             if(CheckExitCondition()){
                 /*Finish the Cache Thread if there is no more SKT in the clean cache list */
                 break;
             }
-            cleanup = cache_thread_shutdown_.load(std::memory_order_relaxed);
+            /*?? Is it needed??*/
+            bool cleanup = cache_thread_shutdown_.load(std::memory_order_relaxed);
             if(cleanup) kCacheSizeLowWatermark = 0;
             bool to_dirty = ClearCleanToDirty();
-            while(!IsSKTCleanListEmpty() && ((MemoryUsage() > kCacheSizeLowWatermark)/*For memory reclaim*/ || cleanup)) 
-            {
+            /* Make sure MemUseLowUpdate is called every time.
+               See above comments for MemUseHighUpdate() */
+            while ((!MemUseLowUpdate() || cleanup) && !IsSKTCleanListEmpty()) {
+                SKTableMem *skt = NULL;
+                std::list<SKTableMem*> dirty_list, skt_list;
+
                 SetSKTEvictionThreadBusy();
-                std::list<SKTableMem*> dirty_list;
-                std::list<SKTableMem*> skt_list;
                 SwapSKTCacheList(skt_list, kCleanSKTCache);
 
-                SKTableMem *skt = NULL;
-
-                uint64_t memusage = MemoryUsage();
-                if(!skt_list.empty() && ((memusage > kCacheSizeLowWatermark)/*For memory reclaim*/ || cleanup)){
-                    int64_t reclaim_size = memusage - kCacheSizeLowWatermark;
+                if (!skt_list.empty() && ((!MemUseLow()/*For memory reclaim*/ || cleanup))) {
+                    int64_t reclaim_size = MemUse() - kCacheSizeLowWatermark;
 #ifdef CODE_TRACE
-                   printf("before cur Memory usage %ld - kCacheSizeLowWatermark %ld  reclaim_size %ld -->", memusage, kCacheSizeLowWatermark, reclaim_size);
+                   printf("before cur Memory usage %ld - kCacheSizeLowWatermark %ld  reclaim_size %ld -->", MemUse(), kCacheSizeLowWatermark, reclaim_size);
 #endif
                     EvictUserKeys(skt_list, reclaim_size, cleanup);
 #ifdef CODE_TRACE
-                    printf("after Memory usage %ld - reclaim size %ld\n", MemoryUsage(), reclaim_size);
+                    printf("after Memory usage %ld - reclaim size %ld\n", MemUseUpdate(), reclaim_size);
 #endif
-                }else if(!skt_list.empty()){
+                } else if (!skt_list.empty()) {
                     SpliceCacheList(skt_list, kCleanSKTCache);
                 }
                 cleanup = cache_thread_shutdown_.load(std::memory_order_relaxed);
@@ -4271,7 +4587,8 @@ finish_this_worker:
         char* dev_buffer = (char*)malloc(kDeviceRquestMaxSize);
         std::string col_info_table;
         col_info_table.reserve(kDeviceRquestMaxSize);
-        Slice comp_col_info_table(dev_buffer, kDeviceRquestMaxSize);
+        std::string comp_col_info_table;
+        comp_col_info_table.reserve(kDeviceRquestMaxSize);
         while(skt) {
             if(!skt->IsCached() && skt->IsSKTDirty(this)) {
                 abort();
@@ -4298,6 +4615,7 @@ finish_this_worker:
                         log_stat_change= true;
                         /*Use extra NRS count in order to prevent log cleaning*/
                         in_log_kbm->DecNRSCount();
+                        kbpm_cache_->Insert(in_log_kbm->GetiKeySequenceNumber(), in_log_kbm);
                         /* 
                          * Increase Cleanupable count 
                          * If the count reaches a treshold, wake LogCleanupThread up 
@@ -4541,16 +4859,16 @@ finish_this_worker:
     }
 #endif
 
-    UserValue*  Manifest::AllocUserValue(uint32_t size)
+    UserValue* Manifest::AllocUserValue(uint32_t size)
     {
-        return uv_allocator_pool_.GetUVAllocator()->Alloc(size);
+        return uv_pool_->Get(size);
     }
-#define DEFAULT_UV_ENTRY_CNT    (1024*8)
+
     void Manifest::FreeUserValue(UserValue* uv)
     {
-        if(!uv->UnPin()){
+        if (!uv->UnPin()) {
             uv->InitPinAndFlag();
-            uv->GetAllocator()->Free(uv, DEFAULT_UV_ENTRY_CNT);
+            uv_pool_->Put(uv);
         }
         return;
     }
@@ -4572,36 +4890,32 @@ finish_this_worker:
 #ifdef MEM_TRACE
         IncUK_MEM_Usage(sizeof(UserKey) + kMaxColumnCount * sizeof(UserKey::ColumnData) + key_size);
 #endif
-        IncreaseMemoryUsage(sizeof(UserKey) + kMaxColumnCount * sizeof(UserKey::ColumnData) + key_size);
 #ifdef INSDB_GLOBAL_STATS
             g_new_ukey_cnt++;
 #endif
-
-        return uk_allocator_pool_.GetUKAllocator()->Alloc(key_size);
+        return uk_pool_->Get(key_size);
     }
-#define DEFAULT_UKEY_ENTRY_CNT      (1024*64)
     void Manifest::FreeUserKey(UserKey* ukey)
     {
 #ifdef MEM_TRACE
         DecUK_MEM_Usage(sizeof(UserKey) + kMaxColumnCount * sizeof(UserKey::ColumnData) + ukey->GetKeySize());
 #endif
-        DecreaseMemoryUsage(sizeof(UserKey) + kMaxColumnCount * sizeof(UserKey::ColumnData) + ukey->GetKeySize());
 #ifdef INSDB_GLOBAL_STATS
             g_del_ukey_cnt++;
 #endif
-        ukey->GetAllocator()->Free(ukey, DEFAULT_UKEY_ENTRY_CNT);
+        uk_pool_->Put(ukey);
+        return;
     }
 
-    ColumnNode*  Manifest::AllocColumnNode()
+    ColumnNode* Manifest::AllocColumnNode()
     {
 #ifdef MEM_TRACE
         IncCOL_MEM_Usage(sizeof(ColumnNode));
 #endif
-        IncreaseMemoryUsage(sizeof(ColumnNode));
 #ifdef INSDB_GLOBAL_STATS
                 g_new_ikey_cnt++;
 #endif
-        return cn_allocator_pool_.GetCNAllocator()->Alloc();
+        return cn_pool_->Get();
     }
 #define DEFAULT_COL_ENTRY_CNT       (1024*1024)
     void Manifest::FreeColumnNode(ColumnNode* col_node)
@@ -4610,58 +4924,63 @@ finish_this_worker:
 #ifdef MEM_TRACE
         DecCOL_MEM_Usage(sizeof(ColumnNode));
 #endif
-        DecreaseMemoryUsage(sizeof(ColumnNode));
 #ifdef INSDB_GLOBAL_STATS
                 g_del_ikey_cnt++;
 #endif
-
-        col_node->GetAllocator()->Free(col_node, DEFAULT_COL_ENTRY_CNT);
+        cn_pool_->Put(col_node);
+        return;
     }
 
-    /* 
+    /*
      * this is called from WriteBatchInternal::Store()
      */
     RequestNode* Manifest::AllocRequestNode()
     {
-        return request_node_allocator_pool_.GetRequestNodeAllocator()->Alloc();
+        return req_pool_->Get();
     }
 
-#define DEFAULT_REQ_ENTRY_CNT       (1024*1024)
     /* Worker Thread calls it after request submission */
     void Manifest::FreeRequestNode(RequestNode* req_node)
     {
-        req_node->GetAllocator()->Free(req_node, DEFAULT_REQ_ENTRY_CNT);
+        req_pool_->Put(req_node);
     }
 
     KeyBlock *Manifest::AllocKB() {
-        kb_cnt_.fetch_add(1, std::memory_order_relaxed);
-        return kb_pool_->AllocMemoryNode();
+        KeyBlock *kb = kb_pool_->Get();
+        kb->InitKB();
+        return kb;
     }
-    void Manifest::FreeKB(KeyBlock *node) { 
+    void Manifest::FreeKB(KeyBlock *node) {
         if(node->DecKBRefCnt()){
-            kb_cnt_.fetch_sub(1, std::memory_order_relaxed);
-            kb_pool_->FreeMemoryNode(node);
+            if (node->ClearKBPrefetched() && node->GetIKeySeqNum()) {
+                InSDBKey kbkey = GetKBKey(GetDBHash(), kKBlock, node->GetIKeySeqNum());
+                (GetEnv())->DiscardPrefetch(kbkey);
+            }
+            kb_pool_->Put(node);
         }
     }
     void Manifest::ClearKBPMPad(KeyBlockPrimaryMeta *kbpm)
     {
         kbpm_pad_[kbpm->GetiKeySequenceNumber()%kbpm_pad_size_].compare_exchange_weak(kbpm, nullptr, std::memory_order_relaxed, std::memory_order_relaxed);
     }
+    
+    void Manifest::ClearKBPad(KeyBlock *kb)
+    {
+        kb_pad_[kb->GetIKeySeqNum()%kbpm_pad_size_].compare_exchange_weak(kb, nullptr, std::memory_order_relaxed, std::memory_order_relaxed);
+    }
 
     /////////////////////////////////////////// END  : Memory Allocation/Deallocation ///////////////////////////////////////////
    
 
     /////////////////////////////////////////// START: User Key & Value[UserKey/SKTDF/KBPM/KBML] Manageement ///////////////////////////////////////////
-    KeyBlock* Manifest::LoadValue(uint64_t insdb_key_seq, uint32_t ivalue_size, bool *from_readahead, KeyBlockPrimaryMeta* kbpm, bool report_error)
+    bool Manifest::LoadValue(uint64_t insdb_key_seq, uint32_t ivalue_size, bool *from_readahead, KeyBlock* kb, bool report_error)
     {
         Status s;
         int buffer_size = SizeAlignment(ivalue_size);
         InSDBKey insdb_key = GetKBKey(dbhash_, kKBlock, insdb_key_seq);
-        KeyBlock* kb = AllocKB();
 
         Slice *io_buf = GetIOBuffer(kDeviceRquestMaxSize);
         assert(buffer_size <= io_buf->size());
-        Slice buffer = kb->GetRawData();
 
         char *contents = const_cast<char*>(io_buf->data());
 
@@ -4670,8 +4989,7 @@ finish_this_worker:
             printf("[%d :: %s] key seq %lu size %u from_readahead %d\n", __LINE__, __func__, insdb_key_seq, buffer_size, *from_readahead);
             fprintf(stderr, "keyblock does not exist(ikey seq: %ld)\n", insdb_key_seq);
             if (report_error) {
-                FreeKB(kb);
-                return nullptr;
+                return false;
             }
             abort();
         }
@@ -4716,15 +5034,14 @@ finish_this_worker:
         }
         kb->SetKeyCnt((uint8_t)((kb_keycnt_size_loc & ~KEYBLOCK_COMP_MASK)>> KEYBLOCK_KEY_CNT_SHIFT));
         /////////////
-        kbpm->ClearKBPrefetched();
+        kb->ClearKBPrefetched();
 #ifdef TRACE_READ_IO
         g_loadvalue_sktdf++;
 #endif
-        IncreaseMemoryUsage(kb->GetSize());
 #ifdef MEM_TRACE
         IncKBPM_MEM_Usage(kb->GetSize());
 #endif
-        return kb;
+        return true;
 
     }
 
@@ -4842,6 +5159,7 @@ finish_this_worker:
             flushed_key_cnt_.fetch_add(1, std::memory_order_relaxed);
         }else{
             exist_uk->UserKeyMerge(new_uk, true/*Merge to front*/);
+            FreeUserKey(new_uk);
         }
         return;
     }
@@ -4902,7 +5220,6 @@ finish_this_worker:
                         ///////////////// Check whether col_node has been submitted or not ///////////////// 
                         /* it can be droped before submission */
                         ikey = col_node->GetInSDBKeySeqNum();
-                        assert(ikey);
                         KeyBlockPrimaryMeta* kbpm = col_node->GetKeyBlockMeta();
                         ////////////////////////////////////////////////////////////////////// 
                         /* 
@@ -4929,6 +5246,7 @@ finish_this_worker:
                         if(col_node->IsOverwritten()){
                             goto delete_col;
                         }
+                        assert(ikey);
                         ////////////////////////////////////////////////////////////////////// 
                         assert(kbpm); // kbpm must exist becuase it was prefetched in InsertUserKeyToKeyMapFromInactiveKeyQueue()->InsertColumnNodes()
 
@@ -5001,12 +5319,9 @@ finish_this_worker:
                              * KeyBlock has been flushed but the TRXN Group is not completed yet!
                              */
                             dirty = true;
+                            continue;
                         }
 
-#if 0
-                        if(!kbpm->GetKeyBlockBitmap() || !kbpm->CheckRefBitmap())
-                            kbpm->TryToEvictKB(this, col_node->GetKeyBlockOffset());
-#endif
 delete_col:
                         col_list->Delete(col_node->GetColumnNodeNode());
                         col_node->InvalidateUserValue(this);
@@ -5042,17 +5357,18 @@ delete_col:
             enable_blocking_read_ = true;
         }
 #ifdef CACHE_TRACE
-        if(!(nr_flush_call % 1000))
+        if(!(nr_flush_call % 1000)){
             printf("[%d :: %s]nr_flush_call : %u || free_keys : %u || remained_keys : %u\ninsert(dirty:clean:dirty w/o keymap = %ld:%ld:%ld) evict : %ld || clean & dirty cache : %ld : %ld\nmem_usage : skt_usage = %.2fMB : %.2fMB || UK count in Hash : %d || Flush\nSkip Dirty SKT load due to memory: %lu || evict dirty SKT loaded for read : %lu\n", __LINE__, __func__, nr_flush_call, free_keys, remained_keys, dirty_insert, clean_insert, dirty_wo_keymap_insert, evict_skt, skt_cache_[1].GetCacheSize(), skt_cache_[0].GetCacheSize(), MemoryUsage()/1024.0/1024.0, SKTMemoryUsage()/1024.0/1024.0, GetHashSize(), no_load_for_memory, evict_dirty_skt_loaded_for_read);
-        dirty_insert = 0;
-        clean_insert = 0;
-        dirty_wo_keymap_insert = 0;
-        evict_skt = 0;
+            dirty_insert = 0;
+            clean_insert = 0;
+            dirty_wo_keymap_insert = 0;
+            evict_skt = 0;
+        }
 #endif
     }
 
 
-    void Manifest::FlushSingleSKTableMem(SKTableMem* sktable, std::string &col_info_table, Slice &comp_col_info_table){
+    void Manifest::FlushSingleSKTableMem(SKTableMem* sktable, std::string &col_info_table, std::string &comp_col_info_table){
 
         std::list<KeyBlockPrimaryMeta*> kbpm_list;
         std::queue<KeyBlockPrimaryMeta*> in_log_KBM_queue;
@@ -5079,6 +5395,7 @@ delete_col:
                 log_stat_change= true;
                 /*Use extra NRS count in order to prevent log cleaning*/
                 in_log_kbm->DecNRSCount();
+                kbpm_cache_->Insert(in_log_kbm->GetiKeySequenceNumber(), in_log_kbm);
                 /* 
                  * Increase Cleanupable count 
                  * If the count reaches a treshold, wake LogCleanupThread up 
@@ -5104,7 +5421,7 @@ delete_col:
             this->InsertSKTableMemCache(sktable, kCleanSKTCache); 
         }
 #else
-        if(MemoryUsage() > kMaxCacheSize){
+        if (MemUseHigh()) {
             //flush_skt->EvictKBPM(this);
             std::list<SKTableMem*> clean_list;
             std::list<SKTableMem*> dirty_list;
@@ -5138,7 +5455,7 @@ delete_col:
         DecOffloadFlushCount();
     }
 
-    void Manifest::WorkerThreadFlushSKTableMem(std::string &col_info_table, Slice &comp_col_info_table){
+    void Manifest::WorkerThreadFlushSKTableMem(std::string &col_info_table, std::string &comp_col_info_table){
         SKTableMem* sktable = NULL;
         while(sktable = GetFlushOffloadSKTable())
             FlushSingleSKTableMem(sktable, col_info_table, comp_col_info_table);
@@ -5148,12 +5465,21 @@ delete_col:
     void Manifest::DoCongestionControl() {
 #if 1
         if(congestion_control_ || uk_count_.load(std::memory_order_relaxed) > kCongestionControl ){
+#ifdef KV_TIME_MEASURE
+            printf("\n[%d :: %s]Start Congestion Control\n", __LINE__, __func__);
+            cycles_t t1, t2;
+            t1 = get_cycles();
+#endif
             SKTableMem *sktable = NULL;
             MutexLock l(&congestion_control_mu_);
             if (congestion_control_ || uk_count_.load(std::memory_order_relaxed) > kCongestionControl) {
                 congestion_control_ = true;
                 congestion_control_cv_.Wait();
             }
+#ifdef KV_TIME_MEASURE 
+            t2 = get_cycles(); 
+            printf("[%d :: %s]Congestion Control Duration : %lld\n", __LINE__, __func__, time_msec_measure(t1,t2));
+#endif
 #if 0
             char* dev_buffer = (char*)malloc(kDeviceRquestMaxSize);
             std::string col_info_table;
@@ -5304,7 +5630,6 @@ retry:
             }
             kbpm_pad_[seq%kbpm_pad_size_].store(kbpm, std::memory_order_relaxed);
 
-            IncreaseMemoryUsage(sizeof(KeyBlockPrimaryMeta));
 #ifdef MEM_TRACE
             IncKBPM_MEM_Usage(sizeof(KeyBlockPrimaryMeta));
 #endif
@@ -5369,7 +5694,7 @@ retry:
                 value->assign(column.uv->GetBuffer(), column.uv->GetValueSize());
             } else {
                 column.uv->Pin();
-                pin_slice->PinSlice(column.uv->ReadValue(), PinnableSlice_UserValue_CleanupFunction, column.uv, this);
+                pin_slice->PinSlice(column.uv->GetValueSize(), PinnableSlice_UserValue_CleanupFunction, column.uv, this);
             }
             table->DecSKTRefCnt();
             return Status::OK();
@@ -5383,25 +5708,17 @@ retry:
             return Status::NotFound("Key does not exist"); /*No column exists*/
         }
 
-        KeyBlockPrimaryMeta* kbpm = GetKBPMWithiKey(column.ikey_seq_num, column.offset);
-        assert(kbpm);
-#if 0
-retry:
-#endif
-        if (!(kb = kbpm->GetKeyBlockAddr())) {
-            if (non_blk_flag_ == kNonblockingBefore || non_blk_flag_ == kNonblockingAfter) {
-                non_blk_flag_ = kNonblockingAfter;
-                return Status::Incomplete("Not found in cache, no_io is set");
+        kb = FindKBCache(column.ikey_seq_num);
+        assert(kb);
+        if (kb->IsDummy()) {
+            kb->KBLock();
+            if (kb->IsDummy()) {
+                LoadValue(column.ikey_seq_num, column.ivalue_size, &ra_rahit, kb);
+                DummyKBToActive(column.ikey_seq_num, kb);
             }
-            kb = kbpm->LoadKeyBlock(this, column.ikey_seq_num, column.ivalue_size, &ra_rahit);
+            kb->KBUnlock();
         }
-        kb->IncKBRefCnt();
-#if 0
-        if (kbpm->GetKeyBlockAddr() != kb) {
-            kbpm->ClearRefBitmap(col_node->GetKeyBlockOffset());
-            goto retry;
-        }
-#endif
+
         /* get value from kb */
         Slice value_slice = kb->GetValueFromKeyBlock(this, column.offset);
         if (value) {
@@ -5559,6 +5876,86 @@ retry:
         ctrxn_group_lock_.Unlock();
     }
     /////////////////////////////////////////// END  : Transaction(Group) Management ///////////////////////////////////////////
+
+    bool Manifest::AddKBCache(SequenceNumber key, KeyBlock* kb) {
+        kb->SetIKeySeqNum(key);
+        kb_pad_[key%kbpm_pad_size_].store(kb, std::memory_order_relaxed);
+        return kb_cache_->Insert(key, kb);
+    }
+
+    KeyBlock* Manifest::RefKBCache(SequenceNumber key) {
+        return kb_cache_->Reference(key);
+    }
+
+    KeyBlock* Manifest::FindKBCache(SequenceNumber key) {
+        KeyBlock* kb = nullptr;
+        kb = kb_pad_[key%kbpm_pad_size_].load(std::memory_order_relaxed);
+        if (kb && kb->GetIKeySeqNum() == key) {
+            if (!kb->IsEvicting()) {
+                kb->IncKBRefCnt();
+                kb->SetReference();
+                return kb; 
+            }
+        }   
+try_agin:
+        kb = kb_cache_->Find(key);
+        if (!kb) {
+            kb = AllocKB();
+            kb->SetIKeySeqNum(key);
+            kb->SetDummy();
+            if (!kb_cache_->InsertHashOnly(key, kb)) {
+                FreeKB(kb);
+                kb = kb_cache_->Find(key);
+                assert(kb);
+                if (kb->IsEvicting()) {
+                    FreeKB(kb);
+                    goto try_agin;
+                }
+            } else {
+                kb->IncKBRefCnt();
+            }
+        } else {
+            if (kb->IsEvicting()) {
+                FreeKB(kb);
+                goto try_agin;
+            }
+            if (!kb->IsDummy()) kb_pad_[key%kbpm_pad_size_].store(kb, std::memory_order_relaxed);
+        }
+        return kb;
+    }
+   
+    void Manifest::RemoveDummyKB(KeyBlock* kb) {
+        if (!kb->SetEvicting()) {
+            kb_cache_->RemoveHashOnly(kb->GetIKeySeqNum());
+            FreeKB(kb);
+        }
+    }
+
+    void Manifest::DummyKBToActive(SequenceNumber key, KeyBlock *kb) {
+        kb->ClearDummy();
+        kb_pad_[key%kbpm_pad_size_].store(kb, std::memory_order_relaxed);
+        kb_cache_->AppendDataOnly(key, kb);
+    }
+
+    KeyBlock* Manifest::FindKBCacheWithoutRef(SequenceNumber key) {
+        return kb_cache_->FindWithoutRef(key);
+    }
+
+    void Manifest::EvictKBCache() {
+        kb_cache_->Evict(this);
+    }
+
+    void Manifest::CleanupKBCache() {
+        kb_cache_->Clear(this);
+    }
+
+    void Manifest::EvictKBPMCache() {
+        kbpm_cache_->Evict(this);
+    }
+    
+    void Manifest::AddKBPMCache(SequenceNumber key, KeyBlockPrimaryMeta* meta) {
+        kbpm_cache_->Insert(key, meta);
+    }
 
 
     // Compress, align size, and add CRC
@@ -5803,7 +6200,7 @@ retry:
 
     Slice KeyBlock::GetKeyFromKeyBlock(Manifest* mf, uint8_t index) {
         uint32_t* offset = reinterpret_cast<uint32_t *>(raw_data_);/* The # of keys (2B) */
-        uint32_t data_offset = (DecodeFixed32((char *)(offset + index))&KEYBLOCK_OFFSET_MASK);
+        uint32_t data_offset = (DecodeFixed32((char *)(offset + index)) & KEYBLOCK_OFFSET_MASK);
         uint32_t data_size = (DecodeFixed32((char *)(offset + index + 1))&KEYBLOCK_OFFSET_MASK) - data_offset; /* #keys (2B) + (index + 1) */
         uint32_t value_and_key_size = 0;
         uint32_t value_size = 0;
@@ -5858,6 +6255,7 @@ retry:
             colinfo.kb_index = index;
             colinfo.kb_size = data_size_;
             colinfo.kbpm = kbpm;
+            colinfo.ikey_seq = kbpm->GetiKeySequenceNumber();
             col_list.push_back(colinfo);
         }
         /* Parsing KBPM */
@@ -5865,68 +6263,84 @@ retry:
         uint32_t data_size = kbpm->GetRawDataSize();
         assert(data);
         assert(*data & KBM_INLOG_FLAG);
+        uint8_t org_key_cnt = (*data & ~KBM_INLOG_FLAG);
         data += (KB_BITMAP_LOC + KB_BITMAP_SIZE);
         assert(data_size > KB_BITMAP_LOC + KB_BITMAP_SIZE);
         data_size -= (KB_BITMAP_LOC + KB_BITMAP_SIZE);
         uint32_t kbm_size = DecodeFixed32(data); /* kbm size */
         data += sizeof(uint32_t); /* skip kbm size */
         data += sizeof(uint64_t); /* skip next ikey seq */
-        uint8_t total_trxn = *data;
-        data++; /* skeip trxn count */
-        data_size -= (sizeof(uint32_t) + sizeof(uint64_t) + 1); 
-
+        data_size -= (sizeof(uint32_t) + sizeof(uint64_t)); 
         Slice parse(data, data_size);
+        for(uint8_t i = 0; i < org_key_cnt; i++)
+            if (!GetVarint64(&parse, &col_list[i].iter_seq)) abort(); /* fill put iter sequence */
+
+        uint8_t total_trxn = parse[0];
+        parse.remove_prefix(1); /* skeip trxn count */
+
         for (uint8_t i = 0; i < total_trxn; i++) {
-            ColumnInfo c_info;
-            TrxnInfo* t_info = new TrxnInfo();
+            TrxnInfo* t_info = nullptr;
+            uint16_t merged_trxn_cnt = 0;
             uint8_t type_offset_col_id = parse[0];
             parse.remove_prefix(1); /* skip type, colid or index */
             if (type_offset_col_id & TRXN_DEL_REQ) {
+                ColumnInfo c_info;
                 /* delete type */
+                c_info.ikey_seq = kbpm->GetiKeySequenceNumber();
                 c_info.trxninfo = t_info;
-                c_info.col_id = t_info->col_id =(type_offset_col_id & ~TRXN_DEL_REQ);
+                c_info.col_id =(type_offset_col_id & ~TRXN_DEL_REQ);
                 assert(c_info.col_id < kMaxColumnCount);
                 c_info.type = kDelType;
                 c_info.kbpm = kbpm;
                 uint16_t key_size = 0;
                 if (!GetVarint16(&parse, &key_size)) abort();
-                c_info.key = t_info->key =  KeySlice(parse.data(), key_size);
+                c_info.key = KeySlice(parse.data(), key_size);
                 parse.remove_prefix(key_size);
+                if (!GetVarint64(&parse, &c_info.iter_seq)) abort(); /* fill del iter sequence */
+                if (!GetVarint16(&parse, &merged_trxn_cnt)) abort();
+                if (merged_trxn_cnt) {
+                    t_info = new TrxnInfo();
+                    c_info.trxninfo = t_info;
+                    t_info->col_id = c_info.col_id;
+                    t_info->key = c_info.key;
+                }
+                key_list.push_back(c_info); /* insert del type to key_list*/ 
             } else {
                 /* put type */
                 assert(type_offset_col_id < col_list.size());
-                c_info = col_list[type_offset_col_id];
-                assert(c_info.kb_index == type_offset_col_id);
-                c_info.trxninfo = t_info;
-                t_info->col_id = c_info.col_id;
-                t_info->keyoffset = c_info.kb_index;
+                assert(col_list[type_offset_col_id].kb_index == type_offset_col_id);
+                if (!GetVarint16(&parse, &merged_trxn_cnt)) abort();
+                assert(merged_trxn_cnt > 0);
+                t_info = new TrxnInfo();
+                col_list[type_offset_col_id].trxninfo = t_info;
+                t_info->col_id = col_list[type_offset_col_id].col_id;
+                t_info->keyoffset = col_list[type_offset_col_id].kb_index;
+                t_info->key =  col_list[type_offset_col_id].key;
             }
-            uint16_t merged_trxn_cnt = 0;
-            if (!GetVarint16(&parse, &merged_trxn_cnt)) abort();
-            assert(merged_trxn_cnt > 0);
-            t_info->nr_merged_trxn = merged_trxn_cnt - 1;
-            if (merged_trxn_cnt > 1) t_info->merged_trxn_list = new Transaction[merged_trxn_cnt - 1];
-            for (uint16_t j = 0; j < merged_trxn_cnt -1; j++) {  /* fill non head trxn */
+            if (merged_trxn_cnt > 0) {
+                t_info->nr_merged_trxn = merged_trxn_cnt - 1;
+                if (merged_trxn_cnt > 1) t_info->merged_trxn_list = new Transaction[merged_trxn_cnt - 1];
+                for (uint16_t j = 0; j < merged_trxn_cnt -1; j++) {  /* fill non head trxn */
+                    uint64_t trxn_id = 0;
+                    if (!GetVarint64(&parse, &trxn_id)) abort();
+                    uint32_t trxn_seq = 0;
+                    if (!GetVarint32(&parse, &trxn_seq)) abort();
+                    uint32_t trxn_count = 0;
+                    if (!GetVarint32(&parse, &trxn_count)) abort();
+                    t_info->merged_trxn_list[i].id = trxn_id;
+                    t_info->merged_trxn_list[i].count = trxn_count;
+                    t_info->merged_trxn_list[i].seq_number = trxn_seq;
+                }
+                /* fill head */
                 uint64_t trxn_id = 0;
                 if (!GetVarint64(&parse, &trxn_id)) abort();
                 uint32_t trxn_seq = 0;
                 if (!GetVarint32(&parse, &trxn_seq)) abort();
                 uint32_t trxn_count = 0;
-                if (!GetVarint32(&parse, &trxn_count)) abort();
-                t_info->merged_trxn_list[i].id = trxn_id;
-                t_info->merged_trxn_list[i].count = trxn_count;
-                t_info->merged_trxn_list[i].seq_number = trxn_seq;
+                t_info->head.id = trxn_id;
+                t_info->head.count = trxn_count;
+                t_info->head.seq_number = trxn_seq;
             }
-            /* fill head */
-            uint64_t trxn_id = 0;
-            if (!GetVarint64(&parse, &trxn_id)) abort();
-            uint32_t trxn_seq = 0;
-            if (!GetVarint32(&parse, &trxn_seq)) abort();
-            uint32_t trxn_count = 0;
-            t_info->head.id = trxn_id;
-            t_info->head.count = trxn_count;
-            t_info->head.seq_number = trxn_seq;
-            if (type_offset_col_id & TRXN_DEL_REQ) key_list.push_back(c_info); /* insert del type to key_list*/ 
         }
         uint32_t col_info_size = col_list.size();
         for (uint32_t k = 0; k < col_info_size; k++) key_list.push_back(col_list[k]); /* insert put type to key_list */
@@ -5935,61 +6349,69 @@ retry:
 
     bool KeyBlockPrimaryMeta::DecodeAllDeleteKeyMeta(std::list<ColumnInfo> &key_list/*, uint64_t &largest_seq */) {
         assert(IsInlog());
+
+        /* Parsing KBPM */
         char* data = GetRawData();
         uint32_t data_size = GetRawDataSize();
         assert(data);
         assert(*data & KBM_INLOG_FLAG);
+        uint8_t org_key_cnt = (*data & ~KBM_INLOG_FLAG);
         data += (KB_BITMAP_LOC + KB_BITMAP_SIZE);
         assert(data_size > KB_BITMAP_LOC + KB_BITMAP_SIZE);
         data_size -= (KB_BITMAP_LOC + KB_BITMAP_SIZE);
         uint32_t kbm_size = DecodeFixed32(data); /* kbm size */
         data += sizeof(uint32_t); /* skip kbm size */
         data += sizeof(uint64_t); /* skip next ikey seq */
-        uint8_t total_trxn = *data;
-        data++; /* skeip trxn count */
-        data_size -= (sizeof(uint32_t) + sizeof(uint64_t) + 1); 
-
+        data_size -= (sizeof(uint32_t) + sizeof(uint64_t)); 
         Slice parse(data, data_size);
+        assert(org_key_cnt == 0);
+        uint8_t total_trxn = parse[0];
+        parse.remove_prefix(1); /* skeip trxn count */
         for (uint8_t i = 0; i < total_trxn; i++) {
             ColumnInfo c_info;
-            TrxnInfo* t_info = new TrxnInfo();
             uint8_t type_offset_col_id = parse[0];
             parse.remove_prefix(1); /* skip type, colid or index */
             assert(type_offset_col_id & TRXN_DEL_REQ);
             /* delete type */
-            c_info.trxninfo = t_info;
-            c_info.col_id = t_info->col_id =(type_offset_col_id & ~TRXN_DEL_REQ);
+            c_info.ikey_seq = GetiKeySequenceNumber();
+            c_info.col_id =(type_offset_col_id & ~TRXN_DEL_REQ);
             c_info.type = kDelType;
             c_info.kbpm = this;
             uint16_t key_size = 0;
             if (!GetVarint16(&parse, &key_size)) abort();
-            c_info.key = t_info->key =  KeySlice(parse.data(), key_size);
+            c_info.key =  KeySlice(parse.data(), key_size);
             parse.remove_prefix(key_size);
+            if (!GetVarint64(&parse, &c_info.iter_seq)) abort(); /* fill del iter sequence */
             uint16_t merged_trxn_cnt = 0;
             if (!GetVarint16(&parse, &merged_trxn_cnt)) abort();
-            assert(merged_trxn_cnt > 0);
-            t_info->nr_merged_trxn = merged_trxn_cnt - 1;
-            if (merged_trxn_cnt > 1) t_info->merged_trxn_list = new Transaction[merged_trxn_cnt - 1];
-            for (uint16_t j = 0; j < merged_trxn_cnt -1; j++) {  /* fill non head trxn */
+            if (merged_trxn_cnt) {
+                TrxnInfo* t_info = new TrxnInfo();
+                c_info.trxninfo = t_info;
+                t_info->col_id = c_info.col_id;
+                t_info->key = c_info.key;
+                t_info->nr_merged_trxn = merged_trxn_cnt - 1;
+                if (merged_trxn_cnt > 1) t_info->merged_trxn_list = new Transaction[merged_trxn_cnt - 1];
+                for (uint16_t j = 0; j < merged_trxn_cnt -1; j++) {  /* fill non head trxn */
+                    uint64_t trxn_id = 0;
+                    if (!GetVarint64(&parse, &trxn_id)) abort();
+                    uint32_t trxn_seq = 0;
+                    if (!GetVarint32(&parse, &trxn_seq)) abort();
+                    uint32_t trxn_count = 0;
+                    if (!GetVarint32(&parse, &trxn_count)) abort();
+                    t_info->merged_trxn_list[i].id = trxn_id;
+                    t_info->merged_trxn_list[i].count = trxn_count;
+                    t_info->merged_trxn_list[i].seq_number = trxn_seq;
+                }
+                /* fill head */
                 uint64_t trxn_id = 0;
                 if (!GetVarint64(&parse, &trxn_id)) abort();
                 uint32_t trxn_seq = 0;
                 if (!GetVarint32(&parse, &trxn_seq)) abort();
                 uint32_t trxn_count = 0;
-                if (!GetVarint32(&parse, &trxn_count)) abort();
-                t_info->merged_trxn_list[i].id = trxn_id;
-                t_info->merged_trxn_list[i].count = trxn_count;
-                t_info->merged_trxn_list[i].seq_number = trxn_seq;
+                t_info->head.id = trxn_id;
+                t_info->head.count = trxn_count;
+                t_info->head.seq_number = trxn_seq;
             }
-            /* fill head */
-            uint64_t trxn_id = 0;
-            if (!GetVarint64(&parse, &trxn_id)) abort();
-            uint32_t trxn_seq = 0;
-            if (!GetVarint32(&parse, &trxn_seq)) abort();
-            uint32_t trxn_count = 0;
-            t_info->head.id = trxn_id;
-            t_info->head.count = trxn_count;
-            t_info->head.seq_number = trxn_seq;
             key_list.push_back(c_info); /* insert del type to key_list*/ 
         }
         return true;

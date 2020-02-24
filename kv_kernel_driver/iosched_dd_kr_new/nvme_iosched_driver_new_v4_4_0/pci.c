@@ -46,6 +46,7 @@
 #include <linux/t10-pi.h>
 #include <linux/timer.h>
 #include <linux/types.h>
+
 #include <linux/io-64-nonatomic-lo-hi.h>
 #include <asm/unaligned.h>
 
@@ -1599,6 +1600,60 @@ static int nvme_create_queue(struct nvme_queue *nvmeq, int qid)
 	return result;
 }
 
+#if defined(NVME_SYNC_BUSY_WAIT)
+int kv_blk_mq_hctx_next_cpu(struct blk_mq_hw_ctx *hctx)
+{
+/*
+    if (hctx->queue->nr_hw_queues == 1)
+        return WORK_CPU_UNBOUND;
+*/
+    if (--hctx->next_cpu_batch <= 0) {
+        int next_cpu;
+
+        next_cpu = cpumask_next(hctx->next_cpu, hctx->cpumask);
+        if (next_cpu >= nr_cpu_ids)
+            next_cpu = cpumask_first(hctx->cpumask);
+
+        hctx->next_cpu = next_cpu;
+        hctx->next_cpu_batch = BLK_MQ_CPU_WORK_BATCH;
+    }
+
+    return hctx->next_cpu;
+}
+
+/*
+ * Default mapping to a software queue, since we use one per CPU.
+ */
+struct blk_mq_hw_ctx *kv_blk_mq_map_queue(struct request_queue *q, const int cpu)
+{   
+    struct blk_mq_hw_ctx * hw_ctx = NULL;
+    int next_cpu = 0;
+    spin_lock_irq(q->queue_lock);
+    hw_ctx = blk_mq_map_queue(q, cpu);
+    if(!cpumask_test_cpu(cpu, hw_ctx->cpumask)){
+        goto done;
+    }
+    
+    next_cpu = kv_blk_mq_hctx_next_cpu(hw_ctx);
+    if(next_cpu != cpu){
+        cpumask_test_and_clear_cpu(cpu, hw_ctx->cpumask);
+        //pr_err("[%d:%s] : cpu [%d->%d] hw_ctx %p, next_cpu [%d->%d], hw_ctx->next_cpu %d\n", 
+        //    __LINE__, __func__, cpu, q->mq_map[cpu], hw_ctx,  
+        //    next_cpu, q->mq_map[next_cpu], hw_ctx->next_cpu);
+    }else{
+        cpumask_first(hw_ctx->cpumask);
+        //pr_err("[%d:%s] : same cpu and next [%d->%d] hw_ctx %p, q %p, first_cpu [%d->%d]\n", 
+        //    __LINE__, __func__, cpu, q->mq_map[cpu], hw_ctx, q,  
+        //    first_cpu, q->mq_map[first_cpu]);
+    }
+
+done:
+    spin_unlock_irq(q->queue_lock);
+    return hw_ctx;
+}
+#endif
+
+
 static struct blk_mq_ops nvme_mq_admin_ops = {
 	.queue_rq	= nvme_queue_rq,
 	.complete	= nvme_complete_rq,
@@ -1612,7 +1667,11 @@ static struct blk_mq_ops nvme_mq_admin_ops = {
 static struct blk_mq_ops nvme_mq_ops = {
 	.queue_rq	= nvme_queue_rq,
 	.complete	= nvme_complete_rq,
+#if defined(NVME_SYNC_BUSY_WAIT)	
 	.map_queue	= blk_mq_map_queue,
+#else
+    .map_queue = blk_mq_map_queue,
+#endif    
 	.init_hctx	= nvme_init_hctx,
 	.init_request	= nvme_init_request,
 	.timeout	= nvme_timeout,
@@ -2056,7 +2115,7 @@ static int nvme_dev_add(struct nvme_dev *dev)
 		dev->tagset.nr_hw_queues = dev->online_queues - 1;
 		dev->tagset.timeout = NVME_IO_TIMEOUT;
 		dev->tagset.numa_node = dev_to_node(dev->dev);
-		dev->tagset.queue_depth =
+		dev->tagset.queue_depth = 
 				min_t(int, dev->q_depth, BLK_MQ_MAX_DEPTH) - 1;
 		dev->tagset.cmd_size = nvme_cmd_size(dev);
 		dev->tagset.flags = BLK_MQ_F_SHOULD_MERGE;
@@ -2123,7 +2182,6 @@ static int nvme_pci_enable(struct nvme_dev *dev)
 	dev->q_depth = min_t(int, NVME_CAP_MQES(cap) + 1, NVME_Q_DEPTH);
 	dev->db_stride = 1 << NVME_CAP_STRIDE(cap);
 	dev->dbs = dev->bar + 4096;
-
 	/*
 	 * Temporary fix for the Apple controller found in the MacBook8,1 and
 	 * some MacBook7,1 to avoid controller resets and data loss.

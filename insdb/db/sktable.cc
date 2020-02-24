@@ -70,7 +70,6 @@ namespace insdb {
 #ifdef USE_HASHMAP_RANDOMREAD
             keymap_hash_size_ = keymap_hash_size; /* size of keymap on device */
 #endif
-            keymap_mem_size_ = 0;
             key_queue_ = new SimpleLinkedList[2];
 
             mf->InsertSKTableMem(this);
@@ -108,7 +107,6 @@ namespace insdb {
 #ifdef USE_HASHMAP_RANDOMREAD
         keymap_hash_size_(0),
 #endif
-        keymap_mem_size_(0),
         sktdf_load_mu_(),
         //sktdf_update_mu_(),
         //build_iter_mu_(),
@@ -187,17 +185,127 @@ namespace insdb {
         if (!keymap_->HasArena()) abort();
         return keymap_->GetCurColInfoID();
     }
+
+    void SKTableMem::UpdateKeyInfoUsingUserKeyFromKeyQueue(Manifest *mf, SequenceNumber seq, bool acquirelock, std::string &col_info_table, SequenceNumber &largest_ikey, std::queue<KeyBlockPrimaryMeta*> &in_log_KBM_queue) {
+        UserKey* uk = NULL;
+        if (acquirelock) KeyMapGuardLock();
+
+        for(int i = 0 ; i < 2 ; i++){//For Inactive & Active Queue
+            if(!i ? !IsInactiveKeyQueueEmpty() : !IsActiveKeyQueueEmpty()){
+                // do not need to insert userkeys if snapshot does not see them anyway.
+                if (seq && GetSmallestSequenceInKeyQueue(!i ? InactiveKeyQueueIdx():InactiveKeyQueueIdx()^1) > seq)  
+                    continue;
+                /* Read Preemption Locking */
+                KeyMapRandomReadGuardLock();
+                uint8_t idx = !i ? InactiveKeyQueueIdx() : ExchangeActiveAndInActiveKeyQueue();
+                while((uk = PopUserKeyFromKeyQueue(idx))){
+                    /* 
+                     * KeyInfo Format
+                     *  : || 1B NR column(+"reloc" + "uk addr" flag) | 1st ColInfo | ... | Last ColInfo ||
+                     * ColInfo
+                     *  : || 1B Col info size | 1B ColID(+"ref cnt" & "del cmd" flag) | column information ||
+                     */
+                    uint32_t offset = 0;
+                    bool submitted = true;//if true, the uk has been submitted and trxn has been committed.
+                    uk->ColumnLock();
+                    uint16_t size = uk->GetKeyInfoSize(mf, submitted);
+                    if(submitted) if(!mf->RemoveUserKeyFromHashMap(uk->GetKeySlice())) abort();/*given key must exist*/
+                    uk->ColumnUnlock();
+                    bool key_info_exist = false;
+                    Slice key_info = keymap_->Insert(uk->GetKeySlice(), size,  offset, key_info_exist);
+                    assert(key_info.size());
+                    char* key_info_data = const_cast<char*>(key_info.data());
+                    if(key_info_exist){
+                        bool resize = false;
+                        Slice old_key_info = key_info;
+                        /* KeyNode exist */
+                        uint8_t nr_col = (uint8_t)(*(key_info.data()));
+                        old_key_info.remove_prefix(1);//remove nr column
+
+                        assert(!(nr_col & USE_USERKEY));
+                        if(nr_col & RELOC_KEY_INFO){
+                            /* Get the slice of Relocated Key Info. then insert the col info to UK */
+                            uint32_t reloc_ofs = (*((uint32_t*)old_key_info.data()));
+                            Slice old_key_info = keymap_->GetRelocatedKeyInfo(reloc_ofs);
+                            nr_col = (uint8_t)(*(old_key_info.data()));
+                            assert(!(nr_col & USE_USERKEY || nr_col & RELOC_KEY_INFO));
+                            old_key_info.remove_prefix(1);//remove nr column
+                            resize = uk->InsertColumnNodes(mf, nr_col + 1, old_key_info);
+                            keymap_->FreeAllocatedMemory(reloc_ofs);
+                        }else{
+                            resize = uk->InsertColumnNodes(mf, (nr_col & NR_COL_MASK) + 1, old_key_info);
+                        }
+                        if(resize && submitted){
+                            /* 
+                             * Key info will be updated in this function.
+                             * But, the size is changed.
+                             */
+                            if(!(size = uk->GetKeyInfoSize(mf))){
+                                abort();
+                            }
+                            assert(size);
+
+                        }
+                    }
+                    if(!submitted){
+                        flush_candidate_key_deque_.push_back(offset);
+                        *key_info_data = USE_USERKEY;//Set "use userkey" & clean nr_col
+                        key_info_data++;
+                        *((uint64_t*)key_info_data) = (uint64_t)uk;
+                    }else{
+                        /* Update Column Info */
+                        if(size > key_info.size()){
+                            //TODO : Atomic??
+                            KeyMapHandle allocate_mem_offset  = keymap_->GetNextAllocOffset(size);
+                            assert(allocate_mem_offset != 0);
+                            char* key_info_data = const_cast<char*>(key_info.data());
+                            *key_info_data = RELOC_KEY_INFO;//Set "use userkey" & clean nr_col
+                            key_info_data++;
+                            *((uint32_t*)key_info_data) = allocate_mem_offset;
+                            key_info = Slice(keymap_->AllocateMemory(size, allocate_mem_offset), size);
+
+                            assert(key_info.size()); 
+                        }
+                        bool has_del = false;
+                        bool valid = uk->BuildColumnInfo(mf, size, key_info, largest_ikey, in_log_KBM_queue, has_del);
+                        assert(size);
+                        col_info_table.append(key_info.data(), size);
+                        if(has_del){
+                            KeySlice key = uk->GetKeySlice();
+                            PutVarint16(&col_info_table, key.size());
+                            col_info_table.append(key.data(), key.size());
+                        }
+                        assert(key_info.size()); 
+                        if(!valid){
+                            /*No invalid columns exists(col list is empty)*/
+                            assert(!uk->GetReferenceCount());
+                            mf->FreeUserKey(uk);
+                        }else{
+                            mf->FlushedKeyHashMapFindAndMergeUserKey(uk);
+                        }
+                    }
+                    /* We don't need to check ref count here because the uk will not be freed for now. */
+                    uint8_t wait_cnt = 0;
+                    if(wait_cnt = GetRandomReadWaitCount()){
+                        KeyMapRandomReadGuardUnLock();
+                        while(wait_cnt == GetRandomReadWaitCount());
+                        KeyMapRandomReadGuardLock();
+                    }
+                }
+                KeyMapRandomReadGuardUnLock();
+
+                // all user keys are consumed. reset smallest sequence number
+                ResetSmallestSequenceInKeyQueue(idx);
+            }
+        }
+        if (acquirelock) KeyMapGuardUnLock();
+    }
+
+
+
     bool SKTableMem::InsertUserKeyToKeyMapFromInactiveKeyQueue(Manifest *mf, bool inactive, SequenceNumber seq, bool acquirelock) {
         bool flush_queue = false;
         UserKey* uk = NULL;
-#ifdef KV_TIME_MEASURE 
-        uint32_t count = 0;
-        cycles_t r1=0, r2=0, r3=0, r4=0, r5=0, r6=0, r7=0, r8=0, r9=0, r10=0, e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, t1, t2;
-#endif
-
-#ifdef KV_TIME_MEASURE 
-        t1 = get_cycles();
-#endif
         if (acquirelock) KeyMapGuardLock();
 
         if(inactive ? !IsInactiveKeyQueueEmpty() : !IsActiveKeyQueueEmpty()){
@@ -229,21 +337,13 @@ namespace insdb {
                  * ColInfo
                  *  : || 1B Col info size | 1B ColID(+"ref cnt" & "del cmd" flag) | column information ||
                  */
-#ifdef KV_TIME_MEASURE 
-                count++;
-                e1 = get_cycles();
-#endif
                 uint32_t offset = 0;
                 uint16_t size = uk->GetKeyInfoSizeForNew();
-                Slice key_info = keymap_->Insert(uk->GetKeySlice(), size,  offset);
-#ifdef KV_TIME_MEASURE 
-                e2 = get_cycles();
-                r1+=e2-e1;
-#endif
+                bool key_info_exist = false;
+                Slice key_info = keymap_->Insert(uk->GetKeySlice(), size,  offset, key_info_exist);
                 char* key_info_data = NULL;
-                if(!key_info.size()){
+                if(key_info_exist){
                     /* KeyNode exist */
-                    key_info = keymap_->GetKeyInfo(offset);
                     uint8_t nr_col = (uint8_t)(*(key_info.data()));
                     key_info_data = const_cast<char*>(key_info.data());
                     key_info.remove_prefix(1);//remove nr column
@@ -293,10 +393,6 @@ namespace insdb {
                     assert(key_info.size());
                     key_info_data = const_cast<char*>(key_info.data());
                     flush_candidate_key_deque_.push_back(offset);
-#ifdef KV_TIME_MEASURE 
-                    e8 = get_cycles();
-                    r7+=e8-e7;
-#endif
                 }
                 *key_info_data = USE_USERKEY;//Set "use userkey" & clean nr_col
 #ifdef CODE_TRACE
@@ -306,10 +402,6 @@ namespace insdb {
                 key_info_data++;
                 *((uint64_t*)key_info_data) = (uint64_t)uk;
                 /* We don't need to check ref count here because the uk will not be freed for now. */
-#ifdef KV_TIME_MEASURE 
-                e9 = get_cycles();
-                r8+=e9-e8;
-#endif
 #if 0
 #ifdef USE_HOTSCOTCH
                 if(!mf->RemoveUserKeyFromHopscotchHashMap(uk->GetKeySlice())){
@@ -319,10 +411,6 @@ namespace insdb {
 #else
                 if(!mf->RemoveUserKeyFromHashMap(uk->GetKeySlice())) abort();/*given key must exist*/
 #endif
-#endif
-#ifdef KV_TIME_MEASURE 
-                e10 = get_cycles();
-                r9+=e10-e9;
 #endif
                 uint8_t wait_cnt = 0;
                 if(wait_cnt = GetRandomReadWaitCount()){
@@ -336,11 +424,6 @@ namespace insdb {
                     while(wait_cnt == GetRandomReadWaitCount());
                     KeyMapRandomReadGuardLock();
                 }
-#ifdef KV_TIME_MEASURE 
-                e11 = get_cycles();
-                r10+=e11-e10;
-#endif
-
             }
             KeyMapRandomReadGuardUnLock();
 
@@ -349,14 +432,8 @@ namespace insdb {
         }
 exit:
         if (acquirelock) KeyMapGuardUnLock();
-
-#ifdef KV_TIME_MEASURE 
-        t2 = get_cycles();
-        printf("[%d :: %s]End move key from key queue to map\n", __LINE__, __func__);
-        printf("[%d :: %s] count : %u || 1: %lld || 2: %lld || 3: %lld || 4: %lld || 5: %lld || 6: %lld || 7: %lld || 8: %lld || 9: %lld || 10:%lld || total :%lld\n", __LINE__, __func__, count, time_usec_measure2(r1), time_usec_measure2(r2), time_usec_measure2(r3), time_usec_measure2(r4), time_usec_measure2(r5), time_usec_measure2(r6), time_usec_measure2(r7), time_usec_measure2(r8), time_usec_measure2(r9), time_usec_measure2(r10), time_usec_measure(t1,t2));
-
-#endif
         return flush_queue;
+
     }
 
     bool SKTableMem::PrefetchSKTable(Manifest* mf, bool dirtycache, bool no_cachecheck, bool nio) {
@@ -399,7 +476,6 @@ exit:
                         abort();
                     }
 #endif
-#
 #ifdef TRACE_READ_IO
                     g_sktable_async++;
 #endif
@@ -481,11 +557,11 @@ exit:
                 incache = ClearFetchInProgress();
                 SKTDFLoadUnlock();
 #ifdef MEM_TRACE
-                mf->IncSKTDF_MEM_Usage(GetAllocatedSize());
+                mf->IncSKTDF_MEM_Usage(GetBufferSize());
 #endif                
                 if (mf->CheckKeyEvictionThreshold()) mf->SignalSKTEvictionThread(); /* send signal when memory need to release */
-                mf->IncreaseSKTDFNodeSize(GetAllocatedSize());
-                SetKeymapMemSize(GetAllocatedSize());
+                //mf->IncreaseSKTDFNodeSize(GetAllocatedSize());
+                mf->IncreaseSKTDFNodeSize(GetBufferSize());
                 /* In PrefetchSKTable(), this SKTableMem is already inserted to dirty list */
             }else{ 
                 SKTDFLoadUnlock();
@@ -624,7 +700,6 @@ exit:
                         column.ikey_seq_num = col_data.ikey_sequence;
                         column.ivalue_size = col_data.ikey_size;
                         column.offset = col_data.kb_offset;
-                        //colmeta->SetReference();
                     }
                 }
 #ifdef CODE_TRACE
@@ -725,6 +800,13 @@ exit:
 #endif
 
     bool SKTableMem::SKTDFReclaim(Manifest *mf){
+#if 1
+        if(GetSKTRefCnt()){
+            //assert(!force_evict);
+            return true;
+        }
+        return false;
+#else
         KeyMapHandle handle = keymap_->First();
         while(handle) {
             if(GetSKTRefCnt()){
@@ -763,7 +845,7 @@ exit:
             handle = keymap_->Next(handle);
         }
         return false;
-
+#endif
     }
 
     bool SKTableMem::SKTDFReclaim(Manifest *mf, int64_t &reclaim_size, bool &active, bool force_evict, uint32_t &put_col, uint32_t &del_col){
@@ -808,6 +890,7 @@ exit:
             for (uint8_t i = 0; i < nr_col; i++) {
                 if (col_array->IsDeleted()) del_col++;
                 else put_col++;
+#if 0
                 if (col_array->HasReference()) {
                     if (col_array->HasSecondChanceReference() || force_evict) {
                         col_info.init();
@@ -835,6 +918,7 @@ exit:
                         col_array->SetSecondChanceReference();
                     }
                 }
+#endif
                 col_array = (ColMeta*)(col_addr + col_array->GetColSize());
             }
             handle = keymap_->Next(handle);
@@ -857,23 +941,27 @@ exit:
 #define TTL_SHIFT 6
 
 #ifdef KV_TIME_MEASURE 
-    std::atomic<uint64_t> s_skt(0);
-    //std::atomic_init(&s_skt, 0);
-    std::atomic<uint64_t> l_skt(0);
-    //std::atomic_init(&l_skt, 0);
+    volatile cycles_t updatekeyinfo_cycle = 0 ;
+    volatile cycles_t split_cycle = 0 ;
+    volatile uint32_t updatekeyinfo_cnt = 0 ;
+    volatile uint32_t split_cnt = 0 ;
+    volatile cycles_t insertuk_cycle = 0 ;
+    volatile uint32_t insertuk_cnt = 0 ;
+    volatile cycles_t insertuk_in_split_cycle = 0 ;
+    volatile uint32_t insertuk_in_split_cnt = 0 ;
 #endif
 
 
 
 
     void SKTableMem::UpdateKeyInfo(Manifest* mf, std::string &col_info_table, SequenceNumber &largest_ikey, std::queue<KeyBlockPrimaryMeta*> &in_log_KBM_queue){
-#if 0
-#else
+#ifdef KV_TIME_MEASURE 
+        cycles_t t1, t2;
+        t1 = get_cycles();
+#endif
         std::lock_guard<folly::SharedMutex> l(keymap_mu_);
         //KeyMapGuardLock();
         KeyMapRandomReadGuardLock();
-#endif
-        SequenceNumber largest_seq = 0;
         for (auto it = flush_candidate_key_deque_.begin(); it!=flush_candidate_key_deque_.end();){
             uint32_t offset= *it;
             assert(offset);
@@ -903,7 +991,7 @@ exit:
                     assert(keyinfo.size()); 
                 }
                 bool has_del = false;
-                bool valid = uk->BuildColumnInfo(mf, new_key_info_size, keyinfo, largest_ikey, largest_seq, in_log_KBM_queue, has_del);
+                bool valid = uk->BuildColumnInfo(mf, new_key_info_size, keyinfo, largest_ikey, in_log_KBM_queue, has_del);
                 it = flush_candidate_key_deque_.erase(it);
                 assert(new_key_info_size);
                 col_info_table.append(keyinfo.data(), new_key_info_size);
@@ -932,8 +1020,10 @@ exit:
                 it++;
             }
 out:
+#if 0
             if(col_info_table.size() >= kDeviceRquestMaxSize/2)
                 break;
+#endif
             uint8_t wait_cnt = 0;
             if(wait_cnt = GetRandomReadWaitCount()){
 #if 1
@@ -959,16 +1049,23 @@ out:
 #if 1
         KeyMapRandomReadGuardUnLock();
 #endif
+#ifdef KV_TIME_MEASURE 
+        t2 = get_cycles();
+        updatekeyinfo_cycle += t2-t1;
+        updatekeyinfo_cnt++;
+#endif
     } 
 
     // acquire keymap write lock berfore entering
     void SKTableMem::SplitInactiveKeyQueue(Manifest* mf, std::vector<std::pair<SKTableMem*, Slice>> &sub_skt){
-        bool flush_queue = false;
         UserKey* uk = NULL;
         int nr_sub_skt = sub_skt.size();
 
+#ifdef KV_TIME_MEASURE 
+        cycles_t t1, t2;
+        t1 = get_cycles();
+#endif
         if(!IsActiveKeyQueueEmpty()){
-            flush_queue = true;
             //std::lock_guard<folly::SharedMutex> l(keymap_mu_);
 
             /* 
@@ -1006,6 +1103,12 @@ out:
                 }
             }
         }
+#ifdef KV_TIME_MEASURE 
+        t2 = get_cycles();
+        insertuk_in_split_cycle += t2-t1;
+        insertuk_in_split_cnt++;
+#endif
+#if 1
         if(!IsInactiveKeyQueueEmpty()){
             InsertUserKeyToKeyMapFromInactiveKeyQueue(mf, true, 0, false);
         }
@@ -1014,10 +1117,11 @@ out:
                 sub_skt[i].first->InsertUserKeyToKeyMapFromInactiveKeyQueue(mf, true, 0, false);
             }
         }
+#endif
     }
 
 
-    InSDBKey SKTableMem::StoreColInfoTable(Manifest *mf, std::string &col_info_table, Slice &comp_col_info_table) {
+    InSDBKey SKTableMem::StoreColInfoTable(Manifest *mf, std::string &col_info_table, std::string &comp_col_info_table) {
         Status s;
         uint32_t col_info_table_size = col_info_table.size();
         char* data = const_cast<char*>(col_info_table.data());
@@ -1025,7 +1129,10 @@ out:
         uint32_t crc = crc32c::Value(data + COL_INFO_TABLE_META, col_info_table_size -COL_INFO_TABLE_META);
         EncodeFixed32(data+COL_INFO_TABLE_CRC_LOC, crc32c::Mask(crc));
 #ifdef HAVE_SNAPPY
-        assert(comp_col_info_table.size() >= SizeAlignment(snappy::MaxCompressedLength(col_info_table_size) + COL_INFO_TABLE_META/*comp size & CRC*/));
+        uint32_t size = SizeAlignment(snappy::MaxCompressedLength(col_info_table_size) + COL_INFO_TABLE_META/*comp size & CRC*/);
+        if(comp_col_info_table.size() < size){
+            comp_col_info_table.reserve(size);
+        }
         char* comp_buffer = const_cast<char*>(comp_col_info_table.data());
         size_t outlen = 0;
         size_t inlen = col_info_table.size();
@@ -1039,9 +1146,28 @@ out:
         {
             outlen= SizeAlignment(col_info_table_size);
         }
+#if 0
         Slice value(data, outlen);
         InSDBKey colinfo_key = GetColInfoKey(mf->GetDBHash(), keymap_->GetSKTableID(), keymap_->IncCurColInfoID());
         s = mf->GetEnv()->Put(colinfo_key, value, true); 
+#endif
+
+        uint32_t num_col_table = (outlen + kDeviceRquestMaxSize - 1) / kDeviceRquestMaxSize;
+        uint32_t remain_size = outlen;
+
+        InSDBKey colinfo_key;
+        for (uint32_t i = 0; i < num_col_table ; i++) { // split and save request.
+            colinfo_key = GetColInfoKey(mf->GetDBHash(), keymap_->GetSKTableID(), keymap_->IncCurColInfoID());
+            size_t req_size = (remain_size < kDeviceRquestMaxSize) ? remain_size : kDeviceRquestMaxSize;
+            Slice value(data, req_size);
+            Status s = mf->GetEnv()->Put(colinfo_key, value, true);
+            if (!s.ok()){
+                printf("[%d :: %s]Fail to write Col info Table\n", __LINE__, __func__);
+                abort();
+            }
+            remain_size -= req_size;
+            data += req_size;
+        }
         return colinfo_key;
     }
 
@@ -1064,7 +1190,7 @@ out:
         s = mf->GetEnv()->Put(hashkey, hash_value, true);
         if (!s.ok()) return s;
 #endif
-        
+
         KEYMAP_HDR *hdr = nullptr;
         io_size = 0;
         uint32_t keymap_size = sub->GetAllocatedSize();
@@ -1098,6 +1224,9 @@ out:
             else io_size += peding_size;
             InSDBKey subkey = GetMetaKey(mf->GetDBHash(), kSKTable, sub->GetSKTableID());
             Slice value(comp_buffer, io_size);
+#ifdef CODE_TRACE
+            printf("[%d :: %s](prev col_table_id : new id = %d : %d)Store SKTID %d sub %d (flush_candidate_key_deque_ is %s)\n", __LINE__, __func__, GetPrevColInfoID(), GetCurColInfoID(), GetSKTableID(), sub->GetSKTableID(), flush_candidate_key_deque_.empty()?"empty":"not empty");
+#endif
             s = mf->GetEnv()->Put(subkey, value, true);
             mf->FreeSKTableBuffer(comp_slice);
         } else
@@ -1119,6 +1248,9 @@ out:
             else io_size = sub->GetBufferSize();
             InSDBKey subkey = GetMetaKey(mf->GetDBHash(), kSKTable, sub->GetSKTableID());
             Slice value(data, io_size);
+#ifndef CODE_TRACE
+            printf("[%d :: %s](prev col_table_id : new id = %d : %d)Store SKTID %d(flush_candidate_key_deque_ is %s)\n", __LINE__, __func__, GetPrevColInfoID(), GetCurColInfoID(), GetSKTableID(), flush_candidate_key_deque_.empty()?"empty":"not empty");
+#endif
             s = mf->GetEnv()->Put(subkey, value, true); 
         }
         return s;
@@ -1131,9 +1263,9 @@ out:
 #endif
         if (!keymap_->HasArena()) return;
 #ifdef MEM_TRACE
-        mf->DecSKTDF_MEM_Usage(GetKeymapMemSize());
+        mf->DecSKTDF_MEM_Usage(GetBufferSize());
 #endif                
-        mf->DecreaseSKTDFNodeSize(GetKeymapMemSize());
+        mf->DecreaseSKTDFNodeSize(GetBufferSize());
 
 
         uint32_t prev_colinfo_id = GetPrevColInfoID();
@@ -1172,21 +1304,13 @@ out:
         keymap_->InsertArena(nullptr);
     }
 
-    Status SKTableMem::FlushSKTableMem(Manifest *mf, std::string &col_info_table, Slice &comp_col_info_table, std::queue<KeyBlockPrimaryMeta*> &in_log_KBM_queue)
+    Status SKTableMem::FlushSKTableMem(Manifest *mf, std::string &col_info_table, std::string &comp_col_info_table, std::queue<KeyBlockPrimaryMeta*> &in_log_KBM_queue)
     {/*force == true for DB termination*/
-#ifdef KV_TIME_MEASURE 
-        cycles_t t1, t2;
-#endif
-
-#ifdef KV_TIME_MEASURE 
-        t1 = get_cycles();
-#endif
         Status s;
         std::vector<std::pair<SKTableMem*, Slice>> sub_skt_;
         std::vector<Keymap*> sub_skt_keymap;
         SequenceNumber largest_ikey = 0;
         std::deque<uint32_t> del_skt_list;
-        ;
         Keymap *split_main = nullptr;
         uint32_t io_size = 0; 
 #ifdef USE_HASHMAP_RANDOMREAD
@@ -1202,26 +1326,29 @@ out:
          * If keymap has UserKey pointer which is inserted in InsertUserKeyToKeyMapFromInactiveKeyQueue() , the keymap can not be freed.
          */
         bool update_key_info = false;
-
-        int32_t old_size = GetKeymapMemSize();
+        bool only_col_table_update = false;
+        //int32_t old_size = GetAllocatedSize();
+        int32_t old_size = GetBufferSize();
         if(flush_candidate_key_deque_.size()){
-            if(mf->MemoryUsage() > kCacheSizeLowWatermark)
-                update_key_info = true;
             UpdateKeyInfo(mf, col_info_table, largest_ikey, in_log_KBM_queue);
         }
         /* Move keys in unsorted key queue to FlushCandidateQueue 
          * Unsorted Key Queue : The keys has not been inserted to keymap yet
          * FlushCandidateQueue : The keys has been inserted to keymap. But the col_info has UserKey Addr 
          */
-        if(flush_candidate_key_deque_.empty() && !update_key_info){
+        if(flush_candidate_key_deque_.empty()){
             /* 
              * Check split here 
              * all key info in keymap must be completed(No UserKey point exists in keymap
              * So, we need to 
              */
             if(!GetSKTRefCnt() && ((keymap_->GetAllocatedSize() - keymap_->GetFreedMemorySize() > kMaxSKTableSize * 2) // If size of keymap is bigger than 2 times of kMaxSKTableSize, split the SKTable
-                    || (keymap_->GetAllocatedSize() > kDeviceRquestMaxSize ))) { // If size of keymap is bigger than kMaxRequestSize 2M.
+                        || (keymap_->GetAllocatedSize() > kDeviceRquestMaxSize ))) { // If size of keymap is bigger than kMaxRequestSize 2M.
                 /*Create SKTable with keymap & Insert the SKTable to skiplist from last one. */
+#ifdef KV_TIME_MEASURE 
+                cycles_t t1, t2;
+                t1 = get_cycles();
+#endif
 
                 Keymap* sub = nullptr;
                 uint32_t next_skt_id = 0;
@@ -1277,15 +1404,10 @@ out:
                     }
                     /* create new skt */
                     SKTableMem* sub_skt = new SKTableMem(mf, sub);
-#ifdef MEM_TRACE
-                    mf->IncSKTDF_MEM_Usage(sub_skt->GetAllocatedSize());
-#endif                
 #ifdef INSDB_GLOBAL_STATS
-            g_new_skt_cnt++;
+                    g_new_skt_cnt++;
 #endif
                     if (!sub_skt) abort();
-                    sub_skt->SetKeymapMemSize(sub_skt->GetAllocatedSize());
-                    mf->IncreaseSKTDFNodeSize(sub_skt->GetAllocatedSize());
                     sub_skt->SetSKTableID(sub->GetSKTableID());
 #ifdef USE_HASHMAP_RANDOMREAD
                     sub_skt->SetKeymapNodeSize(io_size, hash_data_size);
@@ -1307,7 +1429,7 @@ process_main:
                 }
                 SetKeymapNodeSize(io_size, hash_data_size);
 #else
-            s = StoreKeymap(mf, split_main, io_size);
+                s = StoreKeymap(mf, split_main, io_size);
                 if (!s.ok()) {
                     printf("[%d :: %s] fail to flush split main key %d(size : 0x%x)\n", __LINE__, __func__, split_main->GetSKTableID(), io_size);
                     abort();
@@ -1347,13 +1469,26 @@ process_main:
                 keymap_ = split_main;
                 if(del_keymap->DecRefCntCheckForDelete()) delete del_keymap;
                 KeyMapRandomReadGuardUnLock();
-                SetKeymapMemSize(GetAllocatedSize());
                 SplitInactiveKeyQueue(mf, sub_skt_);
 
                 // release sub skt keymap lock
-                for(int i = 0; i < sub_skt_.size() ; i++)
-                    sub_skt_[i].first->KeyMapGuardUnLock();
+                for(int i = 0; i < sub_skt_.size() ; i++) {
+                    SKTableMem* sub_skt = sub_skt_[i].first;
+#ifdef MEM_TRACE
+                    mf->IncSKTDF_MEM_Usage(sub_skt->GetBufferSize());
+#endif                
+
+                    //mf->IncreaseSKTDFNodeSize(sub_skt->GetAllocatedSize());
+                    mf->IncreaseSKTDFNodeSize(sub_skt->GetBufferSize());
+                    sub_skt->KeyMapGuardUnLock();
+                }
+#ifdef KV_TIME_MEASURE 
+                t2 = get_cycles();
+                split_cycle += t2-t1;
+                split_cnt++;
+#endif
             }else {
+                only_col_table_update = true;
                 SKTableMem *del_skt = mf->NextSKTableInSortedList(GetSKTableSortedListNode()); 
                 if(!GetSKTRefCnt() && del_skt && del_skt->IsDeletedSKT()){
                     bool first_deleted_skt = false;
@@ -1437,9 +1572,23 @@ process_main:
                         }
                         del_skt = mf->NextSKTableInSortedList(GetSKTableSortedListNode()); 
                     }
-                }else if(InsertUserKeyToKeyMapFromInactiveKeyQueue(mf, false, 0)){ //key_queue_ => flush_candidate_key_deque_  // true of false ?
-                    /* Don't do this after split in order to prevent insert sub's key to main's keymap  */
-                    UpdateKeyInfo(mf, col_info_table, largest_ikey, in_log_KBM_queue); // flush_candidate_key_deque_ => flushed_key_hash_
+                }else if(mf->SKTMemoryUsage() < kMaxCacheSize){
+#if 1
+                    if(InsertUserKeyToKeyMapFromInactiveKeyQueue(mf, false, 0)) //key_queue_ => flush_candidate_key_deque_  // true of false ?
+                        /* Don't do this after split in order to prevent insert sub's key to main's keymap  */
+                        UpdateKeyInfo(mf, col_info_table, largest_ikey, in_log_KBM_queue); // flush_candidate_key_deque_ => flushed_key_hash_
+#else
+#ifdef KV_TIME_MEASURE 
+                    cycles_t t1, t2;
+                    t1 = get_cycles();
+#endif
+                    UpdateKeyInfoUsingUserKeyFromKeyQueue(mf, 0, true, col_info_table, largest_ikey, in_log_KBM_queue);
+#ifdef KV_TIME_MEASURE 
+                    t2 = get_cycles();
+                    insertuk_cycle += t2-t1;
+                    insertuk_cnt++;
+#endif
+#endif
                 }
             }
         }
@@ -1459,7 +1608,7 @@ split_exit:
         if(largest_ikey)
             Env::Default()->Flush(kWriteFlush, -1, GetKBKey(mf->GetDBHash(), kKBlock, largest_ikey));
         
-        if(col_info_table.size() > 8){
+        if( only_col_table_update && col_info_table.size() > 8){ /* only update when it is not splited ... */
             InSDBKey last_cit_key = StoreColInfoTable(mf, col_info_table, comp_col_info_table);//Write column info table to device
             mf->SetLastColInfoTableKey(last_cit_key);
         }
@@ -1486,12 +1635,8 @@ split_exit:
         ///////////////// 5. Change in-log KBM Status to out-log //////////////////
       
 
-        int32_t new_size = GetKeymapMemSize();
-
-
-#ifndef CODE_TRACE
-        if (new_size > 0x200000) printf("[%s:%d] huge keymap (%d)\n", __func__, __LINE__, new_size);
-#endif
+        //int32_t new_size = GetAllocatedSize();
+        int32_t new_size = GetBufferSize();
 
 #ifdef MEM_TRACE
         if(new_size > old_size)
@@ -1500,11 +1645,6 @@ split_exit:
             mf->DecSKTDF_MEM_Usage(old_size - new_size);
 #endif
         mf->IncreaseSKTDFNodeSize(new_size - old_size);
-#ifdef KV_TIME_MEASURE 
-        t2 = get_cycles();
-        printf("[%d :: %s] Total Flush: %lld\n", __LINE__, __func__, time_usec_measure(t1, t2));
-
-#endif
 #if 0
 
         ///////////////////////////////////////////////////////////////////////////////////////////////////////////////

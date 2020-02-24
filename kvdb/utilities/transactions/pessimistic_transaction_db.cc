@@ -781,9 +781,9 @@ void WritePreparedTxnDB::UpdateSnapshots(
     const SequenceNumber& version) {
   TEST_SYNC_POINT("WritePreparedTxnDB::UpdateSnapshots:p:start");
   TEST_SYNC_POINT("WritePreparedTxnDB::UpdateSnapshots:s:start");
-#ifndef NDEBUG
+//#ifndef NDEBUG
   size_t sync_i = 0;
-#endif
+//#endif
   WriteLock wl(&snapshots_mutex_);
   snapshots_version_ = version;
   // We update the list concurrently with the readers.
@@ -804,14 +804,14 @@ void WritePreparedTxnDB::UpdateSnapshots(
     TEST_IDX_SYNC_POINT("WritePreparedTxnDB::UpdateSnapshots:p:", ++sync_i);
     TEST_IDX_SYNC_POINT("WritePreparedTxnDB::UpdateSnapshots:s:", sync_i);
   }
-#ifndef NDEBUG
+//#ifndef NDEBUG
   // Release the remaining sync points since they are useless given that the
   // reader would also use lock to access snapshots
   for (++sync_i; sync_i <= 10; ++sync_i) {
     TEST_IDX_SYNC_POINT("WritePreparedTxnDB::UpdateSnapshots:p:", sync_i);
     TEST_IDX_SYNC_POINT("WritePreparedTxnDB::UpdateSnapshots:s:", sync_i);
   }
-#endif
+//#endif
   snapshots_.clear();
   for (; it != snapshots.end(); it++) {
     // Insert them to a vector that is less efficient to access
@@ -828,9 +828,9 @@ void WritePreparedTxnDB::UpdateSnapshots(
 void WritePreparedTxnDB::CheckAgainstSnapshots(const CommitEntry& evicted) {
   TEST_SYNC_POINT("WritePreparedTxnDB::CheckAgainstSnapshots:p:start");
   TEST_SYNC_POINT("WritePreparedTxnDB::CheckAgainstSnapshots:s:start");
-#ifndef NDEBUG
+//#ifndef NDEBUG
   size_t sync_i = 0;
-#endif
+//#endif
   // First check the snapshot cache that is efficient for concurrent access
   auto cnt = snapshots_total_.load(std::memory_order_acquire);
   // The list might get updated concurrently as we are reading from it. The
@@ -851,13 +851,13 @@ void WritePreparedTxnDB::CheckAgainstSnapshots(const CommitEntry& evicted) {
       break;
     }
   }
-#ifndef NDEBUG
+//#ifndef NDEBUG
   // Release the remaining sync points before accquiring the lock
   for (++sync_i; sync_i <= 10; ++sync_i) {
     TEST_IDX_SYNC_POINT("WritePreparedTxnDB::CheckAgainstSnapshots:p:", sync_i);
     TEST_IDX_SYNC_POINT("WritePreparedTxnDB::CheckAgainstSnapshots:s:", sync_i);
   }
-#endif
+//#endif
   TEST_SYNC_POINT("WritePreparedTxnDB::CheckAgainstSnapshots:p:end");
   TEST_SYNC_POINT("WritePreparedTxnDB::CheckAgainstSnapshots:s:end");
   if (UNLIKELY(SNAPSHOT_CACHE_SIZE < cnt && ip1 == SNAPSHOT_CACHE_SIZE &&

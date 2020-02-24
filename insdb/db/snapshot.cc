@@ -170,38 +170,18 @@ namespace insdb {
 
             // prefetch KB
             if (!scanned->is_uv) {
-                KeyBlockPrimaryMeta* kbpm = NULL;
-                if (!scanned->uv_or_kbpm) {
-                    if (last_kb_ikey_seq_ != scanned->kb_ikey_seq) {
-                        last_kbpm_ = kbpm = mf_->GetKBPMWithiKey(scanned->kb_ikey_seq, scanned->kb_index);
-                        last_kb_ikey_seq_ = scanned->kb_ikey_seq;
-                    } else {
-                        kbpm = last_kbpm_;
-                        kbpm->SetRefBitmap(scanned->kb_index);
+                KeyBlock* kb = mf_->FindKBCache(iterkey.kb_ikey_seq);
+                assert(kb);
+                if (kb->IsDummy()) {
+                    kb->KBLock();
+                    if (kb->IsDummy() && !kb->SetKBPrefetched()) {
+                        InSDBKey kbkey = GetKBKey(mf_->GetDBHash(), kKBlock, iterkey.kb_ikey_seq);
+                        int buffer_size = SizeAlignment(scanned->kb_ivalue_size);
+                        Env::Default()->Get(kbkey, NULL, &buffer_size, kReadahead);
                     }
-                    // kbpm->SetRefBitmap(iterkey.kb_index);
-                    assert(kbpm->IsRefBitmapSet(scanned->kb_index));
-
-                    scanned->uv_or_kbpm = reinterpret_cast<void*>(kbpm);
-                } else {
-                    kbpm = reinterpret_cast<KeyBlockPrimaryMeta*>(scanned->uv_or_kbpm);
-				}
-                    assert(kbpm->IsRefBitmapSet(scanned->kb_index));
-                    // kbpm->SetRefBitmap();
-
-                if (!kbpm->GetKeyBlockAddr()) {
-                    if (!kbpm->SetKBPrefetched()) {
-                        kbpm->KBPMLock();
-                        if (!kbpm->GetKeyBlockAddr()) {
-                            InSDBKey kbkey = GetKBKey(mf_->GetDBHash(), kKBlock, iterkey.kb_ikey_seq);
-                            int buffer_size = SizeAlignment(scanned->kb_ivalue_size);
-                            Env::Default()->Get(kbkey, NULL, &buffer_size, kReadahead);
-                        } else {
-                            kbpm->ClearKBPrefetched();
-                        }
-                        kbpm->KBPMUnlock();
-                    }
+                    kb->KBUnlock();
                 }
+                scanned->iter_kb = kb;
             }
         }
 
@@ -218,6 +198,7 @@ namespace insdb {
             prefetch_scanned_queue_.pop();
             pnode->CleanupSkt();
             pnode->CleanupUserkeyBuff();
+            pnode->CleanupKB(mf_);
             // mf_->KBMDecPrefetchRefCount(pnode->GetColumnNode(), pnode->GetUserKey(), pnode->IsKBPMPrefetched());
             assert(pnode);
             FreeIterKey(pnode);
@@ -247,6 +228,7 @@ namespace insdb {
                 skt->KeyMapGuardLock();
                 // increase skt, keymap reference count
                 skt->IncSKTRefCnt(mf_);
+                skt->SetReference();
                 keymap = skt->GetKeyMap();
                 keymap->IncRefCnt();
                 // load keymap
@@ -259,8 +241,19 @@ namespace insdb {
                  * uint32_t old_size = skt->GetKeyMap()->GetAllocatedSize();
                  */
                 // check pending keys and keymap availability
+                //int32_t old_size = skt->GetAllocatedSize();
+                int32_t old_size = skt->GetBufferSize();
                 skt->InsertUserKeyToKeyMapFromInactiveKeyQueue(mf_, true, snap_->GetSequenceNumber(), false);
                 skt->InsertUserKeyToKeyMapFromInactiveKeyQueue(mf_, false, snap_->GetSequenceNumber(), false);
+                //int32_t new_size = skt->GetAllocatedSize();
+                int32_t new_size = skt->GetBufferSize();
+#ifdef MEM_TRACE
+                if(new_size > old_size)
+                    mf_->IncSKTDF_MEM_Usage(new_size - old_size);
+                else if(old_size - new_size)
+                    mf_->DecSKTDF_MEM_Usage(old_size - new_size);
+#endif
+                mf_->IncreaseSKTDFNodeSize(new_size - old_size);
 
                 /*
                  * account keymap size
@@ -456,7 +449,6 @@ another_skt:
                         iterkey.kb_ikey_seq = col_data.ikey_sequence;
                         iterkey.kb_ivalue_size = col_data.ikey_size;
                         iterkey.userkey_buff = key;
-                        colmeta->SetReference();
                     } else {
                         deleted = true;
 					}
@@ -578,6 +570,7 @@ exit:
             else
                 break;
         }
+        skt->SetReference();
         SetIterKey(skt, &target_key, kSeekNext, cur_);
         skt->DecSKTRefCnt();
     }
@@ -599,6 +592,7 @@ exit:
             else
                 break;
         }
+        skt->SetReference();
         SetIterKey(skt, &target_key, kSeekPrev, cur_);
         skt->DecSKTRefCnt();
     }
@@ -621,6 +615,7 @@ exit:
             else
                 break;
         }
+        skt->SetReference();
         SetIterKey(skt, key, kSeekFirst, cur_);
         skt->DecSKTRefCnt();
     }
@@ -643,6 +638,7 @@ exit:
             else
                break;
         }
+        skt->SetReference();
         SetIterKey(skt, key, kSeekLast, cur_);
         skt->DecSKTRefCnt();
     }
@@ -667,54 +663,53 @@ exit:
 
         // mark value is called
         pthis->iter_history_ |= flags_iter_value;
-
-        KeyBlockPrimaryMeta *kbpm = nullptr;
-        if (cur_.uv_or_kbpm) {
-            if (cur_.is_uv) {
-                // user value
-                UserValue *uv = reinterpret_cast<UserValue *>(cur_.uv_or_kbpm);
-                assert(uv);
-                return uv->ReadValue();
-            } else {
-                // kbpm
-                kbpm = reinterpret_cast<KeyBlockPrimaryMeta *>(cur_.uv_or_kbpm);
-            }
-        } else {
-            // avoid lookup if it's same ikey seq as last.
-            if (last_kb_ikey_seq_ != cur_.kb_ikey_seq) {
-                pthis->last_kbpm_ = kbpm = mf_->GetKBPMWithiKey(cur_.kb_ikey_seq, cur_.kb_index);
-                pthis->last_kb_ikey_seq_ = cur_.kb_ikey_seq;
-            } else {
-                kbpm = last_kbpm_;
-                kbpm->SetRefBitmap(cur_.kb_index);
-            }
-        }
-
+        
         bool cache_hit = true;
         bool ra_hit = false;
-        KeyBlock *kb = kbpm->GetKeyBlockAddr();
-        if (!kb) {
-            kbpm->KBPMLock();
-            if (!(kb = kbpm->GetKeyBlockAddr())) {
-                cache_hit = false;
-#ifdef TRACE_READ_IO
-                if (kbpm->IsKBPrefetched()) {
-                    g_itr_kb_prefetched++;
+        KeyBlock *kb = nullptr;
+        if (cur_.uv_or_kbpm && cur_.is_uv) {
+            // user value
+            UserValue *uv = reinterpret_cast<UserValue *>(cur_.uv_or_kbpm);
+            assert(uv);
+            return uv->GetValueSlice();
+        } else {
+            if (last_kb_ikey_seq_ != cur_.kb_ikey_seq || !kb_) {
+                if (cur_.iter_kb) { 
+                    kb = cur_.iter_kb; 
                 } else {
-                    g_itr_kb++;
+                    kb = mf_->FindKBCache(cur_.kb_ikey_seq);
                 }
+                assert(kb);
+                if (kb->IsDummy()) {
+                    cache_hit = false;
+#ifdef TRACE_READ_IO
+                    if (kb->IsKBPrefetched()) {
+                        g_itr_kb_prefetched++;
+                    } else {
+                        g_itr_kb++;
+                    }
 #endif
-                kb = mf_->LoadValue(cur_.kb_ikey_seq, cur_.kb_ivalue_size, &ra_hit, kbpm);
-                kbpm->SetKeyBlockAddr(kb);
-            }
-            kbpm->KBPMUnlock();
-        }
-        // replace the current KB
-        if (kb_!= kb) {
-            kb->IncKBRefCnt();
-            if (kb_) mf_->FreeKB(kb_);
-            kb_ = kb;
-        }
+                    kb->KBLock();
+                    if (kb->IsDummy()) {
+                        bool b_load =  mf_->LoadValue(cur_.kb_ikey_seq, cur_.kb_ivalue_size, &ra_hit, kb);
+                        assert(b_load);
+                        mf_->DummyKBToActive(cur_.kb_ikey_seq, kb);
+                    }
+                    kb->KBUnlock();
+                }
+                // replace the current KB
+                if (kb_!= kb) {
+                    if (kb_) {
+                        mf_->FreeKB(kb_);
+                    }
+                    pthis->kb_ = kb;
+                }
+                pthis->last_kb_ikey_seq_ = cur_.kb_ikey_seq;
+            } else {
+                if (cur_.iter_kb) mf_->FreeKB(cur_.iter_kb);
+                kb = kb_;
+            } 
+        } 
 
         Slice value =  kb->GetValueFromKeyBlock(mf_, cur_.kb_index);
 #ifdef BUILDITR_INCLUDE_DIRECTVALUE

@@ -18,10 +18,18 @@
 #include <linux/time.h>
 #include <linux/blkdev.h>
 #include <linux/bio.h>
+#include <linux/delay.h>
+#include <linux/blkdev.h>
 #include "nvme.h"
 #include "linux_nvme_ioctl.h"
 #include "kv_iosched.h"
 #include "kv_fifo.h"
+
+struct kv_end_io_data{
+            struct completion w;
+            int rc_done;
+            int busy_wait;
+};
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
 static void kv_end_io_sync_rq(struct request *rq, int error)
@@ -29,15 +37,29 @@ static void kv_end_io_sync_rq(struct request *rq, int error)
 static void kv_end_io_sync_rq(struct request *rq, blk_status_t error)
 #endif
 {
+#if defined( NVME_SYNC_BUSY_WAIT) 
+    struct kv_end_io_data * kv_end = rq->end_io_data;
+    //pr_err("[%d:%s] : rq %p busy_wait %d cpu(%d)\n", __LINE__, __func__, rq, kv_end->busy_wait, get_cpu());
+    if(kv_end->busy_wait){
+        int * done = &kv_end->rc_done;
+        *done = 1; 
+    }else{
+       struct completion *waiting = &(kv_end->w);
+       complete(waiting);  
+    }
+#else
     struct completion *waiting = rq->end_io_data;
-
+#endif
     rq->end_io_data = NULL;
 
     /*
      * complete last, if this is a stack request the process (and thus
      * the rq pointer) could be invalid right after this complete()
      */
-    complete(waiting);
+#if defined(NVME_SYNC_BUSY_WAIT) 
+#else
+    complete(waiting); 
+#endif
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
@@ -122,7 +144,8 @@ static inline void free_kv_sync_rq(struct kv_sync_request *rq)
     rq->key_length = 0;
     kv_sync_request_free(rq);
 }
-static int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
+
+int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
 {
     ////////////// 
     struct request_queue *q = sync_rq->q; 
@@ -151,7 +174,7 @@ static int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
         return PTR_ERR(req);
 
     req->timeout = timeout ? timeout : ADMIN_TIMEOUT;
-
+    
     /*
      * A sync request always uses user memory,
      * even if the request was async request which uses kernel buffer.
@@ -227,26 +250,61 @@ static int __nvme_submit_kv_user_cmd(struct kv_sync_request *sync_rq)
 #ifdef KV_NVME_TRACE
     pr_err("[%d:%s] :  opcode(%02x)\n", __LINE__, __func__, cmd->common.opcode);
 #endif
-    {
-        DECLARE_COMPLETION_ONSTACK(wait);
+    
+    {   
+        struct kv_end_io_data kk_end_io_data;
+        kk_end_io_data.rc_done = 0;
+        kk_end_io_data.busy_wait = 0;
+
+        //DECLARE_COMPLETION_ONSTACK(wait);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
         char sense[SCSI_SENSE_BUFFERSIZE];
-
         memset(sense, 0, sizeof(sense));
         req->sense = sense;
         req->sense_len = 0;
 #endif
-
-        req->end_io_data = &wait;
+        
+#if defined(NVME_SYNC_BUSY_WAIT)
+        req->special = &cqe;
+        req->end_io_data = &kk_end_io_data;
+        kk_end_io_data.busy_wait = 1;
+	/*
+        unsigned int cpu = req->mq_ctx->cpu;
+        struct blk_mq_hw_ctx * hctx = blk_mq_map_queue(q, cpu);
+        int cpu_hit = cpumask_test_cpu(cpu, hctx->cpumask);
+        if(kv_blk_mq_hctx_next_cpu(hctx) != cpu){
+            kk_end_io_data.busy_wait = 1;
+        }else{
+             init_completion(&(kk_end_io_data.w));
+        }
+        blk_execute_rq_nowait(req->q, disk, req, 0, kv_end_io_sync_rq);
+        if(cpu_hit)
+            cpumask_set_cpu(cpu, hctx->cpumask);
+	*/
+        blk_execute_rq_nowait(req->q, disk, req, 0, kv_end_io_sync_rq);
+        if(kk_end_io_data.busy_wait){
+            while(!kk_end_io_data.rc_done){ndelay(100);};
+        }else{
+            while (!wait_for_completion_io_timeout(&kk_end_io_data.w, 120* (HZ/2))); 
+        }
+        
+        //pr_err("[%d:%s] : req %p opcode %x cpu (%d) wait_cnt %d io_size %d cnc %d cc %d\n",
+         //           __LINE__, __func__, req, cmd->common.opcode, get_cpu(), 
+         //           wait_cnt, udata_length, cpu_no_change, cpu_change);
+#else
+        init_completion(&(kk_end_io_data.w));
+        req->end_io_data = &(kk_end_io_data.w);
         req->special = &cqe;
         blk_execute_rq_nowait(req->q, disk, req, 0, kv_end_io_sync_rq);
-
+        
         /* Prevent hang_check timer from firing at us during very long I/O */
-        while (!wait_for_completion_io_timeout(&wait, 120* (HZ/2)));
+        while (!wait_for_completion_io_timeout(&kk_end_io_data.w, 120* (HZ/2)));
+#endif
+        }
 #ifndef NO_LOG
         atomic64_inc(&kv_total_sync_complete); 
 #endif
-    }
+    
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
     /* return success if the key does exist. set the error code in user command instead */
@@ -1346,7 +1404,7 @@ int __nvme_submit_iosched_kv_cmd(struct kv_memqueue_struct *memq)
             atomic64_inc(&kv_total_blocked_submit);
 #endif
             set_bit(KV_iosched_congested,  &rq->iosched->state);
-            wait_on_bit(&rq->iosched->state, KV_iosched_congested, TASK_KILLABLE);
+            wait_on_bit(&rq->iosched->state, KV_iosched_congested, TASK_UNINTERRUPTIBLE);
         }
         blk_execute_rq_nowait(req->q, disk, req, 0, kv_end_io_async_rq);
 
@@ -1654,7 +1712,7 @@ int nvme_kv_iosched_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
 
     if(atomic_read(&kv_iosched->kv_hash[KV_RQ_HASH].nr_rq) > KV_PENDING_QUEU_HIGH_WATERMARK){
         set_bit(KV_iosched_queue_full,  &kv_iosched->state);
-        wait_on_bit(&kv_iosched->state, KV_iosched_queue_full, TASK_KILLABLE);
+        wait_on_bit(&kv_iosched->state, KV_iosched_queue_full, TASK_UNINTERRUPTIBLE);
     }
 
     status = KVS_SUCCESS;//kv_iosched->status;//__nvme_submit_iosched_kv_cmd(kv_iosched);
@@ -2000,7 +2058,7 @@ int nvme_kv_flush_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
             do_gettimeofday(&wait_start);
 #endif
             if(type == ACTIVE_WRITE) 
-                wait_on_bit_io(&rq->state, KV_async_flush_wakeup, TASK_KILLABLE);
+                wait_on_bit_io(&rq->state, KV_async_flush_wakeup, TASK_UNINTERRUPTIBLE);
 
             // Release rq reference count
             (void)kv_decrease_req_refcnt(rq, true);
@@ -2050,7 +2108,7 @@ int nvme_kv_flush_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
                 do_gettimeofday(&wait_start);
 #endif
                 if(type == ACTIVE_WRITE) 
-                    wait_on_bit(&rq->state, KV_async_flush_wakeup, TASK_KILLABLE);
+                    wait_on_bit(&rq->state, KV_async_flush_wakeup, TASK_UNINTERRUPTIBLE);
 #ifndef NO_LOG
                 do_gettimeofday(&wait_stop);
                 atomic64_inc(&kv_flush_statistics[KV_flush_done]);

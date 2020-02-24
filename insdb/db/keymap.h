@@ -75,7 +75,6 @@ namespace insdb {
     typedef struct {
         void init() {
             col_size = 0;
-            referenced = false;
             is_deleted = false;
             has_ttl = false;
             has_userkey = false;
@@ -89,7 +88,6 @@ namespace insdb {
             key = Slice(0);
         }
         uint8_t col_size;
-        bool referenced;
         bool is_deleted;
         bool has_ttl;
         bool has_userkey;
@@ -107,17 +105,8 @@ namespace insdb {
     struct ColMeta {
         public:
             const static uint8_t flags_deleted                      = 0x80;
-            const static uint8_t first_flags_fisrt_ref_bit          = 0x80; 
-            const static uint8_t first_flags_second_ref_bit         = 0x40; 
-            const static uint8_t first_flags_mask                   = 0xC0;
-
             const static uint8_t second_flags_ttl                   = 0x80;
 
-            bool HasReference();
-            bool HasSecondChanceReference();
-            void SetSecondChanceReference();
-            void SetReference();
-            void ClearReference();
             bool IsDeleted();
             uint8_t ColumnID();
             bool HasTTL();
@@ -230,7 +219,7 @@ namespace insdb {
             ~Keymap();
             // Insert key into the list.
             // REQUIRES: nothing that compares equal to key is currently in the list.
-            Slice Insert(const KeySlice& key, uint32_t keyinfo_size, KeyMapHandle &handle);
+            Slice Insert(const KeySlice& key, uint32_t keyinfo_size, KeyMapHandle &handle, bool &is_old);
 
             Slice ReplaceOrInsert(const KeySlice& key, uint32_t keyinfo_size, KeyMapHandle &handle);
 
@@ -263,7 +252,6 @@ namespace insdb {
             Slice GetKeyInfoLatest(KeyMapHandle handle);
             Slice GetKeyInfo(KeyMapHandle handle);
             bool GetKeyColumnData(KeyMapHandle handle, uint8_t col_id, ColumnData &col_data);
-            void SetKeyReference(KeyMapHandle handle, uint8_t col_id);
             Slice GetColumnData(KeyMapHandle handle, uint8_t col_id, void*& uk);
             Slice GetColumnData(KeyMapHandle handle, uint8_t col_id, void* &uk, Slice &key);
             void GetKeyString(uint32_t handle, std::string &key_str);
@@ -283,6 +271,7 @@ namespace insdb {
             uint32_t GetNextSKTableID();
             uint32_t GetPrevColInfoID();
             uint32_t GetCurColInfoID();
+            bool ColInfoExist();
             size_t GetCount() {
                 return arena_->GetNodeCount();
             }
@@ -382,7 +371,7 @@ namespace insdb {
 
             uint32_t FindLast();
 
-            Slice _Insert(const KeySlice& key, uint32_t keyinfo_size, KeyMapHandle &handle);
+            Slice _Insert(const KeySlice& key, uint32_t keyinfo_size, KeyMapHandle &handle, bool &is_old);
 
             Slice _ReplaceOrInsert(const KeySlice& key, uint32_t keyinfo_size, KeyMapHandle &handle, bool& existing);
 
