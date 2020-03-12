@@ -117,10 +117,8 @@ typedef struct rocksdb_pinnableslice_t rocksdb_pinnableslice_t;
 typedef struct rocksdb_transactiondb_options_t rocksdb_transactiondb_options_t;
 typedef struct rocksdb_transactiondb_t rocksdb_transactiondb_t;
 typedef struct rocksdb_transaction_options_t rocksdb_transaction_options_t;
-typedef struct rocksdb_optimistictransactiondb_t
-    rocksdb_optimistictransactiondb_t;
-typedef struct rocksdb_optimistictransaction_options_t
-    rocksdb_optimistictransaction_options_t;
+typedef struct rocksdb_optimistictransactiondb_t rocksdb_optimistictransactiondb_t;
+typedef struct rocksdb_optimistictransaction_options_t rocksdb_optimistictransaction_options_t;
 typedef struct rocksdb_transaction_t rocksdb_transaction_t;
 typedef struct rocksdb_checkpoint_t rocksdb_checkpoint_t;
 
@@ -767,9 +765,8 @@ rocksdb_options_set_max_bytes_for_level_multiplier_additional(
     rocksdb_options_t*, int* level_values, size_t num_levels);
 extern ROCKSDB_LIBRARY_API void rocksdb_options_enable_statistics(
     rocksdb_options_t*);
-extern ROCKSDB_LIBRARY_API void
-rocksdb_options_set_skip_stats_update_on_db_open(rocksdb_options_t* opt,
-                                                 unsigned char val);
+extern ROCKSDB_LIBRARY_API void rocksdb_options_set_skip_stats_update_on_db_open(
+    rocksdb_options_t* opt, unsigned char val);
 
 /* returns a pointer to a malloc()-ed, null terminated string */
 extern ROCKSDB_LIBRARY_API char* rocksdb_options_statistics_get_string(

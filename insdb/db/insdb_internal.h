@@ -11,11 +11,11 @@
  * Authors      : Heekwon Park, Ilgu Hong, Hobin Lee
  *
  * This modified version is distributed under a BSD-style license that can be
- * found in the LICENSE.insdb file  
- *                    
+ * found in the LICENSE.insdb file
+ *
  * This program is distributed in the hope it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  
+ * FITNESS FOR A PARTICULAR PURPOSE.
  */
 
 
@@ -36,7 +36,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <algorithm>
-#include <boost/lockfree/queue.hpp> 
+#include <boost/lockfree/queue.hpp>
 #include <boost/lockfree/spsc_queue.hpp>
 #include "insdb/db.h"
 #include "insdb/kv_trace.h"
@@ -119,13 +119,13 @@ namespace insdb {
         uint32_t max_request_size;
         uint32_t max_sktable_size;
         uint32_t max_internalkey_size;
-        uint32_t first_skt_id; 
+        uint32_t first_skt_id;
     };
 
 #define TGID_SHIFT 5 /* Max 32 per group */
     typedef uint64_t TransactionID;
     //Support 128 Billions(1 << (32+5)) TRXN per DB Open(Intialized to 1 << TGID_SHIFT )
-    typedef uint32_t TrxnGroupID; 
+    typedef uint32_t TrxnGroupID;
     struct SKTableInfo {
         uint32_t skt_id;
         uint64_t next_skt_id;
@@ -166,9 +166,9 @@ namespace insdb {
         uint32_t seq_number;/* Start from 0 */
     };
     static_assert (sizeof(Transaction) == 16, "Invalid Transaction size");
-    struct TrxnGroupRange{ 
+    struct TrxnGroupRange{
         TrxnGroupRange(TrxnGroupID id) : start(id),
-        end(id) { }  
+        end(id) { }
         TrxnGroupRange(TrxnGroupID start_, TrxnGroupID end_) : start(start_), end(end_) { }
         TrxnGroupID start;
         TrxnGroupID end;
@@ -278,7 +278,7 @@ namespace insdb {
         ~TrxnInfo(){
             if(merged_trxn_list){
                 delete [] merged_trxn_list;
-            }    
+            }
         }
         uint8_t GetKeyOffset() {
             return keyoffset;
@@ -441,9 +441,9 @@ namespace insdb {
                         recover_ctx->start_index, recover_ctx->count);
                 recover_ctx->state->mu.Lock();
                 recover_ctx->state->num_running -= 1;
-                recover_ctx->state->mu.Unlock(); 
-            } 
-            static void RecoverSKTableWrapper(void* arg){ 
+                recover_ctx->state->mu.Unlock();
+            }
+            static void RecoverSKTableWrapper(void* arg){
                 (void)pthread_setname_np(pthread_self(), "recover sktable");
                 RecoverSKTableCtx * recover_ctx = reinterpret_cast<RecoverSKTableCtx*>(arg);
                 recover_ctx->recovery->RecoverSKTable(recover_ctx);
@@ -481,8 +481,8 @@ namespace insdb {
             { reinterpret_cast<DBRecoveryThread*>(recovery)->ThreadFn(); }
             void ThreadFn();
 
-            bool StartThread() { 
-                thread_id_ = recovery_->GetEnv()->StartThread(&DBRecoveryThread_, this); 
+            bool StartThread() {
+                thread_id_ = recovery_->GetEnv()->StartThread(&DBRecoveryThread_, this);
                 return thread_id_;
             }
             void JointThread() { if(thread_id_) recovery_->GetEnv()->ThreadJoin(thread_id_); }
@@ -505,14 +505,14 @@ namespace insdb {
     struct KBMHash {
         inline uint32_t operator() (const SequenceNumber& key) noexcept {
             uint64_t tkey = key;
-            tkey = (~tkey) + (tkey << 18); 
-            tkey = tkey ^ (tkey >> 31); 
-            tkey = tkey * 21; 
-            tkey = tkey ^ (tkey >> 11); 
-            tkey = tkey + (tkey << 6); 
-            tkey = tkey ^ (tkey >> 22); 
-            return (uint32_t)tkey; 
-        } 
+            tkey = (~tkey) + (tkey << 18);
+            tkey = tkey ^ (tkey >> 31);
+            tkey = tkey * 21;
+            tkey = tkey ^ (tkey >> 11);
+            tkey = tkey + (tkey << 6);
+            tkey = tkey ^ (tkey >> 22);
+            return (uint32_t)tkey;
+        }
     };
 
 
@@ -533,13 +533,13 @@ namespace insdb {
                 delete buf;
             }
         public:
-            explicit DIOBuffer() { 
+            explicit DIOBuffer() {
                 /* For I/O & decompression */
                 if(pthread_key_create(&key_, DestroyBuffer))
-                    abort(); 
-            } 
+                    abort();
+            }
             ~DIOBuffer(){
-                if (pthread_key_delete(key_)) 
+                if (pthread_key_delete(key_))
                     abort();
             }
             Slice* GetDIOBuffer(uint32_t size) {
@@ -564,7 +564,7 @@ namespace insdb {
     struct IterCurrentKeyInfo{
         int offset;
         std::string key;//To get key from SKTDF
-        /* 
+        /*
          * next key may have same kbpm
          * In this case, we don't need to find the kbpm from hash
          */
@@ -677,7 +677,7 @@ retry:
     struct ColumnScratchPad{
         UserValue* uv;
         uint64_t ikey_seq_num;
-        uint32_t ivalue_size; 
+        uint32_t ivalue_size;
         uint8_t offset;
     };
 
@@ -938,12 +938,12 @@ retry:
              * When assigning new trxn id, the new trxn id must be inserted into uncompleted_trxn_group_.
              * and uncompleted_trxn_group_ must acquire a lock.
              * It is therefore recommended to use non-atomic variable for next_trxn_id_
-             * And during locking, assign a trxn id from the next_trxn_id_. 
+             * And during locking, assign a trxn id from the next_trxn_id_.
              * std::atomic<TransactionID> next_trxn_id_;
              */
             TransactionID next_trxn_id_;
             ////////////////////////////////////////////////////////////////
-            std::atomic<uint32_t> next_sktable_id_; 
+            std::atomic<uint32_t> next_sktable_id_;
             std::atomic<int64_t> mem_use_;
             int64_t mem_use_cached_;
             std::atomic<int64_t> skt_memory_usage_;
@@ -1002,9 +1002,9 @@ retry:
             /*The last Col Info Table key for flush the table before update in-log KBPM in KBMUpdateThread */
             std::atomic<InSDBKey> last_cit_key_;
             /**
-             * Managing all SKTables in order, including fetched and unfetched 
-             * The perpose of this list is 
-             *  1. To find prev SKTable(Backward Round Robin) to flush 
+             * Managing all SKTables in order, including fetched and unfetched
+             * The perpose of this list is
+             *  1. To find prev SKTable(Backward Round Robin) to flush
              *  2. To find the previous SKTable from a empty SKTable
              *  3. To find the next SKTable for merge
              */
@@ -1183,21 +1183,21 @@ retry:
                 }
             }
             void SignalAllWorkerThread(void){ worker_cv_.SignalAll(); }
-            void WaitForWorkerThread(){ 
+            void WaitForWorkerThread(){
                 while(worker_cnt_.load(std::memory_order_relaxed));
             }
-            void WorkerTerminationWaitSig(){ 
+            void WorkerTerminationWaitSig(){
                 worker_termination_mu_.Lock();
                 while(!worker_terminated_.load(std::memory_order_seq_cst)){
                 //while(term_worker_cnt_.load(std::memory_order_seq_cst) != kWriteWorkerCount){
-                    worker_termination_cv_.TimedWait(env_->NowMicros() + 100000/*Wake up every 0.1 second*/); 
+                    worker_termination_cv_.TimedWait(env_->NowMicros() + 100000/*Wake up every 0.1 second*/);
                 }
                 worker_termination_mu_.Unlock();
             }
-            void SignalWorkerTermination(void){ 
+            void SignalWorkerTermination(void){
                 worker_termination_mu_.Lock();
                 worker_terminated_ = true;
-                worker_termination_cv_.SignalAll(); 
+                worker_termination_cv_.SignalAll();
                 worker_termination_mu_.Unlock();
             }
             // pre increament
@@ -1260,7 +1260,7 @@ retry:
             void SetCleanToDirty() { flags_.fetch_or(flags_clean_to_dirty, std::memory_order_relaxed); }
             bool ClearCleanToDirty() { return (((uint8_t)flags_.fetch_and(0x7F/*~flags_clean_to_dirty makes compile warning??*/, std::memory_order_relaxed)) & flags_clean_to_dirty); }
             /////////////////////////////////////////// END  : Status Flags ///////////////////////////////////////////
-            
+
             /////////////////////////////////////////// START: InternalKey/SKTID related functions ///////////////////////////////////////////
 #if 0
             uint64_t GenerateNextInSDBKeySeqNum() { return next_InSDBKey_seq_num_.fetch_add(1, std::memory_order_seq_cst); }
@@ -1293,7 +1293,7 @@ retry:
             SKTableMem* GetFromNode(void *anon_node);
             uint64_t GetEstimateNrSKTable(Slice key);
             /////////////////////////////////////////// END  : SKTableMem Skiplist ///////////////////////////////////////////
-            
+
             /////////////////////////////////////////// START: Manifest/InSDB Creation/Recovery/Initializtion/Deletion ///////////////////////////////////////////
             Status ReadManifest(std::string * contents);
             Status DeleteManifest();
@@ -1325,35 +1325,35 @@ retry:
             Status DeleteInSDBWithManifest(uint16_t column_count);
             Status DeleteInSDB();
             void DeleteSKTable(void *arg);
-            static void DeleteSKTableWrapper(void* arg){ 
+            static void DeleteSKTableWrapper(void* arg){
                 (void)pthread_setname_np(pthread_self(), "delete sktable");
                 DeleteSKTableCtx * delctx = reinterpret_cast<DeleteSKTableCtx*>(arg);
                 delctx->mf->DeleteSKTable(arg);
                 return;
             }
             /* GetValue() return data src information last data_src_info bytes */
-            void SetNormalStart(bool v){ normal_start_ = v;} 
+            void SetNormalStart(bool v){ normal_start_ = v;}
             /////////////////////////////////////////// END  : Manifest Creation/Initializtion/Deletion ///////////////////////////////////////////
 
             /////////////////////////////////////////// START: Sorted list related functions ///////////////////////////////////////////
-            void InsertFrontToSKTableSortedList(SimpleLinkedNode* skt_node) { 
-                skt_sorted_simplelist_lock_.Lock(); 
+            void InsertFrontToSKTableSortedList(SimpleLinkedNode* skt_node) {
+                skt_sorted_simplelist_lock_.Lock();
                 skt_sorted_simplelist_.InsertFront(skt_node);
                 skt_sorted_simplelist_lock_.Unlock();
             }
             void InsertNextToSKTableSortedList(SimpleLinkedNode* new_skt_node, SimpleLinkedNode* base_skt_node)
-            { 
-                skt_sorted_simplelist_lock_.Lock(); 
+            {
+                skt_sorted_simplelist_lock_.Lock();
                 skt_sorted_simplelist_.InsertToNext(new_skt_node, base_skt_node);
                 skt_sorted_simplelist_lock_.Unlock();
             }
-            void RemoveFromSKTableSortedList(SimpleLinkedNode* skt_node){ 
+            void RemoveFromSKTableSortedList(SimpleLinkedNode* skt_node){
                 skt_sorted_simplelist_lock_.Lock();
-                skt_sorted_simplelist_.Delete(skt_node); 
+                skt_sorted_simplelist_.Delete(skt_node);
                 skt_sorted_simplelist_lock_.Unlock();
             }
-            uint64_t GetSKTableCountInSortedList(){ 
-                return skt_sorted_simplelist_.Size(); 
+            uint64_t GetSKTableCountInSortedList(){
+                return skt_sorted_simplelist_.Size();
             }
             SKTableMem* GetSKTableMem(SimpleLinkedNode *node);
 #if 0
@@ -1419,7 +1419,7 @@ retry:
                 }
 #else
                 mem_use_.fetch_add(size, std::memory_order_relaxed);
-#endif 
+#endif
             }
             void DecreaseMemoryUsage(int32_t size){
 #ifdef MEM_TRACE
@@ -1448,7 +1448,7 @@ retry:
                 }
 #else
                 mem_use_.fetch_sub(size, std::memory_order_relaxed);
-#endif 
+#endif
             }
 
             void IncreaseSKTDFNodeSize(int32_t size){
@@ -1642,14 +1642,14 @@ retry:
             void SwapKBPMCacheList(std::list<KeyBlockPrimaryMeta*> &kbpm_list);
 #if 0
             size_t SKTCountInSKTableMemCache(SKTCacheType type);
-            SKTableMem* PopSKTableMem(SKTCacheType type); 
+            SKTableMem* PopSKTableMem(SKTCacheType type);
 #endif
             bool IsSKTDirtyListEmpty(void){ return skt_cache_[kDirtySKTCache].cache.empty();}
             bool IsSKTCleanListEmpty(void){ return skt_cache_[kCleanSKTCache].cache.empty();}
-            bool IsAllSKTCacheListEmpty(void){ 
+            bool IsAllSKTCacheListEmpty(void){
                 for(SKTCacheType t = kDirtySKTCache; t < kNrCacheType ; t++)
                     if(!skt_cache_[t].cache.empty()) return false;
-                return true; 
+                return true;
             }
             bool IsSKTKBMUpdateListEmpty(void){ return kbpm_update_list_.cache.empty();}
             /////////////////////////////////////////// END  : Dirty/KBMUpdate/Clean Cache Management ///////////////////////////////////////////
@@ -1837,7 +1837,7 @@ retry:
             UserKey* FindUserKeyFromHashMap(KeySlice& key);
             bool RemoveUserKeyFromHashMap(KeySlice key);
 
-            UserKey* LookupUserKeyFromFlushedKeyHashMap(const KeySlice &key); 
+            UserKey* LookupUserKeyFromFlushedKeyHashMap(const KeySlice &key);
             bool InsertUserKeyToFlushedKeyHashMap(UserKey* uk);
             bool RemoveUserKeyFromFlushedKeyHashMap(const KeySlice& key);
             void FlushedKeyHashMapFindAndMergeUserKey(UserKey* new_uk);
@@ -1881,7 +1881,7 @@ retry:
             void ResetKBPMHashMap();
             void ResetTrxn();
             /////////////////////////////////////////// END  : UserKey/KBPM/KBML Manageement ///////////////////////////////////////////
-            
+
             /////////////////////////////////////////// START: Transaction(Group) Management ///////////////////////////////////////////
             /* Transaction Management functions */
             bool IsTrxnGroupCompleted(TrxnGroupID tgid);
@@ -2514,7 +2514,7 @@ retry:
 
                 if (size > key_buffer_size_) {
                     sz = size - key_buffer_size_;
-                    alloc_->FreeBuf(key_buffer_, key_buffer_size_ + 1);
+                    alloc_->FreeBuf(key_buffer_, key_buffer_size_);
                     key_buffer_ = static_cast<char*>(alloc_->AllocBuf(size));
                     key_buffer_size_ = size;
                 }
@@ -2547,9 +2547,9 @@ retry:
             void operator=(const UserKey&);
     }/*UserKey */;
 
-    /* 
+    /*
      * Allocate fixed size memory during DB initialization
-     * And then reuse the allocated memory until DB termination 
+     * And then reuse the allocated memory until DB termination
      */
 
 #define COLUMN_NODE_ID_MASK      0x7F
@@ -2582,7 +2582,7 @@ retry:
             /* Mutex lock for loading SKTable Device Format from device(KVSSD) */
             port::Mutex sktdf_load_mu_;                    // 40 Byte
             /* Shared lock for replacing the SKTDF in FlushSKTableMem()
-             * No one can fetch a data from SKTDF during replacing SKTDF 
+             * No one can fetch a data from SKTDF during replacing SKTDF
              */
             //folly::SharedMutex sktdf_update_mu_;
 
@@ -2638,12 +2638,12 @@ retry:
             uint32_t GetCurColInfoID();
 
 #ifdef USE_HASHMAP_RANDOMREAD
-            void SetKeymapNodeSize(uint32_t size, uint32_t hash_data_size) { 
+            void SetKeymapNodeSize(uint32_t size, uint32_t hash_data_size) {
                 keymap_node_size_ = size;
                 keymap_hash_size_ = hash_data_size;
             }
 #else
-            void SetKeymapNodeSize(uint32_t size) { 
+            void SetKeymapNodeSize(uint32_t size) {
                 keymap_node_size_ = size;
             }
 #endif
@@ -2910,8 +2910,8 @@ retry:
 
 #define COL_INFO_TABLE_CRC_LOC 4
     /* 4B(comp size) + 4B(CRC)*/
-#define COL_INFO_TABLE_META 8 
-#define COMP_COL_INFO_TABLE_SIZE 4 
+#define COL_INFO_TABLE_META 8
+#define COMP_COL_INFO_TABLE_SIZE 4
             InSDBKey StoreColInfoTable(Manifest *mf, std::string &col_info_table, std::string &comp_col_info_table);
 #ifdef USE_HASHMAP_RANDOMREAD
             Status StoreKeymap(Manifest *mf, Keymap* sub, uint32_t &io_size, uint32_t &hash_data_size);
@@ -2932,7 +2932,7 @@ retry:
             bool FlushCandidateDequeEmpty() { return flush_candidate_key_deque_.empty();}
 
 
-            void IncSKTRefCnt(Manifest *mf){ 
+            void IncSKTRefCnt(Manifest *mf){
                 uint32_t old = ref_cnt_.fetch_add(1, std::memory_order_relaxed);
 #ifdef REFCNT_SANITY_CHECK
                 if ((old+1)==0) abort();
@@ -2958,7 +2958,7 @@ retry:
 
 #define KEYBLOCK_VALUE_SIZE_SHIFT 11
 #define KEYBLOCK_KEY_SIZE_MASK  0x000007ff
-#define KEYBLOCK_CRC_SIZE       4 
+#define KEYBLOCK_CRC_SIZE       4
 #define KEYBLOCK_COMP_SHIFT     31
 #define KEYBLOCK_COMP_MASK      0x80000000
 #define KEYBLOCK_KB_SIZE_MASK   0x00FFFFFF
@@ -2983,7 +2983,7 @@ retry:
             const static uint8_t flags_prefetched       = 0x02;
             const static uint8_t flags_dummy            = 0x04;
             const static uint8_t flags_evicting         = 0x08;
-            
+
         public:
             KeyBlock(unsigned size, ObjectPoolShard<KeyBlock>* alloc) :
                 kb_ref_cnt_(0), raw_data_size_(0), data_size_(0),
@@ -3065,8 +3065,8 @@ retry:
 #define kOutLogKBMSize 12
     class KeyBlockPrimaryMeta{// 82 Byte = 42 + 40(Mutex)
         private:
-            char *dev_data_; 
-            uint32_t dev_data_size_; 
+            char *dev_data_;
+            uint32_t dev_data_size_;
             std::atomic<uint8_t> flags_;               // 1 Byte
             uint8_t org_key_cnt_;    // 1 Byte
             uint64_t ikey_seq_num_;/* For device write*/            // 8 Byte
@@ -3149,12 +3149,12 @@ retry:
                     if (set_refbits) ref_bitmap_.fetch_or(((uint64_t)(1UL << i)), std::memory_order_relaxed);
                 }
 
-                /* 
+                /*
                  * The initial value of pending_updated_value_cnt_ is 1
                  * It will be decreased after it becomes out-log
                  */
                 pending_updated_value_cnt_.store(1, std::memory_order_relaxed);
-                // Fill KBM Device Format 
+                // Fill KBM Device Format
 #define KB_BITMAP_LOC 4
 #define KB_BITMAP_SIZE 8
 #define KBM_INLOG_FLAG 0x80
@@ -3167,7 +3167,7 @@ retry:
                 dev_data_size_ += 8;
                 for( int i = 0 ; i < put_cnt ; i++){
                     dev_data_size_ = (EncodeVarint64((dev_data_ + dev_data_size_), put_iter_seq_num[i]) - dev_data_);
-                } 
+                }
 #if 0
                 buf = buffer;
                 buffer = EncodeVarint64(buf, ts);
@@ -3227,8 +3227,8 @@ retry:
 
             /* If it is evictable, return true*/
 #if 0
-            bool SetOutLogAndCheckEvicable() { 
-                flags_.fetch_and(~flags_in_log, std::memory_order_seq_cst); 
+            bool SetOutLogAndCheckEvicable() {
+                flags_.fetch_and(~flags_in_log, std::memory_order_seq_cst);
                 return (!ref_cnt_ && !CheckRefBitmap());
             }
 #endif
@@ -3247,7 +3247,7 @@ retry:
             uint64_t CheckRefBitmap(){
                 return ref_bitmap_.load(std::memory_order_seq_cst);
             }
-            bool SetRefBitmap(uint8_t bit_index){ 
+            bool SetRefBitmap(uint8_t bit_index){
                 return ref_bitmap_.fetch_or((uint64_t)(1UL << bit_index), std::memory_order_seq_cst) & ((uint64_t)(1UL << bit_index));
             }
             uint64_t ClearRefBitmap(uint8_t bit_index){
@@ -3270,7 +3270,7 @@ retry:
             ////////////
             /* Hoding Iter functions are Protected by flags_write_protction */
 #if 0
-            void SetKeyBlockBitmap(uint8_t bit_index){ 
+            void SetKeyBlockBitmap(uint8_t bit_index){
                 assert(!IsDummy());
                 kb_bitmap_.fetch_or(1 << bit_index, std::memory_order_seq_cst);
                 ref_bitmap_.fetch_or(1 << bit_index, std::memory_order_seq_cst);
@@ -3350,7 +3350,7 @@ retry:
 #endif
                 if (prefetched) return from_readahead;
                 else if (s.ok()) return true;
-                else return false; 
+                else return false;
             }
             void InitWithDeviceFormat(Manifest  *mf, const char *buffer, uint32_t buffer_size);
             void InitWithDeviceFormatForInLog(Manifest  *mf, char *buffer, uint32_t buffer_size);
@@ -3513,7 +3513,7 @@ retry:
                 return false;
             }
 
-            uint64_t GetNextIKeySeqNum() { 
+            uint64_t GetNextIKeySeqNum() {
                 assert(IsInlog());
                 assert(dev_data_size_ == USE_DEV_DATA_FOR_NEXT_IKEY_SEQ);
                 assert(dev_data_);
@@ -3522,7 +3522,7 @@ retry:
                 dev_data_ = NULL;
                 return next_ikey;
             }
-            uint64_t GetNextIKeySeqNumFromDeviceFormat() { 
+            uint64_t GetNextIKeySeqNumFromDeviceFormat() {
                 uint64_t next_ikey = 0;
                 assert(IsInlog());
                 assert(dev_data_);
@@ -3536,9 +3536,9 @@ retry:
                     free(dev_data_);
                     dev_data_ = nullptr;
                     dev_data_size_ = 0;
-                }  
+                }
                 SetOutLog();
-            }            
+            }
             uint8_t GetNRSCount(){//Number of keys not recorded in table
                 return nrs_key_cnt_.load(std::memory_order_seq_cst);
             }
@@ -3576,7 +3576,7 @@ retry:
 
         KBPM_Cache(const KBPM_Cache&) = delete;
         KBPM_Cache& operator=(const KBPM_Cache&) = delete;
-        
+
         void Insert(SequenceNumber key, KeyBlockPrimaryMeta* kbpm) {
             if (kbpm->IsCache()) return;
             _lock.Lock();
@@ -3650,7 +3650,7 @@ retry:
         size_t insert_count()   const noexcept { return _insert_count; }
         size_t evict_count()    const noexcept { return _evict_count; }
         size_t max_size()       const noexcept { return _max_size; }
-        size_t size()           const noexcept { return _data.size(); } 
+        size_t size()           const noexcept { return _data.size(); }
         bool empty()            const noexcept { return _data.empty(); }
 
 
@@ -3793,7 +3793,7 @@ retry:
                 return nullptr;
             }
             assert(it->second);
-            it->second->SetReference(); 
+            it->second->SetReference();
             _ref_hit_count.fetch_add(1, std::memory_order_relaxed);
             return it->second;
         }
@@ -3928,7 +3928,7 @@ retry:
                  * Lock ColumnNode in RemoveUserValue()
                  * destruct can be called from SKTable flush that has already aquired a lock on a column or a internalkey
                  *
-                 * owner_->RemoveUserValue(); 
+                 * owner_->RemoveUserValue();
                  */
                 if (buf_) {
                     alloc_->FreeBuf(buf_, buf_size_);
@@ -4030,7 +4030,7 @@ retry:
         public:
             ~SnapshotImpl();
 
-            SnapshotImpl(Manifest *mf, SequenceNumber seq, uint64_t cur_time) : 
+            SnapshotImpl(Manifest *mf, SequenceNumber seq, uint64_t cur_time) :
                 mf_(mf), sequence_(seq), cur_time_(cur_time), refcount_(0), snapshot_node_(), mu_(){
                     iterators_.clear();
 #ifdef INSDB_GLOBAL_STATS
@@ -4066,7 +4066,7 @@ retry:
 
 #if 0
     static void RefSnapshot(SnapshotImpl* snap) { snap->IncRefCount(); }
-    static void DerefSnapshot(SnapshotImpl* snap) { 
+    static void DerefSnapshot(SnapshotImpl* snap) {
         if (snap->DisconnectSnapshot())
         {
             delete snap;
@@ -4160,7 +4160,7 @@ retry:
                 start_key_(skey.data(),
                 skey.size()),
                 cur_{0},
-                last_key_(lkey.data(), lkey.size()), 
+                last_key_(lkey.data(), lkey.size()),
                 comparator_(const_cast<Comparator*>(mf_->GetComparator())),
                 last_kb_ikey_seq_(0),
                 prefix_size_(0),
@@ -4171,7 +4171,7 @@ retry:
 
             /*
              * To remove snapshot bind to this iterator, caller must save snpashot pointer by calling GetSnapshot(),
-             * and delete snapshot after delete iterator, 
+             * and delete snapshot after delete iterator,
              */
             ~SnapshotIterator();
 

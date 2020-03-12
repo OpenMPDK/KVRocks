@@ -275,6 +275,10 @@ public:
   virtual bool GetProperty(ColumnFamilyHandle* column_family,
                            const Slice& property, std::string* value) override;
 
+  bool GetMapProperty(ColumnFamilyHandle* column_family,
+                            const Slice& property,
+                            std::map<std::string, double>* value) override;
+
   using DB::GetMapProperty;
   virtual bool GetMapProperty(ColumnFamilyHandle* column_family,
                               const Slice& property,

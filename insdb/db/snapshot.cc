@@ -534,6 +534,7 @@ exit:
         // else get Next/Prev information manually.
         if (prefetch_scanned_queue_.empty()) {
             // Set current iterator context by Keymap
+            iterkey.iter_kb = nullptr;
             SetIterKeyKeymap(skt, key, dir, iterkey);
         } else {
             // get next keymap node from prefetch queue

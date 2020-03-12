@@ -164,6 +164,13 @@ class StackableDB : public DB {
                            const Slice& property, std::string* value) override {
     return db_->GetProperty(column_family, property, value);
   }
+  
+  bool GetMapProperty(ColumnFamilyHandle* column_family,
+                            const Slice& property,
+                            std::map<std::string, double>* value) override {
+    return db_->GetMapProperty(column_family, property, value);
+  }
+  
   virtual bool GetMapProperty(
       ColumnFamilyHandle* column_family, const Slice& property,
       std::map<std::string, std::string>* value) override {

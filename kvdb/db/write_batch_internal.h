@@ -212,13 +212,10 @@ class LocalSavePoint {
 #ifndef NDEBUG
     committed_ = true;
 #endif
-#ifdef _ORIG_ROCKSDB_
-    if (batch_->max_bytes_ && batch_->rep_.size() > batch_->max_bytes_) {
-        batch_->rep_.resize(savepoint_.size);
-#else
+
     if (batch_->max_bytes_ && batch_->GetDataSize() > batch_->max_bytes_) {
         batch_->ResizeData(savepoint_.size);
-#endif
+
       WriteBatchInternal::SetCount(batch_, savepoint_.count);
       batch_->content_flags_.store(savepoint_.content_flags,
                                    std::memory_order_relaxed);

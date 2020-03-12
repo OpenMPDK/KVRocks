@@ -2026,6 +2026,19 @@ bool DBImpl::GetProperty(ColumnFamilyHandle* column_family,
 }
 bool DBImpl::GetMapProperty(ColumnFamilyHandle* column_family,
                     const Slice& property,
+                    std::map<std::string, double>* value)  {
+    if (property.compare(Slice(DB::Properties::kCFStats)) == 0)
+    {
+        // TODO: return real statistics
+    }
+    else
+    {
+        throw std::runtime_error("Not supported API");
+    }
+    return true;
+}
+bool DBImpl::GetMapProperty(ColumnFamilyHandle* column_family,
+                    const Slice& property,
                     std::map<std::string, std::string>* value)  {
     if (property.compare(Slice(DB::Properties::kCFStats)) == 0)
     {

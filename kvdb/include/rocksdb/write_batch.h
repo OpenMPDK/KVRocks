@@ -264,13 +264,6 @@ class WriteBatch : public WriteBatchBase {
   };
   Status Iterate(Handler* handler) const;
 
-#ifdef _ORIG_ROCKSDB_
-  // Retrieve the serialized version of this batch.
-  const std::string& Data() const { return rep_; }
-
-  // Retrieve data size of the batch.
-  size_t GetDataSize() const { return rep_.size(); }
-#else
   // Retrieve the serialized version of this batch.
   const std::string& Data() const;
 
@@ -279,7 +272,6 @@ class WriteBatch : public WriteBatchBase {
 
   // Resize data
   void ResizeData(size_t size) const;
-#endif
 
   // Returns the number of updates in the batch
   int Count() const;
@@ -329,9 +321,7 @@ class WriteBatch : public WriteBatchBase {
 
   void SetMaxBytes(size_t max_bytes) override { max_bytes_ = max_bytes; }
 
-#ifndef _ORIG_ROCKSDB_
   void *WrapperContext() { return wrapper_context; }
-#endif
 
  private:
   friend class WriteBatchInternal;
@@ -353,11 +343,8 @@ class WriteBatch : public WriteBatchBase {
   size_t max_bytes_;
 
  protected:
-#ifdef _ORIG_ROCKSDB_
   std::string rep_;  // See comment in write_batch.cc for the format of rep_
-#else
   void *wrapper_context;
-#endif
 
   // Intentionally copyable
 };

@@ -577,17 +577,36 @@ namespace insdb {
     Status DBImpl::CompactRange(const Slice *begin, const Slice *end, const uint16_t col_id)
     {
         Status s;
-        //Todo: when upper_bound of iter is ok, need to update this
-        //Feat: delete the keys in the range in insdb code
-        const ReadOptions Rop;
-        const WriteOptions Wop;
+        //Feat: delete the keys in the range in insdb code with upper bound
+        ReadOptions Rop;
+        // TODO: We will fix the code later to be exception safe
+        //    ReadOptions Rop{};
+        //    std::unique_ptr<insdb::Slice> iter_upper_bound;
+        //    if (end) {
+        //        iter_upper_bound = std::make_unique(end->data(),end->size());
+        //        Rop.iterator_upper_bound = iter_upper_bound.get();
+        //    }
+        //   Replace the following if(end) block
+        if(end) 
+           Rop.iterator_upper_bound = new insdb::Slice(end->data(),end->size());
+
+        // TODO: Replace the following with
+        //       WriteOptions Wop{};
+        //       std::unique_ptr<Iterater> db_iter{ NewIterator(Rop, col_id) };
+        WriteOptions Wop;
         Iterator* db_iter = NewIterator(Rop, col_id);
-        db_iter->Seek(*begin);
+        if(!begin)
+            db_iter->SeekToFirst();
+        else
+            db_iter->Seek(*begin);
         while(db_iter->Valid()){
             Delete(Wop, db_iter->key());
             db_iter->Next();
         }
+        //TODO: Remove the following 3 lines once RAII code above are implemented
         delete db_iter;
+        if(end)
+           delete Rop.iterator_upper_bound;
 #if 0
 //#if 0
         SequenceNumber sequence = 0;
