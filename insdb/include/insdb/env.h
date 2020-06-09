@@ -54,7 +54,7 @@ namespace insdb {
     enum GetType{
         kSyncGet = 0x1,
         kReadahead = 0x2,
-        kNonblokcingRead = 0x3,
+        kNonblockingRead = 0x3,
     };
     union INSDB_EXPORT InSDBKey {
         struct {
@@ -74,7 +74,7 @@ namespace insdb {
                 };
                 struct{
                     uint32_t meta_word0;
-                    uint32_t meat_word1;
+                    uint32_t meta_word1;
                 };
             };
         };

@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
+#include <sys/sysinfo.h>
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -5464,6 +5465,17 @@ int db_bench_tool(int argc, char** argv) {
     initialized = true;
   }
   ParseCommandLineFlags(&argc, &argv, true);
+  
+  struct sysinfo sinfo;
+  sysinfo(&sinfo);
+  int64_t sys_max_cache_size = (sinfo.totalram * sinfo.mem_unit * 95) / 100;
+  if( FLAGS_max_cache_size > sys_max_cache_size){
+    fprintf(stderr, 
+        "max_cache_size %ld is larger than %%95 of total system memory size as %ld\n",
+        FLAGS_max_cache_size, sys_max_cache_size);
+    exit(1);
+  }
+
   FLAGS_compaction_style_e = (rocksdb::CompactionStyle) FLAGS_compaction_style;
 #ifndef ROCKSDB_LITE
   if (FLAGS_statistics && !FLAGS_statistics_string.empty()) {

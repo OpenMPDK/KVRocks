@@ -285,7 +285,11 @@ SET(SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/util/xxhash.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/utilities/env_mirror.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/utilities/options/options_util.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/cassandra/cassandra_compaction_filter.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/cassandra/format.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/cassandra/merge_operator.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/utilities/checkpoint/checkpoint_impl.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/compaction_filters/remove_emptyvalue_compactionfilter.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/utilities/memory/memory_util.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/utilities/merge_operators/max.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/utilities/merge_operators/put.cc

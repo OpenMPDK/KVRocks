@@ -24,6 +24,8 @@
 #include <limits.h>
 #include <semaphore.h>
 #include <stdint.h>
+#include <sys/sysinfo.h>
+
 //#include <iostream>
 //#include <string>
 #include <unordered_map>
@@ -36,6 +38,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <algorithm>
+#include <bitset>
 #include <boost/lockfree/queue.hpp>
 #include <boost/lockfree/spsc_queue.hpp>
 #include "insdb/db.h"
@@ -844,7 +847,7 @@ retry:
             obj->CleanUp();
             shard->Putlocal(obj);
         }
-
+        
         uint64_t PoolMemStats() {
             uint64_t sum = 0;
 
@@ -1386,8 +1389,26 @@ retry:
             bool MemUseHigh() { return MemUse() > kMaxCacheSize; }
             bool MemUseLow() { return MemUse() < kCacheSizeLowWatermark; }
 
-            bool MemUseHighUpdate() { return MemUseUpdate() > kMaxCacheSize; }
-            bool MemUseLowUpdate() { return MemUseUpdate() < kCacheSizeLowWatermark; }
+            bool MemUseHighUpdate() { 
+                int64_t mem_use = MemUseUpdate();
+                bool rc = false;
+                struct sysinfo info;
+                sysinfo(&info);
+                if((mem_use > kMaxCacheSize) || (((info.freeram * 100 ) / info.totalram) <  10)){
+                    rc = true;
+                } 
+                return rc;
+            }
+            bool MemUseLowUpdate() { 
+                int64_t mem_use = MemUseUpdate();
+                bool rc = false;
+                struct sysinfo info;
+                sysinfo(&info);
+                if((mem_use < kCacheSizeLowWatermark) && (((info.freeram * 100 ) / info.totalram) >=  10)){
+                    rc = true;
+                }
+                return rc;
+            }
 
             int64_t SKTMemoryUsage(){
                 return skt_memory_usage_.load(std::memory_order_relaxed);
@@ -2844,6 +2865,7 @@ retry:
             }
 
             void ChangeStatus(uint8_t from, uint8_t to){
+                if(from && !IsSet(from) && to && IsSet(to)) return;
                 if(from && !IsSet(from)) abort();
                 if(to && IsSet(to)) abort();
                 flags_.fetch_xor((from|to), std::memory_order_relaxed);
@@ -2983,19 +3005,24 @@ retry:
             const static uint8_t flags_prefetched       = 0x02;
             const static uint8_t flags_dummy            = 0x04;
             const static uint8_t flags_evicting         = 0x08;
+			const static uint8_t flags_in_freelist      = 0x10;
 
         public:
             KeyBlock(unsigned size, ObjectPoolShard<KeyBlock>* alloc) :
                 kb_ref_cnt_(0), raw_data_size_(0), data_size_(0),
                 raw_data_(NULL), key_cnt_(0), alloc_(alloc) {}
             ~KeyBlock() {
-                if (raw_data_)
+                if (raw_data_size_ && raw_data_)
                     alloc_->FreeBuf(raw_data_, raw_data_size_);
             }
             void InitKB() {
                 ikey_seq_num_ = 0;
                 kb_ref_cnt_ = 1;
                 flags_ = 0;
+                if (raw_data_size_) {
+                    alloc_->FreeBuf(raw_data_, raw_data_size_);
+                    raw_data_size_ = 0;
+                }
             }
 
             void KeyBlockInit(uint32_t size) {
@@ -3013,6 +3040,10 @@ retry:
 
             void KBLock(){ lock_.Lock(); }
             void KBUnlock(){ lock_.Unlock(); }
+            int KBTryLock(){ return lock_.TryLock(); }
+
+            bool SetKBInFreelist() { return flags_.fetch_or(flags_in_freelist, std::memory_order_seq_cst) & flags_in_freelist; }
+            bool GetKBInFreelist() { return (flags_.load(std::memory_order_seq_cst) & flags_in_freelist); }
 
             bool SetReference() { return (flags_.fetch_or(flags_reference, std::memory_order_relaxed) & flags_reference); }
             bool ClearReference() { return (flags_.fetch_and(~flags_reference, std::memory_order_relaxed) & flags_reference); }
@@ -3060,9 +3091,9 @@ retry:
     };
 
 
-#define NEXT_IKEY_SEQ_LOC 16
+#define NEXT_IKEY_SEQ_LOC (16 + 8)
 #define USE_DEV_DATA_FOR_NEXT_IKEY_SEQ 0x80000000
-#define kOutLogKBMSize 12
+#define kOutLogKBMSize (12 + 8)
     class KeyBlockPrimaryMeta{// 82 Byte = 42 + 40(Mutex)
         private:
             char *dev_data_;
@@ -3071,8 +3102,8 @@ retry:
             uint8_t org_key_cnt_;    // 1 Byte
             uint64_t ikey_seq_num_;/* For device write*/            // 8 Byte
             std::atomic<uint16_t> nrs_key_cnt_;               // 2 Byte
-            std::atomic<uint64_t> kb_bitmap_;                       // 4 Byte
-            std::atomic<uint64_t> ref_bitmap_;                      // 4 Byte
+            std::bitset<128> kb_bitmap_;                       // 16 byte
+            std::bitset<128> ref_bitmap_;                      // 16 Byte
             std::atomic<uint8_t> pending_updated_value_cnt_;                      // 8 Byte
 
             /* lock contention may be low because of fine grained locking. */
@@ -3097,8 +3128,8 @@ retry:
             KeyBlockPrimaryMeta(unsigned size, ObjectPoolShard<KeyBlockPrimaryMeta>* alloc):
                 flags_(0),
                 nrs_key_cnt_(0),
-                kb_bitmap_(0UL),
-                ref_bitmap_(0UL),
+                kb_bitmap_(0),
+                ref_bitmap_(0),
                 org_key_cnt_(0),
                 ikey_seq_num_(0),
                 alloc_(alloc) {}
@@ -3114,14 +3145,14 @@ retry:
                 org_key_cnt_ = orig_keycnt;
                 /* Set bitmap */
                 assert(orig_keycnt <= kMaxRequestPerKeyBlock);
-                kb_bitmap_.store(0UL, std::memory_order_relaxed);
-                ref_bitmap_.store(0UL, std::memory_order_relaxed);
+                kb_bitmap_.reset();
+                ref_bitmap_.reset();
             }
 
             void DummyKBPMInit(uint64_t ikey_seq_num) {
                 nrs_key_cnt_.store(0, std::memory_order_relaxed);
-                kb_bitmap_.store(0UL, std::memory_order_relaxed);
-                ref_bitmap_.store(0UL, std::memory_order_relaxed);
+                kb_bitmap_.reset();//(0UL, std::memory_order_relaxed);
+                ref_bitmap_.reset();//.store(0UL, std::memory_order_relaxed);
                 org_key_cnt_ = 0;
                 pending_updated_value_cnt_ = 0;
                 flags_.store(0, std::memory_order_relaxed);
@@ -3141,12 +3172,12 @@ retry:
                  */
                 nrs_key_cnt_.store(put_cnt + del_cnt + 1, std::memory_order_relaxed);
 
-                kb_bitmap_.store(0UL, std::memory_order_relaxed);
-                ref_bitmap_.store(0UL, std::memory_order_relaxed);
+                kb_bitmap_.reset();//store(0UL, std::memory_order_relaxed);
+                ref_bitmap_.reset();//store(0UL, std::memory_order_relaxed);
                 for(uint8_t i = 0 ; i < put_cnt ; i++){
-                    kb_bitmap_.fetch_or(((uint64_t)(1UL << i)), std::memory_order_relaxed);
+                    kb_bitmap_.set(i, 1);//fetch_or(((uint64_t)(1UL << i)), std::memory_order_relaxed);
                     /* set ref bitmap to prevent removing */
-                    if (set_refbits) ref_bitmap_.fetch_or(((uint64_t)(1UL << i)), std::memory_order_relaxed);
+                    if (set_refbits) ref_bitmap_.set(i, 1);//fetch_or(((uint64_t)(1UL << i)), std::memory_order_relaxed);
                 }
 
                 /*
@@ -3156,12 +3187,15 @@ retry:
                 pending_updated_value_cnt_.store(1, std::memory_order_relaxed);
                 // Fill KBM Device Format
 #define KB_BITMAP_LOC 4
-#define KB_BITMAP_SIZE 8
+#define KB_BITMAP_SIZE 16
 #define KBM_INLOG_FLAG 0x80
                 *dev_data_ = (org_key_cnt_ | KBM_INLOG_FLAG);
                 dev_data_size_ = KB_BITMAP_LOC;// 1 byte for org_key_cnt_ & 3 byte for reserved(GC??)
 
-                EncodeFixed64((dev_data_+dev_data_size_), kb_bitmap_.load(std::memory_order_relaxed));
+                uint64_t bm_h64 = (kb_bitmap_ >> 64).to_ullong();
+                uint64_t bm_l64 = ((kb_bitmap_ << 64) >> 64).to_ullong();
+                EncodeFixed64((dev_data_+dev_data_size_), bm_h64);//kb_bitmap_.load(std::memory_order_relaxed));
+                EncodeFixed64((dev_data_+dev_data_size_ + 8), bm_l64);//kb_bitmap_.load(std::memory_order_relaxed));
                 dev_data_size_ += (KB_BITMAP_SIZE+4/*to save KBM size*/);
                 EncodeFixed64((dev_data_+dev_data_size_), next_ikey_seq_num);
                 dev_data_size_ += 8;
@@ -3245,20 +3279,26 @@ retry:
             uint8_t GetFlag(){ return flags_; }
 
             uint64_t CheckRefBitmap(){
-                return ref_bitmap_.load(std::memory_order_seq_cst);
+                return ref_bitmap_.any();//.load(std::memory_order_seq_cst);
             }
             bool SetRefBitmap(uint8_t bit_index){
-                return ref_bitmap_.fetch_or((uint64_t)(1UL << bit_index), std::memory_order_seq_cst) & ((uint64_t)(1UL << bit_index));
+                bool ret = ref_bitmap_.test(bit_index);
+                ref_bitmap_.set(bit_index, 1);
+                return ret; //ref_bitmap_.fetch_or((uint64_t)(1UL << bit_index), std::memory_order_seq_cst) & ((uint64_t)(1UL << bit_index));
             }
-            uint64_t ClearRefBitmap(uint8_t bit_index){
+            bool ClearRefBitmap(uint8_t bit_index){
 #ifdef CODE_TRACE
                 printf("[%d :: %s]kbpm : %p offset :%d\n", __LINE__, __func__, this, bit_index);
 #endif
-                return (ref_bitmap_.fetch_and(~((uint64_t)(1UL << bit_index)), std::memory_order_seq_cst) & ~((uint64_t)(1UL << bit_index)));
+                ref_bitmap_.reset(bit_index);
+                return ref_bitmap_.any(); //(ref_bitmap_.fetch_and(~((uint64_t)(1UL << bit_index)), std::memory_order_seq_cst) & ~((uint64_t)(1UL << bit_index)));
             }
             bool IsRefBitmapSet(uint8_t bit_index){
-                return (ref_bitmap_.load(std::memory_order_seq_cst) & ((uint64_t)(1UL << bit_index)));
+                return (ref_bitmap_.test(bit_index));
+                //return (ref_bitmap_.load(std::memory_order_seq_cst) & ((uint64_t)(1UL << bit_index)));
             }
+            void Get128bmap(const char * buffer, std::bitset<128>& bitmap);
+            
 #if 0
             void RestoreRefBitmap(uint8_t bit_index){
                 ref_bitmap_.fetch_and(~((1 << bit_index)-1), std::memory_order_seq_cst);
@@ -3278,8 +3318,8 @@ retry:
 #endif
             void ClearKeyBlockBitmap(uint8_t bit_index){
                 assert(!IsDummy());
-                kb_bitmap_.fetch_and(~((uint64_t)(1UL << bit_index)), std::memory_order_seq_cst);
-                ref_bitmap_.fetch_and(~((uint64_t)(1UL << bit_index)), std::memory_order_seq_cst);
+                kb_bitmap_.set(bit_index, 0);//.fetch_and(~((uint64_t)(1UL << bit_index)), std::memory_order_seq_cst);
+                ref_bitmap_.set(bit_index, 0);//fetch_and(~((uint64_t)(1UL << bit_index)), std::memory_order_seq_cst);
             }
             //////////////
             void IncPendingUpdatedValueCnt(){
@@ -3295,11 +3335,11 @@ retry:
                 return pending_updated_value_cnt_.load(std::memory_order_relaxed);
             }
 
-            void OverrideKeyBlockBitmap(uint64_t new_bitmap) {
+            void OverrideKeyBlockBitmap(std::bitset<128> & new_bitmap) {
                 assert(IsDummy());
                 kb_bitmap_ = new_bitmap;
             }
-            uint64_t GetKeyBlockBitmap(){ assert(!IsDummy()); return kb_bitmap_.load(std::memory_order_relaxed); }
+            bool GetKeyBlockBitmap(){ assert(!IsDummy()); return kb_bitmap_.any();/*.load(std::memory_order_relaxed);*/ }
             bool TestKeyBlockBitmap(){
                 assert(!IsDummy());
                 return GetKeyBlockBitmap();
@@ -3309,9 +3349,9 @@ retry:
                 ikey_seq_num_ = ikey_seq_num;
             }
             Slice BuildDeviceFormatKeyBlockMeta(char* kbm_buffer);
-            static const uint32_t max_size = 12;/*The size of out-log KBM is 12 byte*/
+            //static const uint32_t max_size = 12;/*The size of out-log KBM is 12 byte -- hard coded! */
             Status PrefetchKBPM(Manifest *mf) {
-                int size = max_size;
+                int size = kOutLogKBMSize;
 #ifdef TRACE_READ_IO
                 g_kbm_async++;
 #endif
@@ -3330,9 +3370,9 @@ retry:
                 assert(IsDummy());
                 Status s;
                 bool from_readahead = false;
-                /*Always kNonblokcingRead*/
+                /*Always kNonblockingRead*/
                 if(prefetched)
-                    s = mf->GetEnv()->Get(GetKBKey(mf->GetDBHash(), kKBMeta, ikey_seq_num_), kbm_buffer, &buffer_size, kNonblokcingRead, mf->IsIOSizeCheckDisabled()?Env::GetFlag_NoReturnedSize:0, &from_readahead);
+                    s = mf->GetEnv()->Get(GetKBKey(mf->GetDBHash(), kKBMeta, ikey_seq_num_), kbm_buffer, &buffer_size, kNonblockingRead, mf->IsIOSizeCheckDisabled()?Env::GetFlag_NoReturnedSize:0, &from_readahead);
                 else
                     s = mf->GetEnv()->Get(GetKBKey(mf->GetDBHash(), kKBMeta, ikey_seq_num_), kbm_buffer, &buffer_size, kSyncGet, mf->IsIOSizeCheckDisabled()?Env::GetFlag_NoReturnedSize:0, &from_readahead);
 /*
@@ -3354,7 +3394,7 @@ retry:
             }
             void InitWithDeviceFormat(Manifest  *mf, const char *buffer, uint32_t buffer_size);
             void InitWithDeviceFormatForInLog(Manifest  *mf, char *buffer, uint32_t buffer_size);
-            void ClearAllKeyBlockBitmap() { kb_bitmap_ = 0;}
+            void ClearAllKeyBlockBitmap() { kb_bitmap_.reset();}
             char* GetRawData() { return dev_data_; }
             uint32_t GetRawDataSize() { return dev_data_size_; }
             SequenceNumber GetiKeySequenceNumber(){ return ikey_seq_num_; }
@@ -3377,7 +3417,7 @@ retry:
 
             void CleanUp() {
                 assert((flags_.load(std::memory_order_seq_cst)&(~(flags_evicting | flags_dummy))) == 0);
-                kb_bitmap_.store(0UL,std::memory_order_relaxed);
+                kb_bitmap_.reset();//store(0UL,std::memory_order_relaxed);
                 org_key_cnt_ = 0;
            }
 
@@ -3472,7 +3512,7 @@ retry:
 
 
             bool ClearRefBitAndTryEviction(Manifest *mf, uint8_t offset){
-                if(ClearRefBitmap(offset) == 0 && !IsNeedToUpdate() && !IsInlog() && !IsKBMPrefetched()){
+                if(!ClearRefBitmap(offset) && !IsNeedToUpdate() && !IsInlog() && !IsKBMPrefetched()){
                     /* If it is last one */
                     KeyBlock *kb;
 
@@ -3492,7 +3532,7 @@ retry:
                 return false;
             }
             bool ClearRefBitAndTryEviction(Manifest *mf, uint8_t offset, int64_t &reclaim_size){
-                if(ClearRefBitmap(offset) == 0 && !IsNeedToUpdate() && !IsInlog() && !IsKBMPrefetched()){
+                if(!ClearRefBitmap(offset) && !IsNeedToUpdate() && !IsInlog() && !IsKBMPrefetched()){
                     /* If it is last one */
                     KeyBlock *kb;
 
@@ -3596,7 +3636,7 @@ retry:
             if (_cum_size <  _max_size ) return;
             _lock.Lock();
             _data.swap(tmp_data);
-            reclaim_size = _cum_size - _low_bound;
+            reclaim_size = (_cum_size > _low_bound) ? (_cum_size - _low_bound) : ((_cum_size * 20) / 100);
             _lock.Unlock();
 #ifdef CODE_TRACE
             size_t old_count = _evict_count;
@@ -3751,7 +3791,6 @@ retry:
             _cum_size += value->GetSize();
             _lock.Unlock();
         }
-
         KeyBlock* Find(SequenceNumber key)
         {
             auto it = _keys->find(key);
@@ -3761,9 +3800,11 @@ retry:
                 return nullptr;
             }
             assert(it->second);
-            it->second->IncKBRefCnt();
-            it->second->SetReference();
-            _hit_count.fetch_add(1, std::memory_order_relaxed);
+			if(it->second->GetIKeySeqNum() == key){
+				it->second->IncKBRefCnt();
+				it->second->SetReference();
+				_hit_count.fetch_add(1, std::memory_order_relaxed);
+			}
 
             return it->second;
         }
@@ -3804,10 +3845,13 @@ retry:
             KBList  ref_data;
             int64_t evicted_size = 0;
             int64_t reclaim_size = 0;
-            if (_cum_size <  _max_size ) return;
+            struct sysinfo info;
+            sysinfo(&info);
+            if ((_cum_size <  _max_size) && 
+                (((info.freeram * 100) / info.totalram) > 10)) return;
             _lock.Lock();
             _data.swap(tmp_data);
-            reclaim_size = _cum_size - _low_bound;
+            reclaim_size = (_cum_size > _low_bound) ? (_cum_size - _low_bound) : ((_cum_size * 20) / 100);
             _lock.Unlock();
 #ifdef CODE_TRACE
             size_t old_count = _evict_count.load(std::memory_order_relaxed);
@@ -3820,17 +3864,21 @@ retry:
                     ref_data.push_back(std::make_pair(it->first, kb));
                     it = tmp_data.erase(it);
                 } else {
-                    kb->SetEvicting();
-                    mf->ClearKBPad(kb);
-                    _evict_count.fetch_add(1, std::memory_order_relaxed);
-                    evicted_size += kb->GetSize();
-                    reclaim_size -= kb->GetSize();
-                    _keys->erase(it->first);
-                    it = tmp_data.erase(it);
-                    mf->FreeKB(kb);
+                    if (kb->GetIKeySeqNum() == it->first && kb->GetKBRefCnt() == 1) {
+                        kb->SetEvicting();
+                        mf->ClearKBPad(kb);
+                        _evict_count.fetch_add(1, std::memory_order_relaxed);
+                        evicted_size += kb->GetSize();
+                        reclaim_size -= kb->GetSize();
+                        _keys->erase(it->first);
+                        it = tmp_data.erase(it);
+                        mf->FreeKB(kb);
 #ifdef MEM_TRACE
-                    mf->DecKBPM_MEM_Usage(kb->GetSize());
+                        mf->DecKBPM_MEM_Usage(kb->GetSize());
 #endif
+                    } else {
+                        it++;
+                    }
                 }
             }
 #ifdef CODE_TRACE
@@ -4130,7 +4178,13 @@ retry:
         }
         void CleanupKB(Manifest* mf) {
             if (iter_kb) {
-                if (iter_kb->IsDummy()) mf->RemoveDummyKB(iter_kb);
+                if (iter_kb->IsDummy()) {
+                    if(!iter_kb->KBTryLock()) {
+                        if (iter_kb->IsDummy()) mf->RemoveDummyKB(iter_kb);
+                        iter_kb->KBUnlock();
+                    }
+                }
+                //if (iter_kb->IsDummy()) mf->RemoveDummyKB(iter_kb);
                 mf->FreeKB(iter_kb);
             }
         }

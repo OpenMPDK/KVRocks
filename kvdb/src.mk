@@ -111,7 +111,12 @@ LIB_SOURCES =                                                   \
   util/thread_local.cc                                          \
   util/threadpool_imp.cc                                        \
   util/xxhash.cc                                                \
+  utilities/cassandra/cassandra_compaction_filter.cc            \
+  utilities/cassandra/format.cc                                 \
+  utilities/cassandra/merge_operator.cc                         \
+  utilities/cassandra/value_operator.cc                         \
   utilities/checkpoint/checkpoint_impl.cc                       \
+  utilities/compaction_filters/remove_emptyvalue_compactionfilter.cc    \
   utilities/env_mirror.cc                                       \
   utilities/memory/memory_util.cc                               \
   utilities/options/options_util.cc                             \

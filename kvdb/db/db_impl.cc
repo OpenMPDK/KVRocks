@@ -391,7 +391,7 @@ Status ReadVariableString(SequentialFile *file, char * buf, std::string& str)
     status = file->Read(strLength, &slicebuf, strbuf);
     if (!status.ok())
     {
-        delete strbuf;
+        delete [] strbuf;
         return status;
     }
 

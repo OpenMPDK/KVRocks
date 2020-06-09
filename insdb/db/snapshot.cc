@@ -232,7 +232,7 @@ namespace insdb {
                 keymap = skt->GetKeyMap();
                 keymap->IncRefCnt();
                 // load keymap
-                if (!skt->IsKeymapLoaded()) {
+                while (!skt->IsKeymapLoaded()) {
                     if (!non_blocking_) {
                         skt->LoadSKTableDeviceFormat(mf_);
                     }

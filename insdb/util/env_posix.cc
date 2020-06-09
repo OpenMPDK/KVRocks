@@ -298,7 +298,7 @@ class PosixEnv : public Env {
         case kReadahead:
             ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_ASYNC_CMD, &cmd);
             break;
-        case kNonblokcingRead:
+        case kNonblockingRead:
             ret = ioctl(kv_fd_[dev_idx], NVME_IOCTL_KV_NONBLOCKING_READ_CMD, &cmd);
             break;
         default :

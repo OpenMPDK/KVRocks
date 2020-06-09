@@ -2667,7 +2667,7 @@ restart_all_workers:
         if (!s.ok()){
             return 0;
         }
-        if(!from_readahead && req_type == kNonblokcingRead) return 0;
+        if(!from_readahead && req_type == kNonblockingRead) return 0;
 
 #ifdef TRACE_READ_IO
         if (req_type == kSyncGet) {
@@ -2679,7 +2679,7 @@ restart_all_workers:
 
 
 #if 0
-        if(req_type == kNonblokcingRead)
+        if(req_type == kNonblockingRead)
             printf("[ %d : %s ] Success SKT prefetch mechanism\n", __LINE__, __func__);
 #endif
         if (!options_.disable_io_size_check) {
@@ -3715,7 +3715,7 @@ finish_this_worker:
                             kbpm_count++;
                             size = SizeAlignment((kbpm->BuildDeviceFormatKeyBlockMeta(kbpm_io_buf)).size());
                             /*The size must not include the TRXN size*/
-                            assert(size == 12);
+                            assert(size == SizeAlignment(kOutLogKBMSize));
 #ifdef CODE_TRACE
                             printf("[%d :: %s]Actual size : %d\n", __LINE__, __func__,size);
 #endif
@@ -4196,7 +4196,7 @@ finish_this_worker:
                             no_load_for_memory++;
 #endif
                         }else{
-                            loaded_skt = flush_skt->LoadSKTableDeviceFormat(this, skt_force_load?kSyncGet:kNonblokcingRead);
+                            loaded_skt = flush_skt->LoadSKTableDeviceFormat(this, skt_force_load ? kSyncGet : kNonblockingRead);
                             /* it must have been prefetched */
                             assert(!skt_force_load || loaded_skt);
 #ifdef CODE_TRACE
@@ -4403,7 +4403,7 @@ finish_this_worker:
                     kbpm_count = InsertUpdatedKBPMToMap(&kbpm_list, &kbpm_map);
                     assert(kbpm_list.empty());
                 }
-                kbpm_io_actual_size = kbpm_map.size()*12; // 8 = SizeAlignment(kbpm->GetEstimatedBufferSize() : KBPM_HEADER_SIZE);
+                kbpm_io_actual_size = kbpm_map.size() * kOutLogKBMSize; //20; // 8 = SizeAlignment(kbpm->GetEstimatedBufferSize() : KBPM_HEADER_SIZE);
 #endif
 #if 1 /* I/O Buffer Allocation */
                 /* KBPM I/O Buffer Allocation */
@@ -4956,7 +4956,7 @@ finish_this_worker:
                 InSDBKey kbkey = GetKBKey(GetDBHash(), kKBlock, node->GetIKeySeqNum());
                 (GetEnv())->DiscardPrefetch(kbkey);
             }
-            kb_pool_->Put(node);
+            if (!node->SetKBInFreelist()) kb_pool_->Put(node);
         }
     }
     void Manifest::ClearKBPMPad(KeyBlockPrimaryMeta *kbpm)
@@ -5905,20 +5905,23 @@ try_agin:
             kb->SetDummy();
             if (!kb_cache_->InsertHashOnly(key, kb)) {
                 FreeKB(kb);
-                kb = kb_cache_->Find(key);
-                assert(kb);
-                if (kb->IsEvicting()) {
-                    FreeKB(kb);
-                    goto try_agin;
-                }
+				goto try_agin;
+                //kb = kb_cache_->Find(key);
+                //assert(kb);
+                //if (kb->IsEvicting()) {
+                //    FreeKB(kb);
+                //    goto try_agin;
+                //}
             } else {
                 kb->IncKBRefCnt();
             }
         } else {
             if (kb->IsEvicting()) {
-                FreeKB(kb);
+                if (!kb->GetKBInFreelist() && kb->GetIKeySeqNum() == key) FreeKB(kb);
+				//FreeKB(kb);
                 goto try_agin;
             }
+			if (kb->GetIKeySeqNum() != key) goto try_agin;
             if (!kb->IsDummy()) kb_pad_[key%kbpm_pad_size_].store(kb, std::memory_order_relaxed);
         }
         return kb;
@@ -5932,6 +5935,13 @@ try_agin:
     }
 
     void Manifest::DummyKBToActive(SequenceNumber key, KeyBlock *kb) {
+        if (kb->IsEvicting()) {
+            if (!kb_cache_->InsertHashOnly(key, kb)) {  /* fail to insert hash */
+                return;
+            }
+            kb->ClearEvicting();   /* clear eviction flag */
+            kb->IncKBRefCnt();    /* inc ref count */
+        }
         kb->ClearDummy();
         kb_pad_[key%kbpm_pad_size_].store(kb, std::memory_order_relaxed);
         kb_cache_->AppendDataOnly(key, kb);
@@ -6227,7 +6237,7 @@ try_agin:
         uint32_t* offset = reinterpret_cast<uint32_t *>(raw_data_);/* The # of keys (2B) */
         std::vector<ColumnInfo> col_list;
         /* parsing Key Block */
-        assert(nr_key <= 64);
+        assert(nr_key <= kMaxRequestPerKeyBlock);
         for(uint8_t index=0; index < nr_key; index++) {
             uint32_t data_offset = DecodeFixed32((char *)(offset + index));
             bool ttl = data_offset & KEYBLOCK_TTL_MASK; /* get ttl */
@@ -6418,7 +6428,13 @@ try_agin:
     }
 
 
-
+    void KeyBlockPrimaryMeta::Get128bmap(const char * buffer, std::bitset<128>& bitmap)
+    {
+        bitmap.reset();
+        bitmap |= DecodeFixed64(buffer);
+        bitmap <<= 64;
+        bitmap |= DecodeFixed64(buffer + 8);
+    }
 
     void KeyBlockPrimaryMeta::InitWithDeviceFormat(Manifest  *mf, const char *buffer, uint32_t buffer_size) {
 
@@ -6426,9 +6442,11 @@ try_agin:
         org_key_cnt_ = *buffer;
         /* The KBM must be out-log*/
         assert(!(org_key_cnt_ & KBM_INLOG_FLAG));
-        buffer+=KB_BITMAP_LOC;
+        buffer += KB_BITMAP_LOC;
         // bitmap
-        OverrideKeyBlockBitmap(DecodeFixed64(buffer));
+        std::bitset<128> key_bitmap;
+        Get128bmap(buffer, key_bitmap);
+        OverrideKeyBlockBitmap(key_bitmap);
         dev_data_ = NULL; 
         dev_data_size_ = 0; 
         ClearDummy();
@@ -6444,7 +6462,9 @@ try_agin:
         org_key_cnt_ = (*buffer & ~KBM_INLOG_FLAG);
         /* The KBM must be in-log*/
         // bitmap
-        OverrideKeyBlockBitmap(DecodeFixed64(buffer + KB_BITMAP_LOC));
+        std::bitset<128> key_bitmap;
+        Get128bmap((const char *)(buffer+KB_BITMAP_LOC), key_bitmap);
+        OverrideKeyBlockBitmap(key_bitmap);
         dev_data_ = buffer;
         uint32_t kbm_size = *((uint32_t *)(buffer + kOutLogKBMSize));
         assert(kbm_size <= buffer_size);
@@ -6466,10 +6486,16 @@ try_agin:
             dev_data_ = kbm_buffer;
             *dev_data_ = org_key_cnt_;
             /*Skip 3 byte which is reserved for GC info(maybe?)*/
-            EncodeFixed64((dev_data_+KB_BITMAP_LOC), kb_bitmap_.load(std::memory_order_relaxed));
+            
+            uint64_t bm_h64 = (kb_bitmap_ >> 64).to_ullong();
+            uint64_t bm_l64 = ((kb_bitmap_ << 64) >> 64).to_ullong();
+            EncodeFixed64((dev_data_+ KB_BITMAP_LOC), bm_h64);//kb_bitmap_.load(std::memory_order_relaxed));
+            EncodeFixed64((dev_data_+ KB_BITMAP_LOC + 8), bm_l64);//kb_bitmap_.load(std::memory_order_relaxed));
+
+            //EncodeFixed64((dev_data_+KB_BITMAP_LOC), kb_bitmap_.load(std::memory_order_relaxed));
             dev_data_size_ = kOutLogKBMSize ;//org_key_cnt_ + 3 byte(reserved) + kb_bitmap_
-            assert(dev_data_);
-            assert(dev_data_size_ == 12);
+            //assert(dev_data_);
+            //assert(dev_data_size_ == kOutLogKBMSize);
             ret = Slice(dev_data_, SizeAlignment(dev_data_size_));
             dev_data_ = NULL;
             dev_data_size_ = 0;
@@ -6478,7 +6504,7 @@ try_agin:
             /* Most of information has been added to the buffer*/
             *((uint32_t*)(dev_data_ + kOutLogKBMSize)) = dev_data_size_;
             assert(dev_data_);
-            assert(dev_data_size_ >= 12);
+            assert(dev_data_size_ >= kOutLogKBMSize);
             ret = Slice(dev_data_, SizeAlignment(dev_data_size_));
             /* Store next ikey to dev_data */
             dev_data_ = (char*)(*((uint64_t*)(dev_data_+ NEXT_IKEY_SEQ_LOC)));

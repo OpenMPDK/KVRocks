@@ -93,9 +93,9 @@ namespace insdb {
     // The max number of request per Key Block
     // The value must be 64 or less.
     // Ues less count for large Value(ex: "4" for 4KB value (4*4KB = kMaxInternalValueSize)
-    static const uint32_t kMaxRequestPerKeyBlock = 64;
+    static const uint32_t kMaxRequestPerKeyBlock = 126;
     // Max Internal Value(Key Block) Size
-    static const uint32_t kMaxInternalValueSize = 0x4000; // 16KB
+    static const uint32_t kMaxInternalValueSize = 0x10000; // 64KB
     // Max Column Family count
     extern int kMaxColumnCount;
     // Write Worker count

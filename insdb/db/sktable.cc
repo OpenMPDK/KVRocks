@@ -516,7 +516,7 @@ exit:
     /* Return value has two meaning 
      * 1. type == kSyncGet
      *    - The SKTable is in clean or dirty cache
-     * 2. type == kNonblokcingRead
+     * 2. type == kNonblockingRead
      *    - Read success or not
      */
 
@@ -566,15 +566,15 @@ exit:
             }else{ 
                 SKTDFLoadUnlock();
                 /* Fail to read SKTable */
-                if(type != kNonblokcingRead)
+                if(type != kNonblockingRead)
                     abort();
-                /* kNonblokcingRead is only called after prefetch which conducted cache insertion */
+                /* kNonblockingRead is only called after prefetch which conducted cache insertion */
                 return false;
             }
         }else{
             SKTDFLoadUnlock();
         }
-        if(type == kNonblokcingRead && !incache)
+        if(type == kNonblockingRead && !incache)
             abort();
         return incache;
     }
@@ -1128,23 +1128,26 @@ out:
         EncodeFixed32(data, col_info_table_size);
         uint32_t crc = crc32c::Value(data + COL_INFO_TABLE_META, col_info_table_size -COL_INFO_TABLE_META);
         EncodeFixed32(data+COL_INFO_TABLE_CRC_LOC, crc32c::Mask(crc));
+
+        size_t outlen{};
+
 #ifdef HAVE_SNAPPY
         uint32_t size = SizeAlignment(snappy::MaxCompressedLength(col_info_table_size) + COL_INFO_TABLE_META/*comp size & CRC*/);
-        if(comp_col_info_table.size() < size){
+        if (comp_col_info_table.size() < size){
             comp_col_info_table.reserve(size);
         }
         char* comp_buffer = const_cast<char*>(comp_col_info_table.data());
-        size_t outlen = 0;
-        size_t inlen = col_info_table.size();
+
+        size_t inlen{ col_info_table.size() };
         snappy::RawCompress(data, inlen, comp_buffer + COMP_COL_INFO_TABLE_SIZE, &outlen); /* compress data except KEYMAP_HDR */
-        if (outlen < (inlen - (inlen/ 8u))) {
+        if (outlen < (inlen - (inlen / 8u))) {
             data = comp_buffer;
             EncodeFixed32(data, outlen | KEYMAP_COMPRESS);
             outlen = SizeAlignment(outlen + COMP_COL_INFO_TABLE_SIZE);
         } else
 #endif 
         {
-            outlen= SizeAlignment(col_info_table_size);
+            outlen = SizeAlignment(col_info_table_size);
         }
 #if 0
         Slice value(data, outlen);
