@@ -1,0 +1,88 @@
+diff --git a/src/kv/RocksDBStore.cc b/src/kv/RocksDBStore.cc
+index 2343291..ebfee77 100644
+--- a/src/kv/RocksDBStore.cc
++++ b/src/kv/RocksDBStore.cc
+@@ -516,7 +516,11 @@ int RocksDBStore::submit_transaction(KeyValueDB::Transaction t)
+   // considering performance overhead, default is disabled
+   if (g_conf->rocksdb_perf) {
+     rocksdb::SetPerfLevel(rocksdb::PerfLevel::kEnableTimeExceptForMutex);
++#ifdef HAVE_INSDB_KVDB
++    rocksdb::get_perf_context()->Reset();
++#else
+     rocksdb::perf_context.Reset();
++#endif
+   }
+ 
+   RocksDBTransactionImpl * _t =
+@@ -542,14 +546,25 @@ int RocksDBStore::submit_transaction(KeyValueDB::Transaction t)
+     utime_t write_delay_time;
+     utime_t write_wal_time;
+     utime_t write_pre_and_post_process_time;
++#ifdef HAVE_INSDB_KVDB
+     write_wal_time.set_from_double(
+-	static_cast<double>(rocksdb::perf_context.write_wal_time)/1000000000);
++	static_cast<double>(rocksdb::get_perf_context()->write_wal_time)/1000000000);
+     write_memtable_time.set_from_double(
+-	static_cast<double>(rocksdb::perf_context.write_memtable_time)/1000000000);
++	static_cast<double>(rocksdb::get_perf_context()->write_memtable_time)/1000000000);
+     write_delay_time.set_from_double(
+-	static_cast<double>(rocksdb::perf_context.write_delay_time)/1000000000);
++	static_cast<double>(rocksdb::get_perf_context()->write_delay_time)/1000000000);
+     write_pre_and_post_process_time.set_from_double(
+-	static_cast<double>(rocksdb::perf_context.write_pre_and_post_process_time)/1000000000);
++	static_cast<double>(rocksdb::get_perf_context()->write_pre_and_post_process_time)/1000000000);
++#else
++	write_wal_time.set_from_double(
++    static_cast<double>(rocksdb::perf_context.write_wal_time)/1000000000);
++	write_memtable_time.set_from_double(
++    static_cast<double>(rocksdb::perf_context.write_memtable_time)/1000000000);
++	write_delay_time.set_from_double(
++    static_cast<double>(rocksdb::perf_context.write_delay_time)/1000000000);
++	write_pre_and_post_process_time.set_from_double(
++    static_cast<double>(rocksdb::perf_context.write_pre_and_post_process_time)/1000000000);
++#endif
+     logger->tinc(l_rocksdb_write_memtable_time, write_memtable_time);
+     logger->tinc(l_rocksdb_write_delay_time, write_delay_time);
+     logger->tinc(l_rocksdb_write_wal_time, write_wal_time);
+@@ -569,7 +584,11 @@ int RocksDBStore::submit_transaction_sync(KeyValueDB::Transaction t)
+   // considering performance overhead, default is disabled
+   if (g_conf->rocksdb_perf) {
+     rocksdb::SetPerfLevel(rocksdb::PerfLevel::kEnableTimeExceptForMutex);
++#ifdef HAVE_INSDB_KVDB
++    rocksdb::get_perf_context()->Reset();
++#else
+     rocksdb::perf_context.Reset();
++#endif
+   }
+ 
+   RocksDBTransactionImpl * _t =
+@@ -596,14 +615,25 @@ int RocksDBStore::submit_transaction_sync(KeyValueDB::Transaction t)
+     utime_t write_delay_time;
+     utime_t write_wal_time;
+     utime_t write_pre_and_post_process_time;
++#ifdef HAVE_INSDB_KVDB
+     write_wal_time.set_from_double(
+-	static_cast<double>(rocksdb::perf_context.write_wal_time)/1000000000);
++	static_cast<double>(rocksdb::get_perf_context()->write_wal_time)/1000000000);
+     write_memtable_time.set_from_double(
+-	static_cast<double>(rocksdb::perf_context.write_memtable_time)/1000000000);
++	static_cast<double>(rocksdb::get_perf_context()->write_memtable_time)/1000000000);
+     write_delay_time.set_from_double(
+-	static_cast<double>(rocksdb::perf_context.write_delay_time)/1000000000);
++	static_cast<double>(rocksdb::get_perf_context()->write_delay_time)/1000000000);
+     write_pre_and_post_process_time.set_from_double(
+-	static_cast<double>(rocksdb::perf_context.write_pre_and_post_process_time)/1000000000);
++	static_cast<double>(rocksdb::get_perf_context()->write_pre_and_post_process_time)/1000000000);
++#else
++	write_wal_time.set_from_double(
++    static_cast<double>(rocksdb::perf_context.write_wal_time)/1000000000);
++	write_memtable_time.set_from_double(
++    static_cast<double>(rocksdb::perf_context.write_memtable_time)/1000000000);
++	write_delay_time.set_from_double(
++    static_cast<double>(rocksdb::perf_context.write_delay_time)/1000000000);
++	write_pre_and_post_process_time.set_from_double(
++    static_cast<double>(rocksdb::perf_context.write_pre_and_post_process_time)/1000000000);
++#endif
+     logger->tinc(l_rocksdb_write_memtable_time, write_memtable_time);
+     logger->tinc(l_rocksdb_write_delay_time, write_delay_time);
+     logger->tinc(l_rocksdb_write_wal_time, write_wal_time);

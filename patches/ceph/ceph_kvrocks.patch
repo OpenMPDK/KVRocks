@@ -1,0 +1,185 @@
+diff -uprN insdb/db/db_impl.cc insdb_ceph/db/db_impl.cc
+--- insdb/db/db_impl.cc	2020-06-04 17:01:06.406948592 +0800
++++ insdb_ceph/db/db_impl.cc	2020-06-04 16:23:16.421984705 +0800
+@@ -369,7 +369,7 @@ namespace insdb {
+         /* Use per thread memory pool for WriteBatchInternal & initialize it */
+         WriteBatchInternal *handler = GetWBIBuffer(updates->Count(), ttl);
+         updates->Iterate(handler);
+-        mf_->DoCongestionControl();
++//        mf_->DoCongestionControl();
+ #ifdef INSDB_GLOBAL_STATS
+         if(options.ttl)
+             g_api_write_ttl_cnt++;
+diff -uprN insdb/db/insdb_internal.h insdb_ceph/db/insdb_internal.h
+--- insdb/db/insdb_internal.h	2020-06-04 17:01:06.407948592 +0800
++++ insdb_ceph/db/insdb_internal.h	2020-06-04 16:23:16.421984705 +0800
+@@ -2844,6 +2844,7 @@ retry:
+             }
+ 
+             void ChangeStatus(uint8_t from, uint8_t to){
++                if(from && !IsSet(from) && to && IsSet(to)) return;
+                 if(from && !IsSet(from)) abort();
+                 if(to && IsSet(to)) abort();
+                 flags_.fetch_xor((from|to), std::memory_order_relaxed);
+@@ -2983,19 +2984,24 @@ retry:
+             const static uint8_t flags_prefetched       = 0x02;
+             const static uint8_t flags_dummy            = 0x04;
+             const static uint8_t flags_evicting         = 0x08;
++            const static uint8_t flags_in_freelist      = 0x10;
+ 
+         public:
+             KeyBlock(unsigned size, ObjectPoolShard<KeyBlock>* alloc) :
+                 kb_ref_cnt_(0), raw_data_size_(0), data_size_(0),
+                 raw_data_(NULL), key_cnt_(0), alloc_(alloc) {}
+             ~KeyBlock() {
+-                if (raw_data_)
++                if (raw_data_size_ && raw_data_)
+                     alloc_->FreeBuf(raw_data_, raw_data_size_);
+             }
+             void InitKB() {
+                 ikey_seq_num_ = 0;
+                 kb_ref_cnt_ = 1;
+                 flags_ = 0;
++                if (raw_data_size_) {
++                    alloc_->FreeBuf(raw_data_, raw_data_size_);
++                    raw_data_size_ = 0;
++                }
+             }
+ 
+             void KeyBlockInit(uint32_t size) {
+@@ -3014,6 +3020,10 @@ retry:
+             void KBLock(){ lock_.Lock(); }
+             void KBUnlock(){ lock_.Unlock(); }
+ 
++            int  KBTryLock(){ return lock_.TryLock(); } 
++            bool SetKBInFreelist() { return flags_.fetch_or(flags_in_freelist, std::memory_order_seq_cst) & flags_in_freelist; }
++            bool GetKBInFreelist() { return (flags_.load(std::memory_order_seq_cst) & flags_in_freelist); }
++
+             bool SetReference() { return (flags_.fetch_or(flags_reference, std::memory_order_relaxed) & flags_reference); }
+             bool ClearReference() { return (flags_.fetch_and(~flags_reference, std::memory_order_relaxed) & flags_reference); }
+ 
+@@ -3761,10 +3771,11 @@ retry:
+                 return nullptr;
+             }
+             assert(it->second);
+-            it->second->IncKBRefCnt();
+-            it->second->SetReference();
+-            _hit_count.fetch_add(1, std::memory_order_relaxed);
+-
++            if(it->second->GetIKeySeqNum() == key){
++                it->second->IncKBRefCnt();
++                it->second->SetReference();
++                _hit_count.fetch_add(1, std::memory_order_relaxed);
++            }
+             return it->second;
+         }
+ 
+@@ -3820,17 +3831,21 @@ retry:
+                     ref_data.push_back(std::make_pair(it->first, kb));
+                     it = tmp_data.erase(it);
+                 } else {
+-                    kb->SetEvicting();
+-                    mf->ClearKBPad(kb);
+-                    _evict_count.fetch_add(1, std::memory_order_relaxed);
+-                    evicted_size += kb->GetSize();
+-                    reclaim_size -= kb->GetSize();
+-                    _keys->erase(it->first);
+-                    it = tmp_data.erase(it);
+-                    mf->FreeKB(kb);
++                    if (kb->GetIKeySeqNum() == it->first && kb->GetKBRefCnt() == 1) {
++                         kb->SetEvicting();
++                         mf->ClearKBPad(kb);
++                         _evict_count.fetch_add(1, std::memory_order_relaxed);
++                         evicted_size += kb->GetSize();
++                         reclaim_size -= kb->GetSize();
++                         _keys->erase(it->first);
++                         it = tmp_data.erase(it);
++                         mf->FreeKB(kb);
+ #ifdef MEM_TRACE
+-                    mf->DecKBPM_MEM_Usage(kb->GetSize());
++                         mf->DecKBPM_MEM_Usage(kb->GetSize());
+ #endif
++                     } else {
++                         it++;
++                     }
+                 }
+             }
+ #ifdef CODE_TRACE
+@@ -4130,7 +4145,12 @@ retry:
+         }
+         void CleanupKB(Manifest* mf) {
+             if (iter_kb) {
+-                if (iter_kb->IsDummy()) mf->RemoveDummyKB(iter_kb);
++                if (iter_kb->IsDummy()) {
++                    if(!iter_kb->KBTryLock()) {
++                        if (iter_kb->IsDummy()) mf->RemoveDummyKB(iter_kb);
++                        iter_kb->KBUnlock();
++                    }
++                }
+                 mf->FreeKB(iter_kb);
+             }
+         }
+diff -uprN insdb/db/manifest.cc insdb_ceph/db/manifest.cc
+--- insdb/db/manifest.cc	2020-06-04 17:01:06.408948592 +0800
++++ insdb_ceph/db/manifest.cc	2020-06-04 16:23:16.422984705 +0800
+@@ -4956,7 +4956,7 @@ finish_this_worker:
+                 InSDBKey kbkey = GetKBKey(GetDBHash(), kKBlock, node->GetIKeySeqNum());
+                 (GetEnv())->DiscardPrefetch(kbkey);
+             }
+-            kb_pool_->Put(node);
++            if (!node->SetKBInFreelist()) kb_pool_->Put(node);
+         }
+     }
+     void Manifest::ClearKBPMPad(KeyBlockPrimaryMeta *kbpm)
+@@ -5905,20 +5905,22 @@ try_agin:
+             kb->SetDummy();
+             if (!kb_cache_->InsertHashOnly(key, kb)) {
+                 FreeKB(kb);
+-                kb = kb_cache_->Find(key);
++                goto try_agin;
++                /*kb = kb_cache_->Find(key);
+                 assert(kb);
+                 if (kb->IsEvicting()) {
+                     FreeKB(kb);
+                     goto try_agin;
+-                }
++                }*/
+             } else {
+                 kb->IncKBRefCnt();
+             }
+         } else {
+             if (kb->IsEvicting()) {
+-                FreeKB(kb);
++                if (!kb->GetKBInFreelist() && kb->GetIKeySeqNum() == key) FreeKB(kb);
+                 goto try_agin;
+             }
++            if (kb->GetIKeySeqNum() != key) goto try_agin;
+             if (!kb->IsDummy()) kb_pad_[key%kbpm_pad_size_].store(kb, std::memory_order_relaxed);
+         }
+         return kb;
+@@ -5932,6 +5934,13 @@ try_agin:
+     }
+ 
+     void Manifest::DummyKBToActive(SequenceNumber key, KeyBlock *kb) {
++        if (kb->IsEvicting()) {
++            if (!kb_cache_->InsertHashOnly(key, kb)) {  /* fail to insert hash */
++                return;
++            }
++            kb->ClearEvicting();   /* clear eviction flag */
++            kb->IncKBRefCnt();    /* inc ref count */
++        }
+         kb->ClearDummy();
+         kb_pad_[key%kbpm_pad_size_].store(kb, std::memory_order_relaxed);
+         kb_cache_->AppendDataOnly(key, kb);
+diff -uprN insdb/db/snapshot.cc insdb_ceph/db/snapshot.cc
+--- insdb/db/snapshot.cc	2020-06-04 17:01:06.410948592 +0800
++++ insdb_ceph/db/snapshot.cc	2020-06-04 16:23:16.422984705 +0800
+@@ -232,7 +232,7 @@ namespace insdb {
+                 keymap = skt->GetKeyMap();
+                 keymap->IncRefCnt();
+                 // load keymap
+-                if (!skt->IsKeymapLoaded()) {
++                while (!skt->IsKeymapLoaded()) {
+                     if (!non_blocking_) {
+                         skt->LoadSKTableDeviceFormat(mf_);
+                     }
