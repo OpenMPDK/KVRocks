@@ -1726,7 +1726,7 @@ restart_all_workers:
             if (option.split_prefix_bits) kPrefixIdentifierSize = option.split_prefix_bits/8;
             kSlowdownLowWaterMark = kSlowdownTrigger - (kSlowdownTrigger/2);
             /* If total update count exceeds kSKTableFlushWatermark, flush all SKTables */
-            kCacheSizeLowWatermark = (kMaxCacheSize-(kMaxCacheSize/ 8u));
+            kCacheSizeLowWatermark = (kMaxCacheSize-(kMaxCacheSize/ 10u));
 
 
             /* Iter Pad share */ 
@@ -1755,8 +1755,8 @@ restart_all_workers:
             TtlEnabledList_ = new bool[kMaxColumnCount];
             memset(TtlEnabledList_, 0, kMaxColumnCount);
 
-            kb_cache_ = new KBCache((kMaxCacheSize - (kMaxCacheSize/4)));
-            kbpm_cache_ = new KBPM_Cache(1024*1024);
+            kb_cache_ = new KBCache(kMaxCacheSize - (kMaxCacheSize/8));
+            kbpm_cache_ = new KBPM_Cache(kMaxCacheSize - (kMaxCacheSize/8));
 
             /*
              * For New design(packing)
