@@ -1,0 +1,718 @@
+diff -uNr KVRocks-master/insdb/db/dbformat.h KVRocks/insdb/db/dbformat.h
+--- KVRocks-master/insdb/db/dbformat.h	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/insdb/db/dbformat.h	2021-01-16 05:29:33.391601879 -0500
+@@ -66,6 +66,11 @@
+         kTypeDeletion = 0x0,
+         kTypeValue = 0x1,
+         kTypeMerge = 0x2,
++#ifndef VARTOFIXOPT
++        kTypeLogData = 0x3,  
++        kTypeSingleDeletion = 0x7,
++#endif
++        
+     };
+     // kValueTypeForSeek defines the ValueType that should be passed when
+     // constructing a ParsedInternalKey object for seeking to a particular
+diff -uNr KVRocks-master/insdb/db/insdb_internal.h KVRocks/insdb/db/insdb_internal.h
+--- KVRocks-master/insdb/db/insdb_internal.h	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/insdb/db/insdb_internal.h	2021-01-16 05:29:33.391601879 -0500
+@@ -4278,7 +4278,8 @@
+                 if (start_key_.size() != 0 || last_key_.size() != 0) return true;
+                 return false;
+             }
+-            bool IsValidKeyRange(const Slice& key);
++            bool IsValidLastKeyRange(const Slice& key);
++            bool IsValidStartKeyRange(const Slice& key);
+             int Compare(const Slice& a, const Slice& b);
+             Manifest* mf_;
+             SnapshotImpl * snap_;
+diff -uNr KVRocks-master/insdb/db/snapshot.cc KVRocks/insdb/db/snapshot.cc
+--- KVRocks-master/insdb/db/snapshot.cc	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/insdb/db/snapshot.cc	2021-01-16 05:29:33.391601879 -0500
+@@ -46,13 +46,27 @@
+ 
+     Iterator* SnapshotImpl::CreateNewIterator(uint16_t col_id, const ReadOptions options) {
+         SnapshotIterator* iter;
+-        if (options.iterator_upper_bound != NULL) {
+-            Slice target(options.iterator_upper_bound->data(),
+-                          options.iterator_upper_bound->size());
+-            iter = new SnapshotIterator(mf_, this, col_id, options.read_tier == kBlockCacheTier, target);
+-        } else {
++        if (options.iterator_upper_bound == NULL &&
++            options.iterator_lower_bound == NULL) {
+             iter = new SnapshotIterator(mf_, this, col_id, options.read_tier == kBlockCacheTier);
++        } else if (options.iterator_upper_bound != NULL &&
++                 options.iterator_lower_bound == NULL) {
++            Slice last_key_target(options.iterator_upper_bound->data(),
++                                  options.iterator_upper_bound->size());
++            iter = new SnapshotIterator(mf_, this, col_id, options.read_tier == kBlockCacheTier, last_key_target);
++        } else if (options.iterator_upper_bound == NULL &&
++                 options.iterator_lower_bound != NULL) {
++            Slice start_key_target(options.iterator_lower_bound->data(),
++                                  options.iterator_lower_bound->size());
++            iter = new SnapshotIterator(mf_, this, col_id, options.read_tier == kBlockCacheTier, 0, start_key_target);
++        } else {
++            Slice last_key_target(options.iterator_upper_bound->data(),
++                                  options.iterator_upper_bound->size());
++            Slice start_key_target(options.iterator_lower_bound->data(),
++                                  options.iterator_lower_bound->size());
++            iter = new SnapshotIterator(mf_, this, col_id, options.read_tier == kBlockCacheTier, last_key_target, start_key_target);
+         }
++
+         mu_.Lock();
+         iterators_.push_back(iter);
+         mu_.Unlock();
+@@ -76,12 +90,16 @@
+         return comparator_->Compare(a, b);
+     }
+ 
+-    bool SnapshotIterator::IsValidKeyRange(const Slice& key) {
+-        if (start_key_.size() && Compare(key, start_key_) < 0) return false;
++    bool SnapshotIterator::IsValidLastKeyRange(const Slice& key) {
+         if (last_key_.size() && Compare(key, last_key_) >= 0) return false;
+         return true;
+     }
+ 
++    bool SnapshotIterator::IsValidStartKeyRange(const Slice& key) {
++        if (start_key_.size() && Compare(key, start_key_) < 0) return false;
++        return true;
++    }
++
+     bool SnapshotIterator::Valid() const {
+         return (cur_.keyhandle != 0);
+     }
+@@ -148,7 +166,7 @@
+                 }
+             }
+             // validate range
+-            if (!IsValidKeyRange(iterkey.userkey_buff)) {
++            if (!IsValidStartKeyRange(iterkey.userkey_buff) || !IsValidLastKeyRange(iterkey.userkey_buff)) {
+                 stop = true;
+                 break;
+             }
+@@ -232,7 +250,7 @@
+                 keymap = skt->GetKeyMap();
+                 keymap->IncRefCnt();
+                 // load keymap
+-                while (!skt->IsKeymapLoaded()) {
++                if (!skt->IsKeymapLoaded()) {
+                     if (!non_blocking_) {
+                         skt->LoadSKTableDeviceFormat(mf_);
+                     }
+@@ -338,14 +356,23 @@
+             default:
+                 abort();
+             }
++            // Feat: iter lower bound function
++            if (keyhandle && start_key_.size() && !IsValidStartKeyRange(keymap->GetKeySlice(keyhandle))) {
++                if ((dir == kSeekLast) || (dir == kPrev))
++                    keyhandle = 0;
++                else
++                    goto move_to_another_key;
++            }
++            // end      
+             // Feat: iter upper bound function
+-            if (keyhandle && last_key_.size() && !IsValidKeyRange(keymap->GetKeySlice(keyhandle))) {
++            if (keyhandle && last_key_.size() && !IsValidLastKeyRange(keymap->GetKeySlice(keyhandle))) {
+                 if (dir == kNext)
+                     keyhandle = 0;
+                 else
+                     goto move_to_another_key;
+             }
+             // end
++
+             // get another skt if a key is not found
+             if (!keyhandle) {
+ another_skt:
+@@ -497,6 +524,12 @@
+     }
+ 
+     void SnapshotIterator::SetIterKey(SKTableMem *skt, const Slice *key, SeekDirection dir, IterKey& iterkey) {
++        // Feat: Support tailing iterator
++        if (snap_->GetSequenceNumber() == ULONG_MAX) {
++            iterkey.iter_kb = nullptr;
++            iterkey.CleanupSkt();
++        }
++        // Feat end
+         UserValue *prior_uv = nullptr;
+ 
+         // clean up current userkey and value
+@@ -556,7 +589,10 @@
+ 
+     void SnapshotIterator::Seek(const Slice& key) {
+         Slice target_key(key);
+-        if (!IsValidKeyRange(key)) {
++        if (!IsValidStartKeyRange(key)) {
++            target_key = Slice(start_key_);
++        }
++        if (!IsValidLastKeyRange(key)) {
+             target_key = Slice(last_key_);
+         }
+         ResetPrefetch();
+@@ -578,7 +614,10 @@
+ 
+     void SnapshotIterator::SeekForPrev(const Slice& key) {
+         Slice target_key(key);
+-        if (!IsValidKeyRange(key)) {
++        if (!IsValidStartKeyRange(key)) {
++            target_key = Slice(start_key_);
++        }
++        if (!IsValidLastKeyRange(key)) {
+             target_key = Slice(last_key_);
+         }
+         ResetPrefetch();
+diff -uNr KVRocks-master/insdb/db/write_batch.cc KVRocks/insdb/db/write_batch.cc
+--- KVRocks-master/insdb/db/write_batch.cc	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/insdb/db/write_batch.cc	2021-01-16 05:29:33.391601879 -0500
+@@ -45,6 +45,12 @@
+         Clear();
+     }
+ 
++    WriteBatch::WriteBatch(const std::string& rep)
++    : rep_(rep) {
++           rep_ = std::string(rep_.data()+ 8, rep_.size() - 8);
++    }
++    
++    
+     WriteBatch::~WriteBatch() { }
+ 
+     WriteBatch::Handler::~Handler() { }
+@@ -91,7 +97,7 @@
+ 
+     }
+ 
+-#define VARTOFIXOPT
++//#define VARTOFIXOPT
+     Status WriteBatch::Iterate(Handler* handler){
+         Slice input(rep_);
+         if (input.size() < kHeader) {
+@@ -166,6 +172,19 @@
+                     }
+ #endif
+                     break;
++#ifndef VARTOFIXOPT
++                case kTypeSingleDeletion:
++                    col_id=DecodeFixed16(input.data());
++                    input.remove_prefix(2);
++                    handler->Delete(key, col_id);
++                    if (GetLengthPrefixedSlice(&input, &key) &&
++                            GetVarint16(&input, &col_id)) {
++                        handler->Delete(key, col_id);
++                    } else {
++                        return Status::Corruption("bad WriteBatch Delete");
++                    }
++                    break;
++#endif
+                 case kTypeDeletion:
+ #ifdef VARTOFIXOPT
+                     col_id=DecodeFixed16(input.data());
+@@ -173,13 +192,18 @@
+                     handler->Delete(key, col_id);
+ #else
+                     if (GetLengthPrefixedSlice(&input, &key) &&
+-                            GetVarint16(&input, &col_id)) {
++                            GetVarint16(&input, &col_id)) { 
+                         handler->Delete(key, col_id);
+                     } else {
+                         return Status::Corruption("bad WriteBatch Delete");
+                     }
+ #endif
+                     break;
++#ifndef VARTOFIXOPT
++                case kTypeLogData:
++                    break;
++#endif
++                    
+                 default:
+                     return Status::Corruption("unknown WriteBatch tag");
+             }
+@@ -401,7 +425,7 @@
+ 
+        col_node->NewColumnInit(uk, type, col_id, (mf_->TtlIsEnabled(col_id)?ttl_:0), seq, (value.size() + key.size() + 1/*Col id*/)/*To estimate col info size*/);
+ 
+-#ifdef CODE_TRACE
++
+        if (type == kPutType) {
+            printf("PUT: key size(%ld) sequence(%ld) : uk(%p) key(%s) : key:(%s)\tvalue:%s\n",
+                    key.size(), col_node->GetBeginSequenceNumber(),
+@@ -414,7 +438,6 @@
+                    uk, EscapeString(uk->GetKeySlice()).c_str(),
+                    EscapeString(key).c_str());
+        }
+-#endif
+ 
+        /* 
+         * Last request in a TRXN should be written to the device regardless of its status 
+diff -uNr KVRocks-master/insdb/include/insdb/options.h KVRocks/insdb/include/insdb/options.h
+--- KVRocks-master/insdb/include/insdb/options.h	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/insdb/include/insdb/options.h	2021-01-16 05:29:33.391601879 -0500
+@@ -390,19 +390,23 @@
+         // Default: NULL
+         const Snapshot* snapshot;
+ 
+-		const Slice *iterator_upper_bound;
+-
++        const Slice *iterator_upper_bound;
++        const Slice *iterator_lower_bound;
+         // Fix bug: value should not be get before flush with kPersistedTier
+         // Add option check to skip memtable
+         ReadTier read_tier;
+-
++        // Feat: Support tailing iterator
++        bool tailing;
+         ReadOptions()
+             : verify_checksums(false),
+             fill_cache(true),
+             snapshot(NULL),
+-			iterator_upper_bound(NULL),
+-            read_tier(kReadAllTier) {
++            iterator_upper_bound(NULL),
++            iterator_lower_bound(NULL),
++            read_tier(kReadAllTier),
++            tailing(false) {
+             }
++        // Feat end
+     };
+ 
+     // Options that control write operations
+diff -uNr KVRocks-master/insdb/include/insdb/write_batch.h KVRocks/insdb/include/insdb/write_batch.h
+--- KVRocks-master/insdb/include/insdb/write_batch.h	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/insdb/include/insdb/write_batch.h	2021-01-16 05:29:33.391601879 -0500
+@@ -59,6 +59,8 @@
+     class INSDB_EXPORT WriteBatch {
+         public:
+             WriteBatch();
++            WriteBatch(const std::string& rep);
++            
+             ~WriteBatch();
+ 
+             // Store the mapping "key->value" in the database.
+diff -uNr KVRocks-master/kvdb/CMakeLists.txt KVRocks/kvdb/CMakeLists.txt
+--- KVRocks-master/kvdb/CMakeLists.txt	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/kvdb/CMakeLists.txt	2021-01-16 05:29:33.423601877 -0500
+@@ -285,11 +285,11 @@
+     ${CMAKE_CURRENT_SOURCE_DIR}/util/xxhash.cc
+     ${CMAKE_CURRENT_SOURCE_DIR}/utilities/env_mirror.cc
+     ${CMAKE_CURRENT_SOURCE_DIR}/utilities/options/options_util.cc
+-    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/cassandra/cassandra_compaction_filter.cc
+-    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/cassandra/format.cc
+-    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/cassandra/merge_operator.cc
++#    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/cassandra/cassandra_compaction_filter.cc
++#    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/cassandra/format.cc
++#    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/cassandra/merge_operator.cc
+     ${CMAKE_CURRENT_SOURCE_DIR}/utilities/checkpoint/checkpoint_impl.cc
+-    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/compaction_filters/remove_emptyvalue_compactionfilter.cc
++#    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/compaction_filters/remove_emptyvalue_compactionfilter.cc
+     ${CMAKE_CURRENT_SOURCE_DIR}/utilities/memory/memory_util.cc
+     ${CMAKE_CURRENT_SOURCE_DIR}/utilities/merge_operators/max.cc
+     ${CMAKE_CURRENT_SOURCE_DIR}/utilities/merge_operators/put.cc
+diff -uNr KVRocks-master/kvdb/db/db_iter.cc KVRocks/kvdb/db/db_iter.cc
+--- KVRocks-master/kvdb/db/db_iter.cc	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/kvdb/db/db_iter.cc	2021-01-16 05:29:33.423601877 -0500
+@@ -25,41 +25,55 @@
+ }
+ 
+ void IteratorImpl::SeekToFirst() {
+-    insdb_iterator->SeekToFirst();
+-
+-	// fix:prefix bug
+-    start_key_buf_ = new char[key().size()];
+-    memcpy(start_key_buf_, key().data(), key().size());
+-    Slice start_key(start_key_buf_);
++    // Feat: support reverse comparator
++    if (reverse)
++        insdb_iterator->SeekToLast();
++    else
++        insdb_iterator->SeekToFirst();
++    // Feat end
++
++ // fix:prefix bug
++ if (start_key_buf_ == NULL) {
++      start_key_buf_ = new char[key().size()];
++      memcpy(start_key_buf_, key().data(), key().size());
++    }
++ Slice start_key(start_key_buf_);
+     // end
+     // Feat: Iterator prefix seek
+     // Find the first key as prefix target key
+     if (insdb_iterator->Valid() && prefix_extractor_ &&
+         prefix_same_as_start_) {
+-      prefix_start_key_ = prefix_extractor_->Transform(start_key);
++      prefix_.SetUserKey(prefix_extractor_->Transform(start_key));
+     }
+     // end
+ }
+ 
+ void IteratorImpl::SeekToLast() {
+-    insdb_iterator->SeekToLast();
++    // Feat: support reverse comparator
++    if (reverse)
++        insdb_iterator->SeekToFirst();
++    else
++        insdb_iterator->SeekToLast();
++    // Feat end
+ 
+     // Feat: Iterator prefix seek
+     // If find the last key is larger than prefix key, then return valid
+     if (insdb_iterator->Valid() && prefix_extractor_ &&
+         prefix_same_as_start_ &&
+-        prefix_extractor_->Transform(key()).compare(prefix_start_key_) != 0) {
++        prefix_extractor_->Transform(key()).compare(prefix_.GetUserKey()) != 0) {
+         valid_ = false;
+         return;
+     }
+ 
+     if (insdb_iterator->Valid() && prefix_extractor_ && prefix_same_as_start_) {
+-	    // fix: prefix bug
+-        last_key_buf_ = new char[key().size()];
+-        memcpy(last_key_buf_, key().data(), key().size());
++     // fix: prefix bug
++     if (last_key_buf_ == NULL) {
++          last_key_buf_ = new char[key().size()];
++          memcpy(last_key_buf_, key().data(), key().size());
++     }
+         Slice last_key(last_key_buf_);
+-		// end
+-        prefix_start_key_ = prefix_extractor_->Transform(last_key);
++  // end
++        prefix_.SetUserKey(prefix_extractor_->Transform(last_key));
+     }
+     // end
+ }
+@@ -69,19 +83,22 @@
+   log_iotrace("SEEK IN ITERATOR", 0, target.data(), target.size(), 0);
+ #endif
+     insdb::Slice insdb_target(target.data(), target.size());
+-    insdb_iterator->Seek(insdb_target);
++    // Feat: support reverse comparator
++    if (reverse)
++        insdb_iterator->SeekForPrev(insdb_target);
++    else
++        insdb_iterator->Seek(insdb_target);
++    // Feat end
+ 
+     // Feat: Iterator prefix seek
+     if (insdb_iterator->Valid() && prefix_extractor_ && prefix_same_as_start_) {
+-      prefix_start_key_ = prefix_extractor_->Transform(target);
+-    }
+-
+-    // iterator prefix function
+-    if (Valid() && prefix_extractor_ && prefix_same_as_start_ &&
+-        prefix_extractor_->Transform(key()).compare(prefix_start_key_) != 0) {
+-      valid_ = false;
+-      prefix_start_key_.clear();
+-      return;
++   Slice target_prefix = prefix_extractor_->Transform(target);
++   if (prefix_extractor_->Transform(key()).compare(target_prefix) != 0) {
++        valid_ = false;
++  return;
++   } else {
++        prefix_.SetUserKey(target_prefix);
++   }
+     }
+     // end
+ }
+@@ -91,44 +108,58 @@
+   log_iotrace("SEEK FOR PREV IN ITERATOR", 0, target.data(), target.size(), 0);
+ #endif
+     insdb::Slice insdb_target(target.data(), target.size());
+-    insdb_iterator->SeekForPrev(insdb_target);
++    // Feat: support reverse comparator
++    if (reverse)
++        insdb_iterator->Seek(insdb_target);
++    else
++        insdb_iterator->SeekForPrev(insdb_target);
++    // Feat end
+ 
+     // Feat: iterator prefix function
+     if (insdb_iterator->Valid() && prefix_extractor_ && prefix_same_as_start_) {
+-      prefix_start_key_ = prefix_extractor_->Transform(target);
+-    }
+-
+-    if (insdb_iterator->Valid() && prefix_extractor_ && prefix_same_as_start_ &&
+-        prefix_extractor_->Transform(key()).compare(prefix_start_key_) != 0) {
+-      valid_ = false;
+-      prefix_start_key_.clear();
+-      return;
++      Slice target_prefix = prefix_extractor_->Transform(target);
++      if (prefix_extractor_->Transform(key()).compare(target_prefix) != 0) {
++    valid_ = false;
++        return;
++      } else {
++     prefix_.SetUserKey(target_prefix);
++      }
+     }
+     // end
+ }
+ 
+ void IteratorImpl::Next() {
+     assert(valid_);
+-    insdb_iterator->Next();
++    // Feat: support reverse comparator
++    if (reverse)
++        insdb_iterator->Prev();
++    else
++        insdb_iterator->Next();
++    // Feat end
+ 
+     // Feat: iterator prefix function
+-    if (insdb_iterator->Valid() && prefix_extractor_ &&
+-        prefix_same_as_start_ &&
+-        prefix_extractor_->Transform(key()).compare(prefix_start_key_) != 0) {
+-      valid_ = false;
++    if (insdb_iterator->Valid() && prefix_extractor_ && prefix_same_as_start_) { 
++      Slice prefix = prefix_.GetUserKey();
++      if (prefix_extractor_->Transform(key()).compare(prefix) != 0)
++        valid_ = false;
+     }
+     return;
+ }
+ 
+ void IteratorImpl::Prev() {
+     assert(valid_);
+-    insdb_iterator->Prev();
++    // Feat: support reverse comparator
++    if (reverse)
++        insdb_iterator->Next();
++    else
++        insdb_iterator->Prev();
++    // Feat end
+ 
+     // Feat: iterator prefix function
+-    if (insdb_iterator->Valid() && prefix_extractor_ &&
+-        prefix_same_as_start_ &&
+-          prefix_extractor_->Transform(key()).compare(prefix_start_key_) != 0) {
+-      valid_ = false;
++    if (insdb_iterator->Valid() && prefix_extractor_ && prefix_same_as_start_) {
++      Slice prefix = prefix_.GetUserKey();
++   if (prefix_extractor_->Transform(key()).compare(prefix) != 0)
++        valid_ = false;
+     }
+     return;
+ }
+@@ -138,19 +169,19 @@
+   log_iotrace("KEY IN ITERATOR", 0, insdb_iterator->key().data(), insdb_iterator->key().size(), 0);
+ #endif
+     insdb::Slice key = insdb_iterator->key();
+-	return Slice(key.data(), key.size());
++    return Slice(key.data(), key.size());
+ }
+ 
+ Slice IteratorImpl::value() const {
+ #ifdef KVDB_ENABLE_IOTRACE
+-  log_iotrace("VALUE IN ITERATOR", 0, insdb_iterator->key().data(), insdb_iterator->key().size(), insdb_iterator->value().size());
++  log_iotrace("VALUE IN ITERATOR", 0, insdb_iterator->key().data(), insdb_iterator->key().size(), insdb_iterator->value().size(), insdb_iterator->value().data());
+ #endif
+     insdb::Slice value = insdb_iterator->value();
+     return Slice(value.data(), value.size());
+ }
+ 
+ Status IteratorImpl::status() const {
+-	return convert_insdb_status(insdb_iterator->status());
++    return convert_insdb_status(insdb_iterator->status());
+ }
+ 
+ }  // namespace rocksdb
+diff -uNr KVRocks-master/kvdb/db/db_iter.h KVRocks/kvdb/db/db_iter.h
+--- KVRocks-master/kvdb/db/db_iter.h	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/kvdb/db/db_iter.h	2021-01-16 05:29:33.423601877 -0500
+@@ -38,22 +38,24 @@
+     : insdb_iterator(iterator),
+     valid_(true),
+     prefix_same_as_start_(read_options.prefix_same_as_start),
+-    prefix_start_key_() {
++    // Feat: support reverse comparator
++    reverse(!strncmp(column_family->GetComparator()->Name(), "rev:", 4) ? true : false) {
++    // Feat end
+       auto cfh = reinterpret_cast<ColumnFamilyHandleImpl*>(column_family);
+       auto cfd = cfh->cfd();
+       prefix_extractor_ = cfd->ioptions()->prefix_extractor;
+-	  start_key_buf_ = NULL;
+-	  last_key_buf_ = NULL;
++   start_key_buf_ = NULL;
++   last_key_buf_ = NULL;
+     }
+     // end
+ 
+   ~IteratorImpl() {
+     delete insdb_iterator;
+     prefix_extractor_ = NULL;
+-	if (start_key_buf_)
+-		delete[] start_key_buf_;
+-	if (last_key_buf_)
+-		delete[] last_key_buf_;
++ if (start_key_buf_)
++  delete[] start_key_buf_;
++ if (last_key_buf_)
++  delete[] last_key_buf_;
+   }
+ 
+   virtual bool Valid() const override;
+@@ -73,9 +75,12 @@
+   bool valid_;
+   const SliceTransform* prefix_extractor_;
+   const bool prefix_same_as_start_;
+-  Slice prefix_start_key_;
++  // Feat: support reverse comparator
++  bool reverse;
++  // Feat end
+   char *start_key_buf_;
+   char *last_key_buf_;
++  IterKey prefix_;
+   // end
+ };
+ 
+diff -uNr KVRocks-master/kvdb/db/insdb_wrapper.cc KVRocks/kvdb/db/insdb_wrapper.cc
+--- KVRocks-master/kvdb/db/insdb_wrapper.cc	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/kvdb/db/insdb_wrapper.cc	2021-01-16 05:29:33.423601877 -0500
+@@ -95,6 +95,9 @@
+     insdb::ReadOptions insdb_read_options;
+     insdb_read_options.verify_checksums = read_options.verify_checksums;
+     insdb_read_options.fill_cache = read_options.fill_cache;
++    // Feat: Support tailing iterator
++    insdb_read_options.tailing = read_options.tailing;
++    // Feat end
+     // Feat:iter upper bound function
+     if (read_options.iterate_upper_bound != nullptr) {
+       insdb_read_options.iterator_upper_bound =
+@@ -102,6 +105,15 @@
+       read_options.iterate_upper_bound->size());
+     }
+     // end
++
++    // Feat:iter lower bound function
++    if (read_options.iterate_lower_bound != nullptr) {
++      insdb_read_options.iterator_lower_bound =
++      new insdb::Slice(read_options.iterate_lower_bound->data(),
++      read_options.iterate_lower_bound->size());
++    }
++    // end
++
+     // Fix bug: value should not be get before flush with kPersistedTier
+     // Add option check to skip memtable
+     if (read_options.read_tier == kBlockCacheTier)
+diff -uNr KVRocks-master/kvdb/db/write_batch.cc KVRocks/kvdb/db/write_batch.cc
+--- KVRocks-master/kvdb/db/write_batch.cc	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/kvdb/db/write_batch.cc	2021-01-16 05:29:33.423601877 -0500
+@@ -137,9 +137,9 @@
+ 
+ WriteBatch::WriteBatch(const std::string& rep)
+     : save_points_(nullptr),
+-      content_flags_(ContentFlags::DEFERRED) {
+-
+-    wrapper_context = new insdb::WriteBatch();
++      content_flags_(ContentFlags::DEFERRED),
++      rep_(rep) {
++    wrapper_context = new insdb::WriteBatch(rep);
+ }
+ 
+ WriteBatch::WriteBatch(const WriteBatch& src)
+diff -uNr KVRocks-master/kvdb/include/rocksdb/kvdb_config.h KVRocks/kvdb/include/rocksdb/kvdb_config.h
+--- KVRocks-master/kvdb/include/rocksdb/kvdb_config.h	1969-12-31 19:00:00.000000000 -0500
++++ KVRocks/kvdb/include/rocksdb/kvdb_config.h	2021-01-16 05:29:33.427601877 -0500
+@@ -0,0 +1,9 @@
++#pragma once
++
++// the configured options and settings for Tutorial
++#define KVDB_VERSION_MAJOR 0
++#define KVDB_VERSION_MINOR 3
++
++/* #undef HAVE_TCMALLOC */
++#define HAVE_JEMALLOC
++/* #undef KVDB_ENABLE_IOTRACE */
+diff -uNr KVRocks-master/kvdb/include/rocksdb/options.h KVRocks/kvdb/include/rocksdb/options.h
+--- KVRocks-master/kvdb/include/rocksdb/options.h	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/kvdb/include/rocksdb/options.h	2021-01-16 05:29:33.427601877 -0500
+@@ -1048,6 +1048,8 @@
+   // Default: nullptr
+   const Slice* iterate_upper_bound;
+ 
++  const Slice* iterate_lower_bound;
++
+   // If non-zero, NewIterator will create a new table reader which
+   // performs reads of the given size. Using a large size (> 2MB) can
+   // improve the performance of forward iteration on spinning disks.
+diff -uNr KVRocks-master/kvdb/include/rocksdb/write_batch.h KVRocks/kvdb/include/rocksdb/write_batch.h
+--- KVRocks-master/kvdb/include/rocksdb/write_batch.h	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/kvdb/include/rocksdb/write_batch.h	2021-01-16 05:29:33.427601877 -0500
+@@ -273,6 +273,7 @@
+   // Resize data
+   void ResizeData(size_t size) const;
+ 
++  int Size() const;
+   // Returns the number of updates in the batch
+   int Count() const;
+ 
+diff -uNr KVRocks-master/kvdb/options/options.cc KVRocks/kvdb/options/options.cc
+--- KVRocks-master/kvdb/options/options.cc	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/kvdb/options/options.cc	2021-01-16 05:29:33.435601876 -0500
+@@ -515,6 +515,7 @@
+ ReadOptions::ReadOptions()
+     : snapshot(nullptr),
+       iterate_upper_bound(nullptr),
++      iterate_lower_bound(nullptr),
+       readahead_size(0),
+       max_skippable_internal_keys(0),
+       read_tier(kReadAllTier),
+@@ -531,6 +532,7 @@
+ ReadOptions::ReadOptions(bool cksum, bool cache)
+     : snapshot(nullptr),
+       iterate_upper_bound(nullptr),
++      iterate_lower_bound(nullptr),
+       readahead_size(0),
+       max_skippable_internal_keys(0),
+       read_tier(kReadAllTier),
+diff -uNr KVRocks-master/kvdb/options/options_parser.cc KVRocks/kvdb/options/options_parser.cc
+--- KVRocks-master/kvdb/options/options_parser.cc	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/kvdb/options/options_parser.cc	2021-01-16 05:29:33.435601876 -0500
+@@ -739,6 +739,11 @@
+     const std::unordered_map<std::string, std::string>* persisted_opt_map,
+     OptionsSanityCheckLevel sanity_check_level) {
+   for (auto& pair : cf_options_type_info) {
++    // Fix bug: Restart Mysql issue
++    if (!strncmp(base_opt.comparator->Name(),  "rev:", 4) ||
++        !strncmp(base_opt.comparator->Name(),  "RocksDB", 7))
++      continue;
++    // Fix end
+     if (pair.second.verification == OptionVerificationType::kDeprecated) {
+       // We skip checking deprecated variables as they might
+       // contain random values since they might not be initialized
+diff -uNr KVRocks-master/kvdb/src.mk KVRocks/kvdb/src.mk
+--- KVRocks-master/kvdb/src.mk	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/kvdb/src.mk	2021-01-16 05:29:33.423601877 -0500
+@@ -111,12 +111,7 @@
+   util/thread_local.cc                                          \
+   util/threadpool_imp.cc                                        \
+   util/xxhash.cc                                                \
+-  utilities/cassandra/cassandra_compaction_filter.cc            \
+-  utilities/cassandra/format.cc                                 \
+-  utilities/cassandra/merge_operator.cc                         \
+-  utilities/cassandra/value_operator.cc                         \
+   utilities/checkpoint/checkpoint_impl.cc                       \
+-  utilities/compaction_filters/remove_emptyvalue_compactionfilter.cc    \
+   utilities/env_mirror.cc                                       \
+   utilities/memory/memory_util.cc                               \
+   utilities/options/options_util.cc                             \
+diff -uNr KVRocks-master/kvdb/utilities/merge_operators.h KVRocks/kvdb/utilities/merge_operators.h
+--- KVRocks-master/kvdb/utilities/merge_operators.h	2020-10-14 02:55:41.000000000 -0400
++++ KVRocks/kvdb/utilities/merge_operators.h	2021-01-16 05:29:33.523601871 -0500
+@@ -21,7 +21,7 @@
+   static std::shared_ptr<MergeOperator> CreateStringAppendOperator();
+   static std::shared_ptr<MergeOperator> CreateStringAppendTESTOperator();
+   static std::shared_ptr<MergeOperator> CreateMaxOperator();
+-  static std::shared_ptr<MergeOperator> CreateCassandraMergeOperator();
++//  static std::shared_ptr<MergeOperator> CreateCassandraMergeOperator();
+ 
+   // Will return a different merge operator depending on the string.
+   // TODO: Hook the "name" up to the actual Name() of the MergeOperators?
+@@ -39,8 +39,8 @@
+       return CreateStringAppendTESTOperator();
+     } else if (name == "max") {
+       return CreateMaxOperator();
+-    } else if (name == "cassandra") {
+-        return CreateCassandraMergeOperator();
++//    } else if (name == "cassandra") {
++//        return CreateCassandraMergeOperator();
+     } else {
+       // Empty or unknown, just return nullptr
+       return nullptr;
